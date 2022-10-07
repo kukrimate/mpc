@@ -19,11 +19,11 @@ TypeName: Ty = {
   "Uintn"     => Ty::Uintn,
   "Intn"      => Ty::Intn,
   "Function" "(" <p:Comma<Parameter>> ")" <r:ReturnType> =>
-    Ty::Function(p, Box::new(r)),
+    Ty::Fn(p, Box::new(r)),
   "*" <t:TypeName> =>
-    Ty::Pointer(Box::new(t)),
+    Ty::Ptr(Box::new(t)),
   "[" <l:Expr> "]" <t:TypeName> =>
-    Ty::Array(Box::new(l), Box::new(t)),
+    Ty::Arr(Box::new(l), Box::new(t)),
   "(" <p:Comma<Parameter>> ")" =>
     Ty::Tuple(p)
 };
@@ -63,7 +63,7 @@ BlockItemList: Vec<Expr> = {
 BlockItem: Expr = {
   Expr,
   "let" <m:"mut"?> <n:Identifier> <t:LetType> "=" <i:Expr> =>
-    Expr::Let(m.is_some(), n, t, Box::new(i)),
+    Expr::Let(n, m.is_some(), t, Box::new(i)),
   "continue" => Expr::Continue,
   "break" <e:Expr?> => Expr::Break(e.map(|e| Box::new(e))),
   "return" <e:Expr?> => Expr::Return(e.map(|e| Box::new(e))),
@@ -186,47 +186,92 @@ PrimExpr: Expr = {
 
 // Modules
 
-TypeDefinition: () = {
-  "struct" TypeParameterList? Identifier "(" Comma<Parameter> ")",
-  "union" TypeParameterList? Identifier "(" Comma<Parameter> ")",
-  "enum" TypeParameterList? Identifier "(" Comma<Enumerator> ")",
+TypeDefinition: Definition = {
+  "struct" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Parameter>> ")" =>
+    Definition::Ty(n, tp, Ty::Struct(p)),
+  "union" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Parameter>> ")" =>
+    Definition::Ty(n, tp, Ty::Union(p)),
+  "enum" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Enumerator>> ")" =>
+    Definition::Ty(n, tp, Ty::Enum(p)),
 };
 
-TypeParameterList = "<" Comma<Identifier> ">";
-
-Enumerator: () = {
-  Identifier,
-  Identifier "(" Comma<Parameter> ")",
+TypeParameterList: Vec<String> = {
+  "<" <v:Comma<Identifier>> ">" => v,
+                                => vec![],
 };
 
-FunctionDefinition = "function" TypeParameterList? Identifier
-                      "(" Comma<ParameterDefinition> ")" ReturnType Block;
-
-ParameterDefinition = "mut"? Identifier ":" TypeName;
-
-ConstDefinition = "const" Identifier ":" TypeName "=" Expr;
-
-DataDefinition = "data" "mut"? Identifier ":" TypeName "=" Expr;
-
-ImportDefinition = "import" Path;
-
-ExternBlock = "extern" "{" Seq<ExternDefinition> "}";
-
-ExternDefinition: () = {
-  "function" Identifier "(" Comma<Parameter> ")" ReturnType,
-  "data" "mut"? Identifier ":" TypeName,
+Enumerator: (String, Ty) = {
+  Identifier =>
+    (<>, Ty::Enumerator),
+  <n:Identifier> "(" <v:Comma<Parameter>> ")" =>
+    (n, Ty::Struct(v)),
 };
 
-GlobalDefinition: () = {
-  TypeDefinition,
-  FunctionDefinition,
-  ConstDefinition,
-  DataDefinition,
-  ImportDefinition,
+FunctionDefinition: Definition = {
+  "function" <tp:TypeParameterList> <n:Identifier>
+      "(" <p:Comma<ParameterDefinition>> ")" <r:ReturnType> <b:Block> =>
+    Definition::Fn(n, tp, p, r, b)
+};
+
+ParameterDefinition: (String, bool, Ty) = {
+  <m:"mut"?> <n:Identifier> ":" <t:TypeName> => (n, m.is_some(), t)
+};
+
+ConstDefinition: Definition = {
+  "const" <n:Identifier> ":" <t:TypeName> "=" <e:Expr> =>
+    Definition::Const(n, t, e)
+};
+
+DataDefinition: Definition = {
+  "data" <m:"mut"?> <n:Identifier> ":" <t:TypeName> "=" <e:Expr> =>
+    Definition::Data(n, m.is_some(), t, e)
+};
+
+ImportDefinition: Definition = "import" <p:Path> => Definition::Import(p);
+
+ExternBlock: Vec<Definition> = "extern" "{" <s:Seq<ExternDefinition>> "}" => s;
+
+ExternDefinition: Definition = {
+  "function" <n:Identifier> "(" <p:Comma<Parameter>> ")" <r:ReturnType> =>
+    Definition::Extern(n, false, Ty::Fn(p, Box::new(r))),
+  "data" <m:"mut"?> <n:Identifier> ":" <t:TypeName> =>
+    Definition::Extern(n, m.is_some(), t)
+};
+
+GlobalDefinitionList: Vec<Definition> = {
+  TypeDefinition => vec![<>],
+  FunctionDefinition => vec![<>],
+  ConstDefinition => vec![<>],
+  DataDefinition => vec![<>],
+  ImportDefinition => vec![<>],
   ExternBlock,
+  <mut v:GlobalDefinitionList> <d:TypeDefinition> => {
+    v.push(d);
+    v
+  },
+  <mut v:GlobalDefinitionList> <d:FunctionDefinition> => {
+    v.push(d);
+    v
+  },
+  <mut v:GlobalDefinitionList> <d:ConstDefinition> => {
+    v.push(d);
+    v
+  },
+  <mut v:GlobalDefinitionList> <d:DataDefinition> => {
+    v.push(d);
+    v
+  },
+  <mut v:GlobalDefinitionList> <d:ImportDefinition> => {
+    v.push(d);
+    v
+  },
+  <mut v:GlobalDefinitionList> <d:ExternBlock> => {
+    v.extend(d);
+    v
+  },
 };
 
-pub Module: () = Seq<GlobalDefinition>;
+pub Module = GlobalDefinitionList;
 
 // Tokens
 

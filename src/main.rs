@@ -18,5 +18,5 @@ fn main() {
     .get_matches();
 
   let input = fs::read_to_string(args.value_of("INPUT").unwrap()).unwrap();
-  println!("{:?}", parse::ModuleParser::new().parse(&input));
+  println!("{:#?}", parse::ModuleParser::new().parse(&input));
 }
