@@ -1,5 +1,250 @@
+use crate::ast::*;
+use std::str::FromStr;
+
 grammar;
 
-pub Module: () = {
-    "test" => (),
+// Types
+
+TypeName: Ty = {
+  <p:Path>    => Ty::Path(p),
+  "Bool"      => Ty::Bool,
+  "Uint8"     => Ty::Uint8,
+  "Int8"      => Ty::Int8,
+  "Uint16"    => Ty::Uint16,
+  "Int16"     => Ty::Int16,
+  "Uint32"    => Ty::Uint32,
+  "Int32"     => Ty::Int32,
+  "Uint64"    => Ty::Uint64,
+  "Int64"     => Ty::Int64,
+  "Uintn"     => Ty::Uintn,
+  "Intn"      => Ty::Intn,
+  "Function" "(" <p:Comma<Parameter>> ")" <r:ReturnType> =>
+    Ty::Function(p, Box::new(r)),
+  "*" <t:TypeName> =>
+    Ty::Pointer(Box::new(t)),
+  "[" <l:Expr> "]" <t:TypeName> =>
+    Ty::Array(Box::new(l), Box::new(t)),
+  "(" <p:Comma<Parameter>> ")" =>
+    Ty::Tuple(p)
+};
+
+Path: Path = {
+  Identifier  => vec![<>],
+  <mut v:Path> "::" <i:Identifier> => {
+    v.push(i);
+    v
+  }
+};
+
+Parameter: (String, Ty) = {
+  <name:Identifier> ":" <ty:TypeName> => (name, ty)
+};
+
+ReturnType: Ty = {
+  "->" <t:TypeName> => t,
+                    => Ty::Tuple(vec![])
+};
+
+// Blocks
+
+Block: Expr = {
+  "{" "}" => Expr::Block(vec![]),
+  "{" <v:BlockItemList> ";"? "}" => Expr::Block(v),
+};
+
+BlockItemList: Vec<Expr> = {
+  BlockItem => vec![<>],
+  <mut v:BlockItemList> ";" <i:BlockItem> => {
+    v.push(i);
+    v
+  }
+};
+
+BlockItem: Expr = {
+  Expr,
+  "let" <m:"mut"?> <n:Identifier> <t:LetType> "=" <i:Expr> =>
+    Expr::Let(m.is_some(), n, t, Box::new(i)),
+  "continue" => Expr::Continue,
+  "break" <e:Expr?> => Expr::Break(e.map(|e| Box::new(e))),
+  "return" <e:Expr?> => Expr::Return(e.map(|e| Box::new(e))),
+  "if" <e:Expr> <b:Block> => Expr::If(Box::new(e), Box::new(b), None),
+  "while" <e:Expr> <b:Block> => Expr::While(Box::new(e), Box::new(b)),
+  <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
+  <l:Expr> "*=" <r:Expr> => Expr::MulAs(Box::new(l), Box::new(r)),
+  <l:Expr> "/=" <r:Expr> => Expr::DivAs(Box::new(l), Box::new(r)),
+  <l:Expr> "%=" <r:Expr> => Expr::ModAs(Box::new(l), Box::new(r)),
+  <l:Expr> "+=" <r:Expr> => Expr::AddAs(Box::new(l), Box::new(r)),
+  <l:Expr> "-=" <r:Expr> => Expr::SubAs(Box::new(l), Box::new(r)),
+  <l:Expr> "<<=" <r:Expr> => Expr::LshAs(Box::new(l), Box::new(r)),
+  <l:Expr> ">>=" <r:Expr> => Expr::RshAs(Box::new(l), Box::new(r)),
+  <l:Expr> "&=" <r:Expr> => Expr::AndAs(Box::new(l), Box::new(r)),
+  <l:Expr> "^=" <r:Expr> => Expr::XorAs(Box::new(l), Box::new(r)),
+  <l:Expr> "|=" <r:Expr> => Expr::OrAs(Box::new(l), Box::new(r)),
+};
+
+LetType: Option<Ty> = {
+  ":" <ty:TypeName> => Some(ty),
+                    => None,
+};
+
+// Expressions
+
+Expr: Expr = {
+  LOrExpr,
+  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Some(Box::new(e))),
+  "loop" <b:Block> => Expr::Loop(Box::new(b))
+};
+
+LOrExpr: Expr = {
+  LAndExpr,
+  <l:LOrExpr> "||" <r:LAndExpr> => Expr::LOr(Box::new(l), Box::new(r))
+};
+
+LAndExpr: Expr = {
+  CmpExpr,
+  <l:LAndExpr> "&&" <r:CmpExpr> => Expr::LAnd(Box::new(l), Box::new(r))
+};
+
+CmpExpr: Expr = {
+  OrExpr,
+  <l:OrExpr> "==" <r:OrExpr> => Expr::Eq(Box::new(l), Box::new(r)),
+  <l:OrExpr> "!=" <r:OrExpr> => Expr::Ne(Box::new(l), Box::new(r)),
+  <l:OrExpr> "<" <r:OrExpr> => Expr::Lt(Box::new(l), Box::new(r)),
+  <l:OrExpr> ">" <r:OrExpr> => Expr::Gt(Box::new(l), Box::new(r)),
+  <l:OrExpr> "<=" <r:OrExpr> => Expr::Le(Box::new(l), Box::new(r)),
+  <l:OrExpr> ">=" <r:OrExpr> => Expr::Ge(Box::new(l), Box::new(r)),
+};
+
+OrExpr: Expr = {
+  XorExpr,
+  <l:OrExpr> "|" <r:XorExpr> => Expr::Or(Box::new(l), Box::new(r))
+};
+
+XorExpr: Expr = {
+  AndExpr,
+  <l:XorExpr> "^" <r:AndExpr> => Expr::Xor(Box::new(l), Box::new(r))
+};
+
+AndExpr: Expr = {
+  ShiftExpr,
+  <l:AndExpr> "&" <r:ShiftExpr> => Expr::And(Box::new(l), Box::new(r))
+};
+
+ShiftExpr: Expr = {
+  AddExpr,
+  <l:ShiftExpr> "<<" <r:AddExpr> => Expr::Lsh(Box::new(l), Box::new(r)),
+  <l:ShiftExpr> ">>" <r:AddExpr> => Expr::Rsh(Box::new(l), Box::new(r)),
+};
+
+AddExpr: Expr = {
+  MulExpr,
+  <l:AddExpr> "+" <r:MulExpr> => Expr::Add(Box::new(l), Box::new(r)),
+  <l:AddExpr> "-" <r:MulExpr> => Expr::Sub(Box::new(l), Box::new(r)),
+};
+
+MulExpr: Expr = {
+  CastExpr,
+  <l:MulExpr> "*" <r:CastExpr> => Expr::Mul(Box::new(l), Box::new(r)),
+  <l:MulExpr> "/" <r:CastExpr> => Expr::Div(Box::new(l), Box::new(r)),
+  <l:MulExpr> "%" <r:CastExpr> => Expr::Mod(Box::new(l), Box::new(r)),
+};
+
+CastExpr: Expr = {
+  PreExpr,
+  <e:CastExpr> "as" <t:TypeName> => Expr::Cast(Box::new(e), t),
+};
+
+PreExpr: Expr = {
+  PostExpr,
+  "&" <e:PreExpr> => Expr::Ref(Box::new(e)),
+  "*" <e:PreExpr> => Expr::Deref(Box::new(e)),
+  "+" <e:PreExpr> => Expr::UPlus(Box::new(e)),
+  "-" <e:PreExpr> => Expr::UMinus(Box::new(e)),
+  "~" <e:PreExpr> => Expr::Not(Box::new(e)),
+  "!" <e:PreExpr> => Expr::LNot(Box::new(e)),
+};
+
+PostExpr: Expr = {
+  PrimExpr,
+  <e:PostExpr> "." <i:Identifier> => Expr::Dot(Box::new(e), i),
+  <e:PostExpr> "(" <a:Comma<Argument>> ")" => Expr::Call(Box::new(e), a),
+  <e:PostExpr> "[" <i:Expr> ")" => Expr::Index(Box::new(e), Box::new(i)),
+};
+
+Argument: (String, Expr) = <i:Identifier> ":" <e:Expr> => (i, e);
+
+PrimExpr: Expr = {
+  "(" <e:Expr> ")" => e,
+  <b:Block> => b,
+  <p:Path> => Expr::Path(p),
+  "true" => Expr::Bool(true),
+  "false" => Expr::Bool(false),
+  Integer => Expr::Int(<>),
+  Character => Expr::Char(<>),
+  String => Expr::Str(<>),
+};
+
+// Modules
+
+TypeDefinition: () = {
+  "struct" TypeParameterList? Identifier "(" Comma<Parameter> ")",
+  "union" TypeParameterList? Identifier "(" Comma<Parameter> ")",
+  "enum" TypeParameterList? Identifier "(" Comma<Enumerator> ")",
+};
+
+TypeParameterList = "<" Comma<Identifier> ">";
+
+Enumerator: () = {
+  Identifier,
+  Identifier "(" Comma<Parameter> ")",
+};
+
+FunctionDefinition = "function" TypeParameterList? Identifier
+                      "(" Comma<ParameterDefinition> ")" ReturnType Block;
+
+ParameterDefinition = "mut"? Identifier ":" TypeName;
+
+ConstDefinition = "const" Identifier ":" TypeName "=" Expr;
+
+DataDefinition = "data" "mut"? Identifier ":" TypeName "=" Expr;
+
+ImportDefinition = "import" Path;
+
+ExternBlock = "extern" "{" Seq<ExternDefinition> "}";
+
+ExternDefinition: () = {
+  "function" Identifier "(" Comma<Parameter> ")" ReturnType,
+  "data" "mut"? Identifier ":" TypeName,
+};
+
+GlobalDefinition: () = {
+  TypeDefinition,
+  FunctionDefinition,
+  ConstDefinition,
+  DataDefinition,
+  ImportDefinition,
+  ExternBlock,
+};
+
+pub Module: () = Seq<GlobalDefinition>;
+
+// Tokens
+
+Identifier: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => String::from(<>);
+Integer: usize = r"[0-9]+" => usize::from_str(<>).unwrap();
+Character: String = r#"'([^']|\\')*'"# => String::from(<>);
+String: String = r#""([^"]|\\")*""# => String::from(<>);
+
+// Macros
+
+Seq<T>: Vec<T> = <v:(<T>)*> => v;
+
+Comma<T>: Vec<T> = {
+  <mut v:(<T> ",")*> <e:T?> => match e {
+    None => v,
+    Some(e) => {
+      v.push(e);
+      v
+    }
+  }
 };
