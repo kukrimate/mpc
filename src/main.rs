@@ -1,3 +1,7 @@
+use lalrpop_util::lalrpop_mod;
+
+lalrpop_mod!(parse);
+
 fn main() {
-    println!("Hello, world!");
+    assert!(parse::ModuleParser::new().parse("test").is_ok());
 }
