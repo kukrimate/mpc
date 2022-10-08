@@ -1,7 +1,17 @@
 use crate::ast::*;
+use crate::util::*;
 use std::str::FromStr;
+use indexmap::{indexmap,IndexMap};
 
-grammar;
+grammar(module: &mut Module);
+
+Path: Path = {
+  Identifier  => vec![<>],
+  <mut v:Path> "::" <i:Identifier> => {
+    v.push(i);
+    v
+  }
+};
 
 // Types
 
@@ -18,31 +28,32 @@ TypeName: Ty = {
   "Int64"     => Ty::Int64,
   "Uintn"     => Ty::Uintn,
   "Intn"      => Ty::Intn,
-  "Function" "(" <p:Comma<Parameter>> ")" <r:ReturnType> =>
-    Ty::Fn(p, Box::new(r)),
-  "*" <t:TypeName> =>
-    Ty::Ptr(Box::new(t)),
+  "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
+    Ty::Fn(params, Box::new(ret)),
+  "*" <ty:TypeName> =>
+    Ty::Ptr(Box::new(ty)),
   "[" <l:Expr> "]" <t:TypeName> =>
     Ty::Arr(Box::new(l), Box::new(t)),
-  "(" <p:Comma<Parameter>> ")" =>
-    Ty::Tuple(p)
+  "(" <params:ParameterListOpt>  ")" =>
+    Ty::Tuple(params)
 };
 
-Path: Path = {
-  Identifier  => vec![<>],
-  <mut v:Path> "::" <i:Identifier> => {
-    v.push(i);
-    v
-  }
+ParameterListOpt: IndexMap<RefStr, Ty> = {
+  ParameterList,
+  => indexmap! {},
 };
 
-Parameter: (String, Ty) = {
-  <name:Identifier> ":" <ty:TypeName> => (name, ty)
+ParameterList: IndexMap<RefStr, Ty> = {
+  <name:Identifier> ":" <ty:TypeName> => indexmap! { name => ty },
+  <mut l:ParameterList> "," <name:Identifier> ":" <ty:TypeName> => {
+    l.insert(name, ty);
+    l
+  },
 };
 
 ReturnType: Ty = {
   "->" <t:TypeName> => t,
-                    => Ty::Tuple(vec![])
+  => Ty::Tuple(indexmap! {})
 };
 
 // Blocks
@@ -167,11 +178,22 @@ PreExpr: Expr = {
 PostExpr: Expr = {
   PrimExpr,
   <e:PostExpr> "." <i:Identifier> => Expr::Dot(Box::new(e), i),
-  <e:PostExpr> "(" <a:Comma<Argument>> ")" => Expr::Call(Box::new(e), a),
+  <e:PostExpr> "(" <a:ArgumentListOpt> ")" => Expr::Call(Box::new(e), a),
   <e:PostExpr> "[" <i:Expr> ")" => Expr::Index(Box::new(e), Box::new(i)),
 };
 
-Argument: (String, Expr) = <i:Identifier> ":" <e:Expr> => (i, e);
+ArgumentListOpt: IndexMap<RefStr, Expr> = {
+  ArgumentList,
+  => indexmap! {},
+}
+
+ArgumentList: IndexMap<RefStr, Expr> = {
+  <name:Identifier> ":" <expr:Expr> => indexmap! { name => expr },
+  <mut map:ArgumentList> "," <name:Identifier> ":" <expr:Expr> => {
+    map.insert(name, expr);
+    map
+  }
+};
 
 PrimExpr: Expr = {
   "(" <e:Expr> ")" => e,
@@ -181,104 +203,108 @@ PrimExpr: Expr = {
   "false" => Expr::Bool(false),
   Integer => Expr::Int(<>),
   Character => Expr::Char(<>),
-  String => Expr::Str(<>),
+  RefStr => Expr::Str(<>),
 };
 
 // Modules
 
-TypeDefinition: Definition = {
-  "struct" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Parameter>> ")" =>
-    Definition::Ty(n, tp, Ty::Struct(p)),
-  "union" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Parameter>> ")" =>
-    Definition::Ty(n, tp, Ty::Union(p)),
-  "enum" <tp:TypeParameterList> <n:Identifier> "(" <p:Comma<Enumerator>> ")" =>
-    Definition::Ty(n, tp, Ty::Enum(p)),
+TypeDefinition: () = {
+  "struct" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
+    module.defs.insert(name, Def::Ty(Ty::Struct(params)));
+  },
+  "union" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
+    module.defs.insert(name, Def::Ty(Ty::Union(params)));
+  },
+  "enum" <name:Identifier> "(" <enums:EnumeratorListOpt> ")" => {
+    module.defs.insert(name, Def::Ty(Ty::Enum(enums)));
+  },
 };
 
-TypeParameterList: Vec<String> = {
-  "<" <v:Comma<Identifier>> ">" => v,
-                                => vec![],
+EnumeratorListOpt: IndexMap<RefStr, Ty> = {
+  EnumeratorList,
+  => indexmap! {},
 };
 
-Enumerator: (String, Ty) = {
+EnumeratorList: IndexMap<RefStr, Ty> = {
+  <e:Enumerator> => indexmap! { e.0 => e.1 },
+  <mut l:EnumeratorList> "," <e:Enumerator> => {
+    l.insert(e.0, e.1);
+    l
+  },
+};
+
+Enumerator: (RefStr, Ty) = {
   Identifier =>
     (<>, Ty::Enumerator),
-  <n:Identifier> "(" <v:Comma<Parameter>> ")" =>
-    (n, Ty::Struct(v)),
+  <name:Identifier> "(" <params:ParameterListOpt> ")" =>
+    (name, Ty::Struct(params)),
 };
 
-FunctionDefinition: Definition = {
-  "function" <tp:TypeParameterList> <n:Identifier>
-      "(" <p:Comma<ParameterDefinition>> ")" <r:ReturnType> <b:Block> =>
-    Definition::Fn(n, tp, p, r, b)
+FunctionDefinition: () = {
+  "function" <name:Identifier>
+      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType>
+      <body:Block> => {
+    module.defs.insert(name, Def::Fn { params, ret_ty, body });
+  }
 };
 
-ParameterDefinition: (String, bool, Ty) = {
-  <m:"mut"?> <n:Identifier> ":" <t:TypeName> => (n, m.is_some(), t)
+ParameterDefinitionListOpt: IndexMap<RefStr, (bool, Ty)> = {
+  ParameterDefinitionList,
+  => indexmap! {}
 };
 
-ConstDefinition: Definition = {
-  "const" <n:Identifier> ":" <t:TypeName> "=" <e:Expr> =>
-    Definition::Const(n, t, e)
+ParameterDefinitionList: IndexMap<RefStr, (bool, Ty)> = {
+  <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => indexmap ! { name => (m.is_some(), ty) },
+  <mut map:ParameterDefinitionList> "," <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
+    map.insert(name, (m.is_some(), ty));
+    map
+  },
 };
 
-DataDefinition: Definition = {
-  "data" <m:"mut"?> <n:Identifier> ":" <t:TypeName> "=" <e:Expr> =>
-    Definition::Data(n, m.is_some(), t, e)
+ConstDefinition: () = {
+  "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
+    module.defs.insert(name, Def::Const { ty, val });
+  }
 };
 
-ImportDefinition: Definition = "import" <p:Path> => Definition::Import(p);
-
-ExternBlock: Vec<Definition> = "extern" "{" <s:Seq<ExternDefinition>> "}" => s;
-
-ExternDefinition: Definition = {
-  "function" <n:Identifier> "(" <p:Comma<Parameter>> ")" <r:ReturnType> =>
-    Definition::Extern(n, false, Ty::Fn(p, Box::new(r))),
-  "data" <m:"mut"?> <n:Identifier> ":" <t:TypeName> =>
-    Definition::Extern(n, m.is_some(), t)
+DataDefinition: () = {
+  "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
+    module.defs.insert(name, Def::Data { is_mut: m.is_some(), ty, init });
+  }
 };
 
-GlobalDefinitionList: Vec<Definition> = {
-  TypeDefinition => vec![<>],
-  FunctionDefinition => vec![<>],
-  ConstDefinition => vec![<>],
-  DataDefinition => vec![<>],
-  ImportDefinition => vec![<>],
+ImportDefinition: () = "import" <name:Identifier> => {
+  module.deps.insert(name);
+};
+
+ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
+
+ExternDefinition: () = {
+  "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret:ReturnType> => {
+    module.defs.insert(name, Def::Extern { is_mut: false, ty: Ty::Fn(params, Box::new(ret)) });
+  },
+  "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
+    module.defs.insert(name, Def::Extern { is_mut: m.is_some(), ty });
+  }
+};
+
+GlobalDefinition: () = {
+  TypeDefinition,
+  FunctionDefinition,
+  ConstDefinition,
+  DataDefinition,
+  ImportDefinition,
   ExternBlock,
-  <mut v:GlobalDefinitionList> <d:TypeDefinition> => {
-    v.push(d);
-    v
-  },
-  <mut v:GlobalDefinitionList> <d:FunctionDefinition> => {
-    v.push(d);
-    v
-  },
-  <mut v:GlobalDefinitionList> <d:ConstDefinition> => {
-    v.push(d);
-    v
-  },
-  <mut v:GlobalDefinitionList> <d:DataDefinition> => {
-    v.push(d);
-    v
-  },
-  <mut v:GlobalDefinitionList> <d:ImportDefinition> => {
-    v.push(d);
-    v
-  },
-  <mut v:GlobalDefinitionList> <d:ExternBlock> => {
-    v.extend(d);
-    v
-  },
 };
 
-pub Module = GlobalDefinitionList;
+pub Module: () = Seq<GlobalDefinition>;
 
 // Tokens
 
-Identifier: String = r"[_a-zA-Z][_a-zA-Z0-9]*" => String::from(<>);
+Identifier: RefStr = r"[_a-zA-Z][_a-zA-Z0-9]*" => RefStr::new(<>);
 Integer: usize = r"[0-9]+" => usize::from_str(<>).unwrap();
-Character: String = r#"'([^']|\\')*'"# => String::from(<>);
-String: String = r#""([^"]|\\")*""# => String::from(<>);
+Character: RefStr = r#"'([^']|\\')*'"# => RefStr::new(<>);
+RefStr: RefStr = r#""([^"]|\\")*""# => RefStr::new(<>);
 
 // Macros
 

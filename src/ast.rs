@@ -1,4 +1,8 @@
-pub type Path = Vec<String>;
+use crate::util::*;
+use indexmap::IndexMap;
+use std::collections::HashSet;
+
+pub type Path = Vec<RefStr>;
 
 #[derive(Debug)]
 pub enum Ty {
@@ -14,14 +18,14 @@ pub enum Ty {
   Int64,
   Uintn,
   Intn,
-  Fn(Vec<(String, Ty)>, Box<Ty>),
+  Fn(IndexMap<RefStr, Ty>, Box<Ty>),
   Ptr(Box<Ty>),
   Arr(Box<Expr>, Box<Ty>),
-  Tuple(Vec<(String, Ty)>),
-  Struct(Vec<(String, Ty)>),
-  Union(Vec<(String, Ty)>),
+  Tuple(IndexMap<RefStr, Ty>),
+  Struct(IndexMap<RefStr, Ty>),
+  Union(IndexMap<RefStr, Ty>),
   Enumerator,
-  Enum(Vec<(String, Ty)>),
+  Enum(IndexMap<RefStr, Ty>),
 }
 
 #[derive(Debug)]
@@ -29,11 +33,11 @@ pub enum Expr {
   Path(Path),
   Bool(bool),
   Int(usize),
-  Char(String),
-  Str(String),
+  Char(RefStr),
+  Str(RefStr),
 
-  Dot(Box<Expr>, String),
-  Call(Box<Expr>, Vec<(String, Expr)>),
+  Dot(Box<Expr>, RefStr),
+  Call(Box<Expr>, IndexMap<RefStr, Expr>),
   Index(Box<Expr>, Box<Expr>),
 
   Ref(Box<Expr>),
@@ -80,24 +84,46 @@ pub enum Expr {
   Continue,
   Break(Option<Box<Expr>>),
   Return(Option<Box<Expr>>),
-  Let(String, bool, Option<Ty>, Box<Expr>),
+  Let(RefStr, bool, Option<Ty>, Box<Expr>),
   If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
 }
 
 #[derive(Debug)]
-pub enum Definition {
-  // Type definition
-  Ty(String, Vec<String>, Ty),
-  // Function definition
-  Fn(String, Vec<String>, Vec<(String, bool, Ty)>, Ty, Expr),
-  // Const definition
-  Const(String, Ty, Expr),
-  // Const definition
-  Data(String, bool, Ty, Expr),
-  // Extern definition
-  Extern(String, bool, Ty),
-  // Import
-  Import(Path),
+pub enum Def {
+  Ty(Ty),
+  Fn {
+    params: IndexMap<RefStr, (bool, Ty)>,
+    ret_ty: Ty,
+    body: Expr,
+  },
+  Const {
+    ty: Ty,
+    val: Expr
+  },
+  Data {
+    is_mut: bool,
+    ty: Ty,
+    init: Expr
+  },
+  Extern {
+    is_mut: bool,
+    ty: Ty,
+  },
+}
+
+#[derive(Debug)]
+pub struct Module {
+  pub deps: HashSet<RefStr>,
+  pub defs: IndexMap<RefStr, Def>,
+}
+
+impl Module {
+  pub fn new() -> Module {
+    Module {
+      deps: HashSet::new(),
+      defs: IndexMap::new(),
+    }
+  }
 }
