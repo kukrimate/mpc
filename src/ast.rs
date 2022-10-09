@@ -6,7 +6,6 @@ pub type Path = Vec<RefStr>;
 
 #[derive(Debug)]
 pub enum Ty {
-  Path(Path),
   Bool,
   Uint8,
   Int8,
@@ -18,6 +17,10 @@ pub enum Ty {
   Int64,
   Uintn,
   Intn,
+  Float,
+  Double,
+  Path(Path),
+  Ref(&'static Ty),
   Fn(IndexMap<RefStr, Ty>, Box<Ty>),
   Ptr(Box<Ty>),
   Arr(Box<Expr>, Box<Ty>),
@@ -110,6 +113,10 @@ pub enum Def {
   Extern {
     is_mut: bool,
     ty: Ty,
+  },
+  ExternFn {
+    params: IndexMap<RefStr, Ty>,
+    ret_ty: Ty,
   },
 }
 

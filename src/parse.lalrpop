@@ -16,7 +16,6 @@ Path: Path = {
 // Types
 
 TypeName: Ty = {
-  <p:Path>    => Ty::Path(p),
   "Bool"      => Ty::Bool,
   "Uint8"     => Ty::Uint8,
   "Int8"      => Ty::Int8,
@@ -28,6 +27,9 @@ TypeName: Ty = {
   "Int64"     => Ty::Int64,
   "Uintn"     => Ty::Uintn,
   "Intn"      => Ty::Intn,
+  "Float"     => Ty::Float,
+  "Double"    => Ty::Double,
+  <p:Path>    => Ty::Path(p),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
     Ty::Fn(params, Box::new(ret)),
   "*" <ty:TypeName> =>
@@ -280,8 +282,8 @@ ImportDefinition: () = "import" <name:Identifier> => {
 ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
-  "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret:ReturnType> => {
-    module.defs.insert(name, Def::Extern { is_mut: false, ty: Ty::Fn(params, Box::new(ret)) });
+  "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
+    module.defs.insert(name, Def::ExternFn { params, ret_ty });
   },
   "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
     module.defs.insert(name, Def::Extern { is_mut: m.is_some(), ty });

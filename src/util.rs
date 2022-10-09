@@ -1,5 +1,20 @@
 use std::collections::HashSet;
+use std::error::Error;
 use std::mem::MaybeUninit;
+
+/// Boxed, type-erased error wrapper
+
+pub type MRes<T> = Result<T, Box<dyn Error>>;
+
+/// Functions for doing evil stuff
+
+pub fn evil<'a, T>(r: &'a T) -> &'static T {
+  unsafe { std::mem::transmute(r) }
+}
+
+pub fn evil_mut<'a, T>(r: &'a mut T) -> &'static mut T {
+  unsafe { std::mem::transmute(r) }
+}
 
 /// Globally de-duped strings
 

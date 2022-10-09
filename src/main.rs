@@ -1,9 +1,11 @@
 #![feature(hash_set_entry)]
 
 mod ast;
+mod check;
 mod util;
 
 use ast::*;
+use check::*;
 use util::*;
 
 use std::{error,fmt,fs};
@@ -12,8 +14,6 @@ use clap::{Arg,App};
 use lalrpop_util::{lalrpop_mod,ParseError};
 
 lalrpop_mod!(parse);
-
-type MRes<T> = Result<T, Box<dyn error::Error>>;
 
 #[derive(Debug)]
 struct SyntaxError {
@@ -46,7 +46,8 @@ fn parse(path: &str) -> MRes<Module> {
 }
 
 fn compile(path: &str) -> MRes<()> {
-  let module = parse(path)?;
+  let mut module = parse(path)?;
+  check_module(&mut module)?;
   println!("{:#?}", module);
   Ok(())
 }
