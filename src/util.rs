@@ -63,6 +63,7 @@ impl std::hash::Hash for RefStr {
 
 /// Owning pointer
 
+#[allow(dead_code)]
 pub struct Own<T>(*mut T);
 
 impl<T> Own<T> {
@@ -87,7 +88,7 @@ impl<T> From<Box<T>> for Own<T> {
 
 impl<T> Drop for Own<T> {
   fn drop(&mut self) {
-    unsafe { Box::from_raw(self.0); }
+    unsafe { drop(Box::from_raw(self.0)); }
   }
 }
 
@@ -146,6 +147,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Own<T> {
 
 // Const borrowed pointer
 
+#[allow(dead_code)]
 pub struct Ptr<T>(*const T);
 
 impl<T> Clone for Ptr<T> {
@@ -170,17 +172,17 @@ impl<T> core::ops::Deref for Ptr<T> {
   }
 }
 
-impl<T> core::cmp::PartialEq for Ptr<T> {
+impl<T: PartialEq> PartialEq for Ptr<T> {
   fn eq(&self, rhs: &Ptr<T>) -> bool {
-    self.0 == rhs.0
+    unsafe { *self.0 == *rhs.0 }
   }
 }
 
-impl<T> core::cmp::Eq for Ptr<T> {}
+impl<T: Eq> Eq for Ptr<T> {}
 
-impl<T> core::hash::Hash for Ptr<T> {
+impl<T: std::hash::Hash> core::hash::Hash for Ptr<T> {
   fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
-    self.0.hash(h);
+    unsafe { (*self.0).hash(h); }
   }
 }
 
@@ -240,17 +242,17 @@ impl<T> core::ops::DerefMut for PtrMut<T> {
   }
 }
 
-impl<T> core::cmp::PartialEq for PtrMut<T> {
+impl<T: PartialEq> PartialEq for PtrMut<T> {
   fn eq(&self, rhs: &PtrMut<T>) -> bool {
-    self.0 == rhs.0
+    unsafe { *self.0 == *rhs.0 }
   }
 }
 
-impl<T> core::cmp::Eq for PtrMut<T> {}
+impl<T: Eq> Eq for PtrMut<T> {}
 
-impl<T> core::hash::Hash for PtrMut<T> {
+impl<T: std::hash::Hash> core::hash::Hash for PtrMut<T> {
   fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
-    self.0.hash(h);
+    unsafe { (*self.0).hash(h); }
   }
 }
 
@@ -268,18 +270,17 @@ impl<T: std::fmt::Debug> std::fmt::Debug for PtrMut<T> {
 
 // Interning table
 
-pub struct InternPool<T>(HashSet<Own<T>>)
-  where T: core::cmp::Eq + core::hash::Hash;
+pub struct Arena<T>(Vec<Own<T>>);
 
-impl<T> InternPool<T>
-  where T: core::cmp::Eq + core::hash::Hash
-{
+impl<T> Arena<T> {
   pub fn new() -> Self {
-    InternPool(HashSet::new())
+    Arena(Vec::new())
   }
 
-  pub fn intern(&mut self, val: T) -> &mut Own<T> {
-    // FIXME: get rid of the UB
-    unsafe { std::mem::transmute(self.0.get_or_insert(Own::new(val))) }
+  pub fn alloc(&mut self, val: T) -> PtrMut<T> {
+    let mut own = Own::new(val);
+    let ptr_mut = own.ptr_mut();
+    self.0.push(own);
+    ptr_mut
   }
 }

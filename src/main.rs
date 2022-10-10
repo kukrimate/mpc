@@ -1,8 +1,9 @@
-#![allow(mutable_transmutes)]
 #![feature(hash_set_entry)]
 
 mod check;
 mod parse;
+
+#[allow(dead_code)]
 mod util;
 
 use clap::{Arg,App};
