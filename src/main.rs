@@ -12,10 +12,8 @@ use parse::*;
 use util::*;
 
 fn compile(path: &str) -> MRes<()> {
-  let mut module = parse_module(path)?;
-  check_module(&mut module)?;
-  // println!("{:#?}", module);
-  Ok(())
+  let module = parse_module(path)?;
+  check_module(&module)
 }
 
 fn main() {
