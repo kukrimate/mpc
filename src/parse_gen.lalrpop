@@ -1,7 +1,6 @@
-use crate::ast::*;
-use crate::util::*;
-use std::str::FromStr;
+use crate::parse::*;
 use indexmap::{indexmap,IndexMap};
+use std::str::FromStr;
 
 grammar(module: &mut Module);
 
@@ -212,34 +211,34 @@ PrimExpr: Expr = {
 
 TypeDefinition: () = {
   "struct" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.defs.insert(name, Def::Ty(Ty::Struct(params)));
+    module.defs.insert(name, Def::Struct { params });
   },
   "union" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.defs.insert(name, Def::Ty(Ty::Union(params)));
+    module.defs.insert(name, Def::Union { params });
   },
-  "enum" <name:Identifier> "(" <enums:EnumeratorListOpt> ")" => {
-    module.defs.insert(name, Def::Ty(Ty::Enum(enums)));
+  "enum" <name:Identifier> "(" <variants:VariantListOpt> ")" => {
+    module.defs.insert(name, Def::Enum { variants });
   },
 };
 
-EnumeratorListOpt: IndexMap<RefStr, Ty> = {
-  EnumeratorList,
+VariantListOpt: IndexMap<RefStr, Variant> = {
+  VariantList,
   => indexmap! {},
 };
 
-EnumeratorList: IndexMap<RefStr, Ty> = {
-  <e:Enumerator> => indexmap! { e.0 => e.1 },
-  <mut l:EnumeratorList> "," <e:Enumerator> => {
-    l.insert(e.0, e.1);
+VariantList: IndexMap<RefStr, Variant> = {
+  <v:Variant> => indexmap! { v.0 => v.1 },
+  <mut l:VariantList> "," <v:Variant> => {
+    l.insert(v.0, v.1);
     l
   },
 };
 
-Enumerator: (RefStr, Ty) = {
+Variant: (RefStr, Variant) = {
   Identifier =>
-    (<>, Ty::Enumerator),
+    (<>, Variant::Unit),
   <name:Identifier> "(" <params:ParameterListOpt> ")" =>
-    (name, Ty::Struct(params)),
+    (name, Variant::Struct(params)),
 };
 
 FunctionDefinition: () = {

@@ -1,6 +1,12 @@
 use crate::util::*;
 use indexmap::IndexMap;
+use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashSet;
+use std::{error,fs,fmt};
+
+lalrpop_mod!(parse_gen);
+
+/// Syntax tree produced by the parser
 
 pub type Path = Vec<RefStr>;
 
@@ -20,15 +26,10 @@ pub enum Ty {
   Float,
   Double,
   Path(Path),
-  Ref(&'static Ty),
   Fn(IndexMap<RefStr, Ty>, Box<Ty>),
   Ptr(Box<Ty>),
   Arr(Box<Expr>, Box<Ty>),
   Tuple(IndexMap<RefStr, Ty>),
-  Struct(IndexMap<RefStr, Ty>),
-  Union(IndexMap<RefStr, Ty>),
-  Enumerator,
-  Enum(IndexMap<RefStr, Ty>),
 }
 
 #[derive(Debug)]
@@ -94,8 +95,22 @@ pub enum Expr {
 }
 
 #[derive(Debug)]
+pub enum Variant {
+  Unit,
+  Struct(IndexMap<RefStr, Ty>),
+}
+
+#[derive(Debug)]
 pub enum Def {
-  Ty(Ty),
+  Struct {
+    params: IndexMap<RefStr, Ty>,
+  },
+  Union {
+    params: IndexMap<RefStr, Ty>,
+  },
+  Enum {
+    variants: IndexMap<RefStr, Variant>,
+  },
   Fn {
     params: IndexMap<RefStr, (bool, Ty)>,
     ret_ty: Ty,
@@ -132,5 +147,37 @@ impl Module {
       deps: HashSet::new(),
       defs: IndexMap::new(),
     }
+  }
+}
+
+/// Wrapper around lalrpop
+
+#[derive(Debug)]
+struct SyntaxError {
+  msg: RefStr
+}
+
+impl SyntaxError {
+  fn new<T: fmt::Debug, E: fmt::Debug>(e: lalrpop_util::ParseError<usize, T, E>) -> SyntaxError {
+    let s = format!("{:?}", e);
+    SyntaxError { msg: RefStr::new(&s) }
+  }
+}
+
+impl fmt::Display for SyntaxError {
+  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    write!(fmt, "{}", self.msg)
+  }
+}
+
+impl error::Error for SyntaxError {}
+
+pub fn parse_module(path: &str) -> MRes<Module> {
+  let input = fs::read_to_string(path)?;
+  let mut module = Module::new();
+  match parse_gen::ModuleParser::new().parse(&mut module, &input) {
+    Ok(()) => Ok(module),
+    Err(error) => Err(Box::new(
+      SyntaxError::new(error))),
   }
 }

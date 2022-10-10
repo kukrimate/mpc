@@ -1,54 +1,19 @@
+#![allow(mutable_transmutes)]
 #![feature(hash_set_entry)]
 
-mod ast;
 mod check;
+mod parse;
 mod util;
 
-use ast::*;
+use clap::{Arg,App};
 use check::*;
+use parse::*;
 use util::*;
 
-use std::{error,fmt,fs};
-
-use clap::{Arg,App};
-use lalrpop_util::{lalrpop_mod,ParseError};
-
-lalrpop_mod!(parse);
-
-#[derive(Debug)]
-struct SyntaxError {
-  msg: RefStr
-}
-
-impl SyntaxError {
-  fn new<T: fmt::Debug, E: fmt::Debug>(e: ParseError<usize, T, E>) -> SyntaxError {
-    let s = format!("{:?}", e);
-    SyntaxError { msg: RefStr::new(&s) }
-  }
-}
-
-impl fmt::Display for SyntaxError {
-  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    write!(fmt, "{}", self.msg)
-  }
-}
-
-impl error::Error for SyntaxError {}
-
-fn parse(path: &str) -> MRes<Module> {
-  let input = fs::read_to_string(path)?;
-  let mut module = Module::new();
-  match parse::ModuleParser::new().parse(&mut module, &input) {
-    Ok(()) => Ok(module),
-    Err(error) => Err(Box::new(
-      SyntaxError::new(error))),
-  }
-}
-
 fn compile(path: &str) -> MRes<()> {
-  let mut module = parse(path)?;
+  let mut module = parse_module(path)?;
   check_module(&mut module)?;
-  println!("{:#?}", module);
+  // println!("{:#?}", module);
   Ok(())
 }
 
