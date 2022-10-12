@@ -81,17 +81,18 @@ BlockItem: Expr = {
   "return" <e:Expr?> => Expr::Return(e.map(|e| Box::new(e))),
   "if" <e:Expr> <b:Block> => Expr::If(Box::new(e), Box::new(b), None),
   "while" <e:Expr> <b:Block> => Expr::While(Box::new(e), Box::new(b)),
+
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
-  <l:Expr> "*=" <r:Expr> => Expr::MulAs(Box::new(l), Box::new(r)),
-  <l:Expr> "/=" <r:Expr> => Expr::DivAs(Box::new(l), Box::new(r)),
-  <l:Expr> "%=" <r:Expr> => Expr::ModAs(Box::new(l), Box::new(r)),
-  <l:Expr> "+=" <r:Expr> => Expr::AddAs(Box::new(l), Box::new(r)),
-  <l:Expr> "-=" <r:Expr> => Expr::SubAs(Box::new(l), Box::new(r)),
-  <l:Expr> "<<=" <r:Expr> => Expr::LshAs(Box::new(l), Box::new(r)),
-  <l:Expr> ">>=" <r:Expr> => Expr::RshAs(Box::new(l), Box::new(r)),
-  <l:Expr> "&=" <r:Expr> => Expr::AndAs(Box::new(l), Box::new(r)),
-  <l:Expr> "^=" <r:Expr> => Expr::XorAs(Box::new(l), Box::new(r)),
-  <l:Expr> "|=" <r:Expr> => Expr::OrAs(Box::new(l), Box::new(r)),
+  <l:Expr> "*=" <r:Expr> => Expr::Rmw(BinOp::Mul, Box::new(l), Box::new(r)),
+  <l:Expr> "/=" <r:Expr> => Expr::Rmw(BinOp::Div, Box::new(l), Box::new(r)),
+  <l:Expr> "%=" <r:Expr> => Expr::Rmw(BinOp::Mod, Box::new(l), Box::new(r)),
+  <l:Expr> "+=" <r:Expr> => Expr::Rmw(BinOp::Add, Box::new(l), Box::new(r)),
+  <l:Expr> "-=" <r:Expr> => Expr::Rmw(BinOp::Sub, Box::new(l), Box::new(r)),
+  <l:Expr> "<<=" <r:Expr> => Expr::Rmw(BinOp::Lsh, Box::new(l), Box::new(r)),
+  <l:Expr> ">>=" <r:Expr> => Expr::Rmw(BinOp::Rsh, Box::new(l), Box::new(r)),
+  <l:Expr> "&=" <r:Expr> => Expr::Rmw(BinOp::And, Box::new(l), Box::new(r)),
+  <l:Expr> "^=" <r:Expr> => Expr::Rmw(BinOp::Xor, Box::new(l), Box::new(r)),
+  <l:Expr> "|=" <r:Expr> => Expr::Rmw(BinOp::Or, Box::new(l), Box::new(r)),
 };
 
 LetType: Option<Ty> = {
@@ -109,56 +110,56 @@ Expr: Expr = {
 
 LOrExpr: Expr = {
   LAndExpr,
-  <l:LOrExpr> "||" <r:LAndExpr> => Expr::LOr(Box::new(l), Box::new(r))
+  <l:LOrExpr> "||" <r:LAndExpr> => Expr::Bin(BinOp::LOr, Box::new(l), Box::new(r))
 };
 
 LAndExpr: Expr = {
   CmpExpr,
-  <l:LAndExpr> "&&" <r:CmpExpr> => Expr::LAnd(Box::new(l), Box::new(r))
+  <l:LAndExpr> "&&" <r:CmpExpr> => Expr::Bin(BinOp::LAnd, Box::new(l), Box::new(r))
 };
 
 CmpExpr: Expr = {
   OrExpr,
-  <l:OrExpr> "==" <r:OrExpr> => Expr::Eq(Box::new(l), Box::new(r)),
-  <l:OrExpr> "!=" <r:OrExpr> => Expr::Ne(Box::new(l), Box::new(r)),
-  <l:OrExpr> "<" <r:OrExpr> => Expr::Lt(Box::new(l), Box::new(r)),
-  <l:OrExpr> ">" <r:OrExpr> => Expr::Gt(Box::new(l), Box::new(r)),
-  <l:OrExpr> "<=" <r:OrExpr> => Expr::Le(Box::new(l), Box::new(r)),
-  <l:OrExpr> ">=" <r:OrExpr> => Expr::Ge(Box::new(l), Box::new(r)),
+  <l:OrExpr> "==" <r:OrExpr> => Expr::Bin(BinOp::Eq, Box::new(l), Box::new(r)),
+  <l:OrExpr> "!=" <r:OrExpr> => Expr::Bin(BinOp::Ne, Box::new(l), Box::new(r)),
+  <l:OrExpr> "<" <r:OrExpr> => Expr::Bin(BinOp::Lt, Box::new(l), Box::new(r)),
+  <l:OrExpr> ">" <r:OrExpr> => Expr::Bin(BinOp::Gt, Box::new(l), Box::new(r)),
+  <l:OrExpr> "<=" <r:OrExpr> => Expr::Bin(BinOp::Le, Box::new(l), Box::new(r)),
+  <l:OrExpr> ">=" <r:OrExpr> => Expr::Bin(BinOp::Ge, Box::new(l), Box::new(r)),
 };
 
 OrExpr: Expr = {
   XorExpr,
-  <l:OrExpr> "|" <r:XorExpr> => Expr::Or(Box::new(l), Box::new(r))
+  <l:OrExpr> "|" <r:XorExpr> => Expr::Bin(BinOp::Or, Box::new(l), Box::new(r))
 };
 
 XorExpr: Expr = {
   AndExpr,
-  <l:XorExpr> "^" <r:AndExpr> => Expr::Xor(Box::new(l), Box::new(r))
+  <l:XorExpr> "^" <r:AndExpr> => Expr::Bin(BinOp::Xor, Box::new(l), Box::new(r))
 };
 
 AndExpr: Expr = {
   ShiftExpr,
-  <l:AndExpr> "&" <r:ShiftExpr> => Expr::And(Box::new(l), Box::new(r))
+  <l:AndExpr> "&" <r:ShiftExpr> => Expr::Bin(BinOp::And, Box::new(l), Box::new(r))
 };
 
 ShiftExpr: Expr = {
   AddExpr,
-  <l:ShiftExpr> "<<" <r:AddExpr> => Expr::Lsh(Box::new(l), Box::new(r)),
-  <l:ShiftExpr> ">>" <r:AddExpr> => Expr::Rsh(Box::new(l), Box::new(r)),
+  <l:ShiftExpr> "<<" <r:AddExpr> => Expr::Bin(BinOp::Lsh, Box::new(l), Box::new(r)),
+  <l:ShiftExpr> ">>" <r:AddExpr> => Expr::Bin(BinOp::Rsh, Box::new(l), Box::new(r)),
 };
 
 AddExpr: Expr = {
   MulExpr,
-  <l:AddExpr> "+" <r:MulExpr> => Expr::Add(Box::new(l), Box::new(r)),
-  <l:AddExpr> "-" <r:MulExpr> => Expr::Sub(Box::new(l), Box::new(r)),
+  <l:AddExpr> "+" <r:MulExpr> => Expr::Bin(BinOp::Add, Box::new(l), Box::new(r)),
+  <l:AddExpr> "-" <r:MulExpr> => Expr::Bin(BinOp::Sub, Box::new(l), Box::new(r)),
 };
 
 MulExpr: Expr = {
   CastExpr,
-  <l:MulExpr> "*" <r:CastExpr> => Expr::Mul(Box::new(l), Box::new(r)),
-  <l:MulExpr> "/" <r:CastExpr> => Expr::Div(Box::new(l), Box::new(r)),
-  <l:MulExpr> "%" <r:CastExpr> => Expr::Mod(Box::new(l), Box::new(r)),
+  <l:MulExpr> "*" <r:CastExpr> => Expr::Bin(BinOp::Mul, Box::new(l), Box::new(r)),
+  <l:MulExpr> "/" <r:CastExpr> => Expr::Bin(BinOp::Div, Box::new(l), Box::new(r)),
+  <l:MulExpr> "%" <r:CastExpr> => Expr::Bin(BinOp::Mod, Box::new(l), Box::new(r)),
 };
 
 CastExpr: Expr = {

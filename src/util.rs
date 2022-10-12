@@ -277,7 +277,9 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for PtrMut<T> {
   }
 }
 
-// Interning table
+// "Arena" allocator
+// NOTE: this could be a lot more efficient if we actually allocated from
+// contigous memory buckets
 
 pub struct Arena(Vec<Own<dyn Any>>);
 
