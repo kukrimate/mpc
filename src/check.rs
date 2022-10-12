@@ -39,10 +39,22 @@ pub enum TyS {
 }
 
 impl TyS {
-  fn is_same(ty1: Ty, ty2: Ty) -> bool { todo!() }
-  fn is_bool(&self) -> bool { todo!() }
-  fn is_int(&self) -> bool { todo!() }
-  fn is_num(&self) -> bool { todo!() }
+  fn is_same(ty1: Ty, ty2: Ty) -> bool { true }
+  fn is_bool(&self) -> bool { let v = self; matches!(TyS::Bool, v) }
+  fn is_int(&self) -> bool {
+    use TyS::*;
+    match self {
+      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn => true,
+      _ => false,
+    }
+  }
+  fn is_num(&self) -> bool {
+    use TyS::*;
+    match self {
+      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double => true,
+      _ => false,
+    }
+  }
 }
 
 /// Definitions
@@ -51,6 +63,7 @@ pub type Obj = Ptr<ObjS>;
 
 #[derive(Debug)]
 pub struct ObjS {
+  name: RefStr,
   ty: Ty,
   kind: ObjKind,
 }
@@ -75,7 +88,8 @@ pub enum ObjKind {
     is_mut: bool
   },
   Local {
-    is_mut: bool
+    is_mut: bool,
+    init: Expr,
   },
 
   // External stuff has no bodies
@@ -93,13 +107,11 @@ pub enum Def {
 
 pub type Expr = Ptr<ExprS>;
 
-#[derive(Debug)]
 pub struct ExprS {
   ty: Ty,
   kind: ExprKind,
 }
 
-#[derive(Debug)]
 pub enum ExprKind {
   Obj(Obj),
   Bool(bool),
@@ -125,6 +137,46 @@ pub enum ExprKind {
   If(Expr, Expr, Option<Expr>),
   While(Expr, Expr),
   Loop(Expr),
+  Nop,
+}
+
+impl std::fmt::Debug for ExprS {
+  fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+    use ExprKind::*;
+    match &self.kind {
+      Obj(obj) => write!(fmt, "{}", obj.name),
+      Bool(val) => write!(fmt, "{}", val),
+      Int(val) => write!(fmt, "{}", val),
+      Char(val) => write!(fmt, "c{:?}", val),
+      Str(val) => write!(fmt, "s{:?}", val),
+      Dot(arg, name) => write!(fmt, ". {:?} {}", arg, name),
+      Call(arg, args) => {
+        write!(fmt, "() {:?}", arg)?;
+        for arg in args {
+          write!(fmt, " {:?}", arg)?;
+        }
+        Ok(())
+      }
+      Index(arg, idx) => todo!(),
+      Ref(arg) => todo!(),
+      Deref(arg) => todo!(),
+      UMinus(arg) => todo!(),
+      Not(arg) => todo!(),
+      LNot(arg) => todo!(),
+      Cast(arg, ty) => todo!(),
+      Bin(op, lhs, rhs) => todo!(),
+      As(dst, src) => todo!(),
+      Block(body) => todo!(),
+      Continue => todo!(),
+      Break(arg) => todo!(),
+      Return(arg) => todo!(),
+      Let(name, is_mut, ty, init) => todo!(),
+      If(cond, tbody, ebody) => todo!(),
+      While(cond, body) => todo!(),
+      Loop(body) => todo!(),
+      Nop => todo!(),
+    }
+  }
 }
 
 /// Errors
@@ -166,15 +218,24 @@ struct Ctx<'ctx> {
   symtab: Vec<HashMap<RefStr, Def>>,
   // Type variable table
   tvars: Vec<Ty>,
+
+  // Context :(
+  return_ty: Ty,
+  break_ty: Ty,
 }
 
 impl<'ctx> Ctx<'ctx> {
   fn new(module: &'ctx parse::Module) -> Self {
+    let mut arena = Arena::new();
+    let unit = arena.alloc(TyS::Tuple(indexmap!{})).ptr();
+
     Ctx {
       module,
-      arena: Arena::new(),
+      arena,
       symtab: vec![ HashMap::new() ],
       tvars: vec![],
+      return_ty: unit,
+      break_ty: unit,
     }
   }
 
@@ -326,9 +387,8 @@ impl<'ctx> Ctx<'ctx> {
     Ok(match expr {
       Path(path) => {
         let obj = self.resolve_obj(path[0])?;
-        let ty = self.newtvar();
         self.alloc(ExprS {
-          ty: ty,
+          ty: obj.ty,
           kind: ExprKind::Obj(obj),
         })
       }
@@ -491,19 +551,77 @@ impl<'ctx> Ctx<'ctx> {
         })
       }
       Block(body) => {
-        todo!()
+        let mut nbody = vec![];
+        for expr in body {
+          nbody.push(self.check_expr(expr)?);
+        }
+        let ty = if let Some(expr) = nbody.last() {
+          expr.ty
+        } else {
+          self.alloc(TyS::Tuple(indexmap!{}))
+        };
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Block(nbody),
+        })
       }
       Continue => {
-        todo!()
+        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Continue,
+        })
       }
       Break(arg) => {
-        todo!()
+        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let arg = if let Some(expr) = arg {
+          let expr = self.check_expr(&*expr)?;
+          self.break_ty = expr.ty;
+          Some(expr)
+        } else {
+          None
+        };
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Break(arg),
+        })
       }
       Return(arg) => {
-        todo!()
+        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let arg = if let Some(expr) = arg {
+          let expr = self.check_expr(&*expr)?;
+          self.return_ty = expr.ty;
+          Some(expr)
+        } else {
+          None
+        };
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Return(arg),
+        })
       }
       Let(name, is_mut, ty, init) => {
-        todo!()
+        let init = self.check_expr(init)?;
+        let ty = if let Some(ty) = ty {
+          // FIXME: make sure this is the same type as the type of init
+          self.check_ty(ty)?
+        } else {
+          init.ty
+        };
+        let obj = self.alloc(ObjS {
+          name: *name,
+          ty: ty,
+          kind: ObjKind::Local { is_mut: *is_mut, init: init }
+        });
+        self.define(*name, Def::Obj(obj));
+
+        // FIXME: maybe make these block elements not expressions
+        // this is so ugly :(
+        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Nop,
+        })
       }
       If(cond, tbody, ebody) => {
         todo!()
@@ -512,7 +630,14 @@ impl<'ctx> Ctx<'ctx> {
         todo!()
       }
       Loop(body) => {
-        todo!()
+        let prev = self.break_ty;
+        let body = self.check_expr(body)?;
+        let expr = self.alloc(ExprS {
+          ty: self.break_ty,
+          kind: ExprKind::Loop(body)
+        });
+        self.break_ty = prev;
+        expr
       }
     })
   }
@@ -540,6 +665,7 @@ impl<'ctx> Ctx<'ctx> {
             ty_params.insert(*name, ty);
             // Create symbol for parameters
             obj_params.insert(*name, self.alloc(ObjS {
+              name: *name,
               ty: ty,
               kind: ObjKind::Param { is_mut: *is_mut },
             }));
@@ -548,6 +674,7 @@ impl<'ctx> Ctx<'ctx> {
           let ty = self.alloc(TyS::Fn(ty_params, ret_ty));
 
           let obj = self.arena.alloc(ObjS {
+            name: *name,
             ty: ty,
             kind: ObjKind::Fn {
               params: obj_params,
@@ -560,6 +687,7 @@ impl<'ctx> Ctx<'ctx> {
         Const { ty, val } => {
           let ty = self.check_ty(ty)?;
           let obj = self.arena.alloc(ObjS {
+            name: *name,
             ty: ty,
             kind: ObjKind::Const {
               val: None
@@ -571,6 +699,7 @@ impl<'ctx> Ctx<'ctx> {
         Data { is_mut, ty, init } => {
           let ty = self.check_ty(ty)?;
           let obj = self.arena.alloc(ObjS {
+            name: *name,
             ty: ty,
             kind: ObjKind::Data {
               is_mut: *is_mut,
@@ -583,6 +712,7 @@ impl<'ctx> Ctx<'ctx> {
         Extern { is_mut, ty } => {
           let ty = self.check_ty(ty)?;
           Def::Obj(self.alloc(ObjS {
+            name: *name,
             ty: ty,
             kind: ObjKind::Extern { is_mut: *is_mut }
           }))
@@ -592,6 +722,7 @@ impl<'ctx> Ctx<'ctx> {
                               self.check_ty(ret_ty)?);
           let ty = self.alloc(tys);
           Def::Obj(self.alloc(ObjS {
+            name: *name,
             ty: ty,
             kind: ObjKind::ExternFn
           }))
@@ -618,14 +749,19 @@ impl<'ctx> Ctx<'ctx> {
       match (&mut obj.kind, def) {
         (ObjKind::Fn { params, body }, Fn { body: parsed_body, .. }) => {
           self.enter();
-
+          // Add parameters to current scope
+          for (name, obj) in params {
+            self.define(*name, Def::Obj(*obj));
+          }
+          // Type check body
+          *body = Some(self.check_expr(parsed_body)?);
           self.exit();
         }
         (ObjKind::Const { val }, Const { val: parsed_val, .. }) => {
-
+          *val = Some(self.check_expr(parsed_val)?);
         }
         (ObjKind::Data { init, .. }, Data { init: parsed_init, .. }) => {
-
+          *init = Some(self.check_expr(parsed_init)?);
         }
         _ => unreachable!(),
       };
