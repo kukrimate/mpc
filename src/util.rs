@@ -1,7 +1,50 @@
 use std::any::Any;
 use std::collections::HashSet;
 use std::error::Error;
+use std::fmt;
 use std::mem::MaybeUninit;
+
+/// Same thing std uses for pretty printing
+/// This should really be an exposed API :(
+
+pub struct PadAdapter<'buf> {
+    buf: &'buf mut (dyn fmt::Write + 'buf),
+    state: PadAdapterState,
+}
+
+struct PadAdapterState {
+    on_newline: bool,
+}
+
+impl Default for PadAdapterState {
+    fn default() -> Self {
+      PadAdapterState { on_newline: true }
+    }
+}
+
+impl<'buf> PadAdapter<'buf> {
+    pub fn wrap(fmt: &'buf mut fmt::Formatter<'_>) -> Self {
+      PadAdapter {
+        buf: fmt,
+        state: Default::default(),
+      }
+    }
+}
+
+impl fmt::Write for PadAdapter<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for s in s.split_inclusive('\n') {
+            if self.state.on_newline {
+                self.buf.write_str("  ")?;
+            }
+
+            self.state.on_newline = s.ends_with('\n');
+            self.buf.write_str(s)?;
+        }
+
+        Ok(())
+    }
+}
 
 /// Boxed, type-erased error wrapper
 

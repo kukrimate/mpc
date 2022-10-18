@@ -2,13 +2,18 @@ use crate::parse::{self,BinOp};
 use crate::util::*;
 use indexmap::{indexmap,IndexMap};
 use std::collections::{HashMap};
+use std::fmt::Write;
 use std::{error,fmt};
 
 /// Types
 
 pub type Ty = Ptr<TyS>;
 
-#[derive(Debug)]
+pub enum Variant {
+  Unit(RefStr),
+  Struct(RefStr, IndexMap<RefStr, Ty>),
+}
+
 pub enum TyS {
   Unresolved,
 
@@ -30,17 +35,77 @@ pub enum TyS {
   Fn(IndexMap<RefStr, Ty>, Ty),
   Ptr(Ty),
   Arr(usize, Ty),
-  Unit(RefStr),
   Tuple(IndexMap<RefStr, Ty>),
 
-  Struct(IndexMap<RefStr, Ty>),
-  Union(IndexMap<RefStr, Ty>),
-  Enum(IndexMap<RefStr, Ty>),
+  Struct(RefStr, IndexMap<RefStr, Ty>),
+  Union(RefStr, IndexMap<RefStr, Ty>),
+  Enum(RefStr, IndexMap<RefStr, Variant>),
+}
+
+fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: W) -> fmt::Result
+  where I: Iterator<Item=T>,
+        W: Fn(&mut fmt::Formatter<'_>, &T) -> fmt::Result,
+{
+  write!(f, "(")?;
+  let mut comma = false;
+  for item in iter {
+    if comma {
+      write!(f, ", ")?;
+    } else {
+      comma = true;
+    }
+    wfn(f, &item)?;
+  }
+  write!(f, ")")
+}
+
+fn write_params(f: &mut fmt::Formatter<'_>, params: &IndexMap<RefStr, Ty>) -> fmt::Result {
+  write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
+}
+
+fn write_variants(f: &mut fmt::Formatter<'_>, variants: &IndexMap<RefStr, Variant>) -> fmt::Result {
+  write_comma_separated(f, variants.iter(), |f, (name, variant)| {
+    match variant {
+      Variant::Unit(name) => {
+        write!(f, "{}", name)
+      },
+      Variant::Struct(name, params) => {
+        write!(f, "{} ", name)?;
+        write_params(f, params)
+      },
+    }
+  })
 }
 
 impl TyS {
-  fn is_same(ty1: Ty, ty2: Ty) -> bool { true }
-  fn is_bool(&self) -> bool { let v = self; matches!(TyS::Bool, v) }
+  fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use TyS::*;
+    match self {
+      Struct(name, params) => {
+        write!(f, "struct {} ", name)?;
+        write_params(f, params)
+      },
+      Union(name, params) => {
+        write!(f, "union {} ", name)?;
+        write_params(f, params)
+      },
+      Enum(name, variants) => {
+        write!(f, "enum {} ", name)?;
+        write_variants(f, variants)
+      }
+      _ => unreachable!(),
+    }
+  }
+
+  fn is_same(ty1: Ty, ty2: Ty) -> bool {
+    true
+  }
+
+  fn is_bool(&self) -> bool {
+    let v = self;
+    matches!(TyS::Bool, v)
+  }
+
   fn is_int(&self) -> bool {
     use TyS::*;
     match self {
@@ -57,50 +122,40 @@ impl TyS {
   }
 }
 
-/// Definitions
-
-pub type Obj = Ptr<ObjS>;
-
-#[derive(Debug)]
-pub struct ObjS {
-  name: RefStr,
-  ty: Ty,
-  kind: ObjKind,
-}
-
-#[derive(Debug)]
-pub enum ObjKind {
-  // Function, const, and data with bodies
-  Fn {
-    params: IndexMap<RefStr, Obj>,
-    body: Option<Expr>
-  },
-  Const {
-    val: Option<Expr>
-  },
-  Data {
-    is_mut: bool,
-    init: Option<Expr>
-  },
-
-  // Function parameters and locals
-  Param {
-    is_mut: bool
-  },
-  Local {
-    is_mut: bool,
-    init: Expr,
-  },
-
-  // External stuff has no bodies
-  Extern { is_mut: bool },
-  ExternFn,
-}
-
-#[derive(Debug)]
-pub enum Def {
-  Ty(Ty),
-  Obj(Obj),
+impl fmt::Debug for TyS {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use TyS::*;
+    match self {
+      Unresolved => unreachable!(),
+      Var(idx) => write!(f, "'{}", idx),
+      Bool => write!(f, "Bool"),
+      Uint8 => write!(f, "Uint8"),
+      Int8 => write!(f, "Int8"),
+      Uint16 => write!(f, "Uint16"),
+      Int16 => write!(f, "Int16"),
+      Uint32 => write!(f, "Uint32"),
+      Int32 => write!(f, "Int32"),
+      Uint64 => write!(f, "Uint64"),
+      Int64 => write!(f, "Int64"),
+      Uintn => write!(f, "Uintn"),
+      Intn => write!(f, "Intn"),
+      Float => write!(f, "Float"),
+      Double => write!(f, "Double"),
+      Fn(params, ty) => {
+        write!(f, "Function")?;
+        write_params(f, params)?;
+        write!(f, " -> {:?}", ty)
+      },
+      Ptr(ty) => write!(f, "*{:?}", ty),
+      Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
+      Tuple(params) => write_params(f, params),
+      Struct(name, _) |
+      Union(name, _) |
+      Enum(name, _) => {
+        write!(f, "{}", name)
+      }
+    }
+  }
 }
 
 /// Expressions
@@ -133,48 +188,123 @@ pub enum ExprKind {
   Continue,
   Break(Option<Expr>),
   Return(Option<Expr>),
-  Let(RefStr, bool, Option<Ty>, Expr),
+  Let(Obj, Expr),
   If(Expr, Expr, Option<Expr>),
   While(Expr, Expr),
   Loop(Expr),
-  Nop,
 }
 
-impl std::fmt::Debug for ExprS {
-  fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+impl fmt::Debug for ExprS {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ExprKind::*;
     match &self.kind {
-      Obj(obj) => write!(fmt, "{}", obj.name),
-      Bool(val) => write!(fmt, "{}", val),
-      Int(val) => write!(fmt, "{}", val),
-      Char(val) => write!(fmt, "c{:?}", val),
-      Str(val) => write!(fmt, "s{:?}", val),
-      Dot(arg, name) => write!(fmt, ". {:?} {}", arg, name),
+      Obj(obj) => write!(f, "{}", obj.name),
+      Bool(val) => write!(f, "{}", val),
+      Int(val) => write!(f, "{}", val),
+      Char(val) => write!(f, "c{:?}", val),
+      Str(val) => write!(f, "s{:?}", val),
+      Dot(arg, name) => write!(f, ". {:?} {}", arg, name),
       Call(arg, args) => {
-        write!(fmt, "() {:?}", arg)?;
-        for arg in args {
-          write!(fmt, " {:?}", arg)?;
-        }
-        Ok(())
+        write!(f, "{:?}", arg)?;
+        write_comma_separated(f, args.iter(),
+          |f, (name, arg)| write!(f, "{}: {:?}", name, arg))
       }
-      Index(arg, idx) => todo!(),
-      Ref(arg) => todo!(),
-      Deref(arg) => todo!(),
-      UMinus(arg) => todo!(),
-      Not(arg) => todo!(),
-      LNot(arg) => todo!(),
-      Cast(arg, ty) => todo!(),
-      Bin(op, lhs, rhs) => todo!(),
-      As(dst, src) => todo!(),
-      Block(body) => todo!(),
-      Continue => todo!(),
-      Break(arg) => todo!(),
-      Return(arg) => todo!(),
-      Let(name, is_mut, ty, init) => todo!(),
-      If(cond, tbody, ebody) => todo!(),
-      While(cond, body) => todo!(),
-      Loop(body) => todo!(),
-      Nop => todo!(),
+      Index(arg, idx) => write!(f, "{:?}[{:?}]", arg, idx),
+      Ref(arg) => write!(f, "Ref {:?}", arg),
+      Deref(arg) => write!(f, "Ind {:?}", arg),
+      UMinus(arg) => write!(f, "Neg {:?}", arg),
+      Not(arg) => write!(f, "Not {:?}", arg),
+      LNot(arg) => write!(f, "LNot {:?}", arg),
+      Cast(arg, ty) => write!(f, "Cast {:?} {:?}", arg, ty),
+      Bin(op, lhs, rhs) => write!(f, "{:?} {:?} {:?}", op, lhs, rhs),
+      As(dst, src) => write!(f, "As {:?} {:?}", dst, src),
+      Block(body) => {
+        write!(f, "{{\n")?;
+        let mut pf = PadAdapter::wrap(f);
+        for expr in body {
+          write!(&mut pf, "{:?};\n", expr)?;
+        }
+        write!(f, "}}")
+      },
+      Continue => write!(f, "continue"),
+      Break(None) => write!(f, "break"),
+      Break(Some(arg)) => write!(f, "break {:?}", arg),
+      Return(None) => write!(f, "return"),
+      Return(Some(arg)) => write!(f, "return {:?}", arg),
+      Let(obj, init) => write!(f, "let {}: {:?} = {:?}", obj.name, obj.ty, init),
+      If(cond, tbody, None) => write!(f, "if {:?} {:?}", cond, tbody),
+      If(cond, tbody, Some(ebody)) => write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody),
+      While(cond, body) => write!(f, "while {:?} {:?}", cond, body),
+      Loop(body) => write!(f, "loop {:?}", body),
+    }
+  }
+}
+
+/// Definitions
+
+pub type Obj = Ptr<ObjS>;
+
+pub struct ObjS {
+  name: RefStr,
+  ty: Ty,
+  kind: ObjKind,
+}
+
+impl ObjS {
+  fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use ObjKind::*;
+    match &self.kind {
+      Fn { params, body } => write!(f, "function {} {:?}", self.name, body.as_ref().unwrap()),
+      Const { val } => write!(f, "const {} = {:?}", self.name, val.as_ref().unwrap()),
+      Data { is_mut: false, .. } => write!(f, "data {}", self.name),
+      Data { is_mut: true, .. } => write!(f, "data mut {}", self.name),
+      Extern { is_mut: false } => write!(f, "extern data {}", self.name),
+      Extern { is_mut: true } => write!(f, "extern data mut {}", self.name),
+      ExternFn => write!(f, "extern function {}", self.name),
+      _ => unreachable!(),
+    }
+  }
+}
+
+pub enum ObjKind {
+  // Function, const, and data with bodies
+  Fn {
+    params: IndexMap<RefStr, Obj>,
+    body: Option<Expr>
+  },
+  Const {
+    val: Option<Expr>
+  },
+  Data {
+    is_mut: bool,
+    init: Option<Expr>
+  },
+
+  // Function parameters and locals
+  Param {
+    is_mut: bool
+  },
+  Local {
+    is_mut: bool,
+    init: Expr,
+  },
+
+  // External stuff has no bodies
+  Extern { is_mut: bool },
+  ExternFn,
+}
+
+pub enum Def {
+  Ty(Ty),
+  Obj(Obj),
+}
+
+impl fmt::Debug for Def {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    use Def::*;
+    match self {
+      Ty(ty) => ty.write_def(f),
+      Obj(obj) => obj.write_def(f),
     }
   }
 }
@@ -187,8 +317,8 @@ struct UnknownTypeError {
 }
 
 impl fmt::Display for UnknownTypeError {
-  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    write!(fmt, "Unknown typename {}", self.name)
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Unknown typename {}", self.name)
   }
 }
 
@@ -200,8 +330,8 @@ struct UnknownObjectError {
 }
 
 impl fmt::Display for UnknownObjectError {
-  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    write!(fmt, "Unknown object {}", self.name)
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Unknown object {}", self.name)
   }
 }
 
@@ -288,21 +418,20 @@ impl<'ctx> Ctx<'ctx> {
     Ok(nparams)
   }
 
-  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<IndexMap<RefStr, Ty>> {
-    let mut nparams = indexmap!{};
+  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<IndexMap<RefStr, Variant>> {
+    let mut nvariants = indexmap!{};
     for (name, variant) in variants {
       use parse::Variant::*;
       match variant {
         Unit => {
-          nparams.insert(*name, self.alloc(TyS::Unit(*name)));
+          nvariants.insert(*name, Variant::Unit(*name));
         }
         Struct(params) => {
-          let sparams = self.check_params(params)?;
-          nparams.insert(*name, self.alloc(TyS::Struct(sparams)));
+          nvariants.insert(*name, Variant::Struct(*name, self.check_params(params)?));
         }
       }
     }
-    Ok(nparams)
+    Ok(nvariants)
   }
 
   fn check_ty(&mut self, ty: &parse::Ty) -> MRes<Ty> {
@@ -424,8 +553,8 @@ impl<'ctx> Ctx<'ctx> {
         let arg = self.check_expr(arg)?;
         let ty = match &*arg.ty {
           TyS::Tuple(params) |
-          TyS::Struct(params) |
-          TyS::Union(params) => {
+          TyS::Struct(_, params) |
+          TyS::Union(_, params) => {
             if let Some(pty) = params.get(name) {
               *pty
             } else {
@@ -615,19 +744,34 @@ impl<'ctx> Ctx<'ctx> {
         });
         self.define(*name, Def::Obj(obj));
 
-        // FIXME: maybe make these block elements not expressions
-        // this is so ugly :(
         let ty = self.alloc(TyS::Tuple(indexmap!{}));
         self.alloc(ExprS {
           ty: ty,
-          kind: ExprKind::Nop,
+          kind: ExprKind::Let(obj, init),
         })
       }
       If(cond, tbody, ebody) => {
-        todo!()
+        let cond = self.check_expr(cond)?;
+        let tbody = self.check_expr(tbody)?;
+        let (ebody, ty) = if let Some(ebody) = ebody {
+          (Some(self.check_expr(ebody)?), tbody.ty)
+        } else {
+          (None, self.alloc(TyS::Tuple(indexmap!{})))
+        };
+
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::If(cond, tbody, ebody),
+        })
       }
       While(cond, body) => {
-        todo!()
+        let cond = self.check_expr(cond)?;
+        let body = self.check_expr(body)?;
+        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::While(cond, body),
+        })
       }
       Loop(body) => {
         let prev = self.break_ty;
@@ -653,7 +797,7 @@ impl<'ctx> Ctx<'ctx> {
       let def = match def {
         Struct { .. } | Union { .. } | Enum { .. } => {
           let ty = self.arena.alloc(TyS::Unresolved);
-          todo_types.push((ty, def));
+          todo_types.push((ty, name, def));
           Def::Ty(ty.ptr())
         }
         Fn { params, ret_ty, body } => {
@@ -734,11 +878,11 @@ impl<'ctx> Ctx<'ctx> {
 
     // Pass 2: resolve references in types
 
-    for (mut ty, def) in todo_types.into_iter() {
+    for (mut ty, name, def) in todo_types.into_iter() {
       *ty = match def {
-        Struct { params } => TyS::Struct(self.check_params(params)?),
-        Union { params } => TyS::Union(self.check_params(params)?),
-        Enum { variants } => TyS::Enum(self.check_variants(variants)?),
+        Struct { params } => TyS::Struct(*name, self.check_params(params)?),
+        Union { params } => TyS::Union(*name, self.check_params(params)?),
+        Enum { variants } => TyS::Enum(*name, self.check_variants(variants)?),
         _ => unreachable!(),
       };
     }
