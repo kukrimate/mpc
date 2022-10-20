@@ -1,6 +1,7 @@
 #![feature(hash_set_entry)]
 
 mod check;
+mod gen;
 mod parse;
 
 #[allow(dead_code)]
@@ -8,6 +9,7 @@ mod util;
 
 use clap::{Arg,App};
 use check::*;
+use gen::*;
 use parse::*;
 use util::*;
 
