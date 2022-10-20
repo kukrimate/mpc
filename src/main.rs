@@ -14,8 +14,17 @@ use parse::*;
 use util::*;
 
 fn compile(path: &str) -> MRes<()> {
+  // Parse module
   let module = parse_module(path)?;
-  check_module(&module)
+  let module_id = std::path::Path::new(path).file_name().unwrap().to_str().unwrap();
+  
+  // Typecheck and codegen module
+  let mut gen_ctx = GenCtx::new(RefStr::new(module_id));
+  let mut check_ctx = CheckCtx::new(&mut gen_ctx);
+  check_ctx.check_module(&module)?;
+
+  gen_ctx.dump();
+  Ok(())
 }
 
 fn main() {

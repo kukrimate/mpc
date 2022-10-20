@@ -58,6 +58,12 @@ pub fn init() {
   unsafe { STRING_TABLE = MaybeUninit::new(HashSet::new()) }
 }
 
+fn to_owned_c(s: &str) -> String {
+  let mut s = str::to_owned(s);
+  s.push('\0');
+  s
+}
+
 #[derive(Clone, Copy)]
 pub struct RefStr {
   s: &'static str
@@ -65,29 +71,32 @@ pub struct RefStr {
 
 impl RefStr {
   pub fn new(s: &str) -> RefStr {
+    let s = to_owned_c(s);
     unsafe {
       RefStr {
-        s: STRING_TABLE.assume_init_mut().get_or_insert_with(s, str::to_owned)
+        s: STRING_TABLE.assume_init_mut().get_or_insert(s)
       }
     }
   }
-}
 
-impl core::borrow::Borrow<str> for RefStr {
-  fn borrow(&self) -> &str {
-    self.s
+  pub fn borrow_rs(&self) -> &str {
+    &self.s[0..self.s.len() - 1]
+  }
+
+  pub fn borrow_c(&self) -> *const i8 {
+    unsafe { std::mem::transmute(&self.s.as_bytes()[0] as *const u8) }
   }
 }
 
 impl std::fmt::Display for RefStr {
   fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-    self.s.fmt(fmt)
+    self.borrow_rs().fmt(fmt)
   }
 }
 
 impl std::fmt::Debug for RefStr {
   fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-    self.s.fmt(fmt)
+    self.borrow_rs().fmt(fmt)
   }
 }
 
@@ -103,6 +112,10 @@ impl std::hash::Hash for RefStr {
   fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
     (self.s as *const str).hash(state)
   }
+}
+
+pub fn empty_cstr() -> *const i8 {
+  unsafe { std::mem::transmute(&b"\0"[0] as *const u8) }
 }
 
 /// Owning pointer

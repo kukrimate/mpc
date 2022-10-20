@@ -1,4 +1,5 @@
 use crate::parse::{self,BinOp};
+use crate::gen::*;
 use crate::util::*;
 use indexmap::{indexmap,IndexMap};
 use std::collections::{HashMap};
@@ -183,6 +184,7 @@ pub enum ExprKind {
   LNot(Expr),
   Cast(Expr, Ty),
   Bin(BinOp, Expr, Expr),
+  Rmw(BinOp, Expr, Expr),
   As(Expr, Expr),
   Block(Vec<Expr>),
   Continue,
@@ -217,6 +219,7 @@ impl fmt::Debug for ExprS {
       LNot(arg) => write!(f, "LNot {:?}", arg),
       Cast(arg, ty) => write!(f, "Cast {:?} {:?}", arg, ty),
       Bin(op, lhs, rhs) => write!(f, "{:?} {:?} {:?}", op, lhs, rhs),
+      Rmw(op, lhs, rhs) => write!(f, "{:?}As {:?} {:?}", op, lhs, rhs),
       As(dst, src) => write!(f, "As {:?} {:?}", dst, src),
       Block(body) => {
         write!(f, "{{\n")?;
@@ -246,59 +249,46 @@ pub type Obj = Ptr<ObjS>;
 
 pub struct ObjS {
   name: RefStr,
+  is_mut: bool,
   ty: Ty,
-  kind: ObjKind,
+  val: GenVal,
 }
 
+/*
 impl ObjS {
   fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ObjKind::*;
     match &self.kind {
-      Fn { params, body } => write!(f, "function {} {:?}", self.name, body.as_ref().unwrap()),
       Const { val } => write!(f, "const {} = {:?}", self.name, val.as_ref().unwrap()),
-      Data { is_mut: false, .. } => write!(f, "data {}", self.name),
-      Data { is_mut: true, .. } => write!(f, "data mut {}", self.name),
-      Extern { is_mut: false } => write!(f, "extern data {}", self.name),
-      Extern { is_mut: true } => write!(f, "extern data mut {}", self.name),
-      ExternFn => write!(f, "extern function {}", self.name),
+      Fn { .. } => write!(f, "function {}", self.name),
+      Data => write!(f, "data {}", self.name),
       _ => unreachable!(),
     }
   }
 }
 
 pub enum ObjKind {
-  // Function, const, and data with bodies
-  Fn {
-    params: IndexMap<RefStr, Obj>,
-    body: Option<Expr>
-  },
+  // Constants
   Const {
     val: Option<Expr>
   },
-  Data {
-    is_mut: bool,
-    init: Option<Expr>
-  },
+
+  // Functions and globals
+  Fn,
+  Data,
 
   // Function parameters and locals
-  Param {
-    is_mut: bool
-  },
-  Local {
-    is_mut: bool,
-    init: Expr,
-  },
-
-  // External stuff has no bodies
-  Extern { is_mut: bool },
-  ExternFn,
+  Local,
 }
+*/
 
 pub enum Def {
   Ty(Ty),
+  Const(Expr),
   Obj(Obj),
 }
 
+/*
 impl fmt::Debug for Def {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use Def::*;
@@ -308,6 +298,7 @@ impl fmt::Debug for Def {
     }
   }
 }
+*/
 
 /// Errors
 
@@ -339,9 +330,10 @@ impl error::Error for UnknownObjectError {}
 
 /// Type checker logic
 
-struct Ctx<'ctx> {
-  // Module being analyzed
-  module: &'ctx parse::Module,
+pub struct CheckCtx<'ctx> {
+  // Code generator
+  gen: &'ctx mut GenCtx,
+
   // Allocator for IR structures
   arena: Arena,
   // Symbol table
@@ -354,13 +346,13 @@ struct Ctx<'ctx> {
   break_ty: Ty,
 }
 
-impl<'ctx> Ctx<'ctx> {
-  fn new(module: &'ctx parse::Module) -> Self {
+impl<'ctx> CheckCtx<'ctx> {
+  pub fn new(gen: &'ctx mut GenCtx) -> Self {
     let mut arena = Arena::new();
     let unit = arena.alloc(TyS::Tuple(indexmap!{})).ptr();
 
-    Ctx {
-      module,
+    CheckCtx {
+      gen,
       arena,
       symtab: vec![ HashMap::new() ],
       tvars: vec![],
@@ -460,7 +452,7 @@ impl<'ctx> Ctx<'ctx> {
         let ty = TyS::Ptr(self.check_ty(base_ty)?);
         self.alloc(ty)
       },
-      Arr(elem_cnt, elem_ty) => {
+      Arr(_, elem_ty) => {
         // FIXME: evaluate elem_cnt constant expression
         let ty = TyS::Arr(0, self.check_ty(elem_ty)?);
         self.alloc(ty)
@@ -652,10 +644,10 @@ impl<'ctx> Ctx<'ctx> {
           kind: ExprKind::LNot(arg),
         })
       }
-      Cast(arg, ty) => {
+      Cast(_, _) => {
         todo!()
       }
-      Bin(op, lhs, rhs) | Rmw(op, lhs, rhs) => {
+      Bin(op, lhs, rhs) => {
         let lhs = self.check_expr(lhs)?;
         let rhs = self.check_expr(rhs)?;
         let ty = if let Some(ty) = check_bin(*op, lhs.ty, rhs.ty) {
@@ -666,6 +658,19 @@ impl<'ctx> Ctx<'ctx> {
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Bin(*op, lhs, rhs),
+        })
+      }
+      Rmw(op, lhs, rhs) => {
+        let lhs = self.check_expr(lhs)?;
+        let rhs = self.check_expr(rhs)?;
+        let ty = if let Some(ty) = check_bin(*op, lhs.ty, rhs.ty) {
+          ty
+        } else {
+          panic!("Invalid arguments {:?} and {:?} for {:?}", lhs.ty, rhs.ty, op);
+        };
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Rmw(*op, lhs, rhs),
         })
       }
       As(lhs, rhs) => {
@@ -680,10 +685,12 @@ impl<'ctx> Ctx<'ctx> {
         })
       }
       Block(body) => {
+        self.enter();
         let mut nbody = vec![];
         for expr in body {
           nbody.push(self.check_expr(expr)?);
         }
+        self.exit();
         let ty = if let Some(expr) = nbody.last() {
           expr.ty
         } else {
@@ -730,17 +737,22 @@ impl<'ctx> Ctx<'ctx> {
         })
       }
       Let(name, is_mut, ty, init) => {
+        // Generate initializer
         let init = self.check_expr(init)?;
+
+        // Define symbol
         let ty = if let Some(ty) = ty {
           // FIXME: make sure this is the same type as the type of init
           self.check_ty(ty)?
         } else {
           init.ty
         };
+        let val = self.gen.alloca(ty);
         let obj = self.alloc(ObjS {
           name: *name,
+          is_mut: *is_mut,
           ty: ty,
-          kind: ObjKind::Local { is_mut: *is_mut, init: init }
+          kind: ObjKind::Local(val),
         });
         self.define(*name, Def::Obj(obj));
 
@@ -786,44 +798,126 @@ impl<'ctx> Ctx<'ctx> {
     })
   }
 
-  fn check_root(&mut self) -> MRes<()> {
+  fn gen_value(&mut self, expr: Expr) -> MRes<GenVal> {
+    use ExprKind::*;
+    match &expr.kind {
+      Obj(obj) => {
+        use ObjKind::*;
+        match &obj.kind {
+          Const { val } => self.gen_value(val.unwrap())?,
+          Fn => (),
+          Data => (),
+          Local(val) => (),
+        }
+        todo!()
+      }
+      Bool(val) => {
+        todo!()
+      }
+      Int(val) => {
+        todo!()
+      }
+      Char(val) => {
+        todo!()
+      }
+      Str(val) => {
+        todo!()
+      }
+      Dot(arg, name) => {
+        todo!()
+      }
+      Call(arg, args) => {
+        todo!()
+      }
+      Index(arg, idx) => {
+        todo!()
+      }
+      Ref(arg) => {
+        todo!()
+      }
+      Deref(arg) => {
+        todo!()
+      }
+      UMinus(arg) => {
+        todo!()
+      }
+      Not(arg) => {
+        todo!()
+      }
+      LNot(arg) => {
+        todo!()
+      }
+      Cast(_, _) => {
+        todo!()
+      }
+      Bin(op, lhs, rhs) => {
+        todo!()
+      }
+      Rmw(op, lhs, rhs) => {
+        todo!()
+      }
+      As(lhs, rhs) => {
+        todo!()
+      }
+      Block(body) => {
+        todo!()
+      }
+      Continue => {
+        todo!()
+      }
+      Break(arg) => {
+        todo!()
+      }
+      Return(arg) => {
+        todo!()
+      }
+      Let(obj, init) => {
+        todo!()
+      }
+      If(cond, tbody, ebody) => {
+        todo!()
+      }
+      While(cond, body) => {
+        todo!()
+      }
+      Loop(body) => {
+        todo!()
+      }
+    }
+  }
+
+  pub fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
     use parse::Def::*;
 
     // Pass 1: create symbols
     let mut todo_types = vec![];
     let mut todo_objects = vec![];
 
-    for (name, def) in &self.module.defs {
+    for (name, def) in &module.defs {
       let def = match def {
-        Struct { .. } | Union { .. } | Enum { .. } => {
+        Struct { .. } |
+        Union { .. } |
+        Enum { .. } => {
           let ty = self.arena.alloc(TyS::Unresolved);
           todo_types.push((ty, name, def));
           Def::Ty(ty.ptr())
         }
-        Fn { params, ret_ty, body } => {
-          // Create function type
+        Fn { params, ret_ty, .. } => {
+          // Create type
           let mut ty_params = indexmap!{};
-          let mut obj_params = indexmap!{};
           for (name, (is_mut, ty)) in params {
             let ty = self.check_ty(ty)?;
             ty_params.insert(*name, ty);
-            // Create symbol for parameters
-            obj_params.insert(*name, self.alloc(ObjS {
-              name: *name,
-              ty: ty,
-              kind: ObjKind::Param { is_mut: *is_mut },
-            }));
           }
           let ret_ty = self.check_ty(ret_ty)?;
           let ty = self.alloc(TyS::Fn(ty_params, ret_ty));
 
+          // Create object
           let obj = self.arena.alloc(ObjS {
             name: *name,
+            is_mut: false,
             ty: ty,
-            kind: ObjKind::Fn {
-              params: obj_params,
-              body: None,
-            }
+            kind: ObjKind::Fn,
           });
           todo_objects.push((obj, def));
           Def::Obj(obj.ptr())
@@ -832,23 +926,22 @@ impl<'ctx> Ctx<'ctx> {
           let ty = self.check_ty(ty)?;
           let obj = self.arena.alloc(ObjS {
             name: *name,
+            is_mut: false,
             ty: ty,
             kind: ObjKind::Const {
               val: None
             }
           });
-          todo_objects.push((obj, def));
-          Def::Obj(obj.ptr())
+          todo_consts.push((obj, def));
+          Def::Const(obj.ptr())
         }
-        Data { is_mut, ty, init } => {
+        Data { is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
           let obj = self.arena.alloc(ObjS {
             name: *name,
+            is_mut: *is_mut,
             ty: ty,
-            kind: ObjKind::Data {
-              is_mut: *is_mut,
-              init: None
-            }
+            kind: ObjKind::Data
           });
           todo_objects.push((obj, def));
           Def::Obj(obj.ptr())
@@ -857,8 +950,9 @@ impl<'ctx> Ctx<'ctx> {
           let ty = self.check_ty(ty)?;
           Def::Obj(self.alloc(ObjS {
             name: *name,
+            is_mut: *is_mut,
             ty: ty,
-            kind: ObjKind::Extern { is_mut: *is_mut }
+            kind: ObjKind::Data
           }))
         }
         ExternFn { params, ret_ty } => {
@@ -867,8 +961,9 @@ impl<'ctx> Ctx<'ctx> {
           let ty = self.alloc(tys);
           Def::Obj(self.alloc(ObjS {
             name: *name,
+            is_mut: false,
             ty: ty,
-            kind: ObjKind::ExternFn
+            kind: ObjKind::Fn
           }))
         }
       };
@@ -890,33 +985,48 @@ impl<'ctx> Ctx<'ctx> {
     // Pass 3: type check object bodies
 
     for (mut obj, def) in todo_objects.into_iter() {
+      // Save these to not upset the borrow checker
+      let name = obj.name;
+      let ty = obj.ty;
+
+      // Generate object bodies
       match (&mut obj.kind, def) {
-        (ObjKind::Fn { params, body }, Fn { body: parsed_body, .. }) => {
+        (ObjKind::Fn, Fn { params, body, .. }) => {
           self.enter();
-          // Add parameters to current scope
-          for (name, obj) in params {
-            self.define(*name, Def::Obj(*obj));
+          self.gen.begin_func(name, ty);
+          // Add parameters to scope
+          for (idx, (name, (is_mut, ty))) in params.iter().enumerate() {
+            let ty = self.check_ty(ty)?;
+            // Copy parameter to stack
+            let val = self.gen.get_param(idx);
+            let stor = self.gen.alloca(ty);
+            self.gen.store(val, stor);
+            // Allocate symbol
+            let obj = self.alloc(ObjS {
+              name: *name,
+              is_mut: *is_mut,
+              ty: ty,
+              kind: ObjKind::Local(stor),
+            });
+            self.define(*name, Def::Obj(obj));
           }
           // Type check body
-          *body = Some(self.check_expr(parsed_body)?);
+          let body = self.check_expr(body)?;
+          self.gen_value(body);
+          self.gen.end_func();
           self.exit();
         }
-        (ObjKind::Const { val }, Const { val: parsed_val, .. }) => {
-          *val = Some(self.check_expr(parsed_val)?);
-        }
-        (ObjKind::Data { init, .. }, Data { init: parsed_init, .. }) => {
-          *init = Some(self.check_expr(parsed_init)?);
+        (ObjKind::Data { .. }, Data { init, .. }) => {
+          self.gen.begin_data(name, ty);
+          let expr = self.check_expr(init)?;
+          self.gen_value(expr)?;
+          self.gen.end_data();
         }
         _ => unreachable!(),
       };
     }
 
-    println!("{:#?}", self.symtab);
+    // println!("{:#?}", self.symtab);
     Ok(())
   }
-}
-
-pub fn check_module(module: &parse::Module) -> MRes<()> {
-  let mut ctx = Ctx::new(module);
-  ctx.check_root()
 }
