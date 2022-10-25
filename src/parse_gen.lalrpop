@@ -14,37 +14,37 @@ Path: Path = {
 
 // Types
 
-TypeName: Ty = {
-  "Bool"      => Ty::Bool,
-  "Uint8"     => Ty::Uint8,
-  "Int8"      => Ty::Int8,
-  "Uint16"    => Ty::Uint16,
-  "Int16"     => Ty::Int16,
-  "Uint32"    => Ty::Uint32,
-  "Int32"     => Ty::Int32,
-  "Uint64"    => Ty::Uint64,
-  "Int64"     => Ty::Int64,
-  "Uintn"     => Ty::Uintn,
-  "Intn"      => Ty::Intn,
-  "Float"     => Ty::Float,
-  "Double"    => Ty::Double,
-  <p:Path>    => Ty::Path(p),
+TypeName: TyRef = {
+  "Bool"      => TyRef::Bool,
+  "Uint8"     => TyRef::Uint8,
+  "Int8"      => TyRef::Int8,
+  "Uint16"    => TyRef::Uint16,
+  "Int16"     => TyRef::Int16,
+  "Uint32"    => TyRef::Uint32,
+  "Int32"     => TyRef::Int32,
+  "Uint64"    => TyRef::Uint64,
+  "Int64"     => TyRef::Int64,
+  "Uintn"     => TyRef::Uintn,
+  "Intn"      => TyRef::Intn,
+  "Float"     => TyRef::Float,
+  "Double"    => TyRef::Double,
+  <p:Path>    => TyRef::Path(p),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
-    Ty::Fn(params, Box::new(ret)),
+    TyRef::Fn(params, Box::new(ret)),
   "*" <ty:TypeName> =>
-    Ty::Ptr(Box::new(ty)),
+    TyRef::Ptr(Box::new(ty)),
   "[" <l:Expr> "]" <t:TypeName> =>
-    Ty::Arr(Box::new(l), Box::new(t)),
+    TyRef::Arr(Box::new(l), Box::new(t)),
   "(" <params:ParameterListOpt>  ")" =>
-    Ty::Tuple(params)
+    TyRef::Tuple(params)
 };
 
-ParameterListOpt: IndexMap<RefStr, Ty> = {
+ParameterListOpt: IndexMap<RefStr, TyRef> = {
   ParameterList,
   => indexmap! {},
 };
 
-ParameterList: IndexMap<RefStr, Ty> = {
+ParameterList: IndexMap<RefStr, TyRef> = {
   <name:Identifier> ":" <ty:TypeName> => indexmap! { name => ty },
   <mut l:ParameterList> "," <name:Identifier> ":" <ty:TypeName> => {
     l.insert(name, ty);
@@ -52,9 +52,9 @@ ParameterList: IndexMap<RefStr, Ty> = {
   },
 };
 
-ReturnType: Ty = {
+ReturnType: TyRef = {
   "->" <t:TypeName> => t,
-  => Ty::Tuple(indexmap! {})
+  => TyRef::Tuple(indexmap! {})
 };
 
 // Blocks
@@ -95,7 +95,7 @@ BlockItem: Expr = {
   <l:Expr> "|=" <r:Expr> => Expr::Rmw(BinOp::Or, Box::new(l), Box::new(r)),
 };
 
-LetType: Option<Ty> = {
+LetType: Option<TyRef> = {
   ":" <ty:TypeName> => Some(ty),
                     => None,
 };
@@ -169,8 +169,8 @@ CastExpr: Expr = {
 
 PreExpr: Expr = {
   PostExpr,
-  "&" <e:PreExpr> => Expr::Ref(Box::new(e)),
-  "*" <e:PreExpr> => Expr::Deref(Box::new(e)),
+  "&" <e:PreExpr> => Expr::Adr(Box::new(e)),
+  "*" <e:PreExpr> => Expr::Ind(Box::new(e)),
   "+" <e:PreExpr> => Expr::UPlus(Box::new(e)),
   "-" <e:PreExpr> => Expr::UMinus(Box::new(e)),
   "~" <e:PreExpr> => Expr::Not(Box::new(e)),
@@ -212,13 +212,13 @@ PrimExpr: Expr = {
 
 TypeDefinition: () = {
   "struct" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.defs.insert(name, Def::Struct { params });
+    module.ty_defs.insert(name, TyDef::Struct { params });
   },
   "union" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.defs.insert(name, Def::Union { params });
+    module.ty_defs.insert(name, TyDef::Union { params });
   },
   "enum" <name:Identifier> "(" <variants:VariantListOpt> ")" => {
-    module.defs.insert(name, Def::Enum { variants });
+    module.ty_defs.insert(name, TyDef::Enum { variants });
   },
 };
 
@@ -242,27 +242,6 @@ Variant: (RefStr, Variant) = {
     (name, Variant::Struct(params)),
 };
 
-FunctionDefinition: () = {
-  "function" <name:Identifier>
-      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType>
-      <body:Block> => {
-    module.defs.insert(name, Def::Fn { params, ret_ty, body });
-  }
-};
-
-ParameterDefinitionListOpt: IndexMap<RefStr, (bool, Ty)> = {
-  ParameterDefinitionList,
-  => indexmap! {}
-};
-
-ParameterDefinitionList: IndexMap<RefStr, (bool, Ty)> = {
-  <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => indexmap ! { name => (m.is_some(), ty) },
-  <mut map:ParameterDefinitionList> "," <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
-    map.insert(name, (m.is_some(), ty));
-    map
-  },
-};
-
 ConstDefinition: () = {
   "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
     module.defs.insert(name, Def::Const { ty, val });
@@ -273,6 +252,27 @@ DataDefinition: () = {
   "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
     module.defs.insert(name, Def::Data { is_mut: m.is_some(), ty, init });
   }
+};
+
+FunctionDefinition: () = {
+  "function" <name:Identifier>
+      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType>
+      <body:Block> => {
+    module.defs.insert(name, Def::Fn { params, ret_ty, body });
+  }
+};
+
+ParameterDefinitionListOpt: IndexMap<RefStr, (bool, TyRef)> = {
+  ParameterDefinitionList,
+  => indexmap! {}
+};
+
+ParameterDefinitionList: IndexMap<RefStr, (bool, TyRef)> = {
+  <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => indexmap ! { name => (m.is_some(), ty) },
+  <mut map:ParameterDefinitionList> "," <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
+    map.insert(name, (m.is_some(), ty));
+    map
+  },
 };
 
 ImportDefinition: () = "import" <name:Identifier> => {
@@ -292,9 +292,9 @@ ExternDefinition: () = {
 
 GlobalDefinition: () = {
   TypeDefinition,
-  FunctionDefinition,
   ConstDefinition,
   DataDefinition,
+  FunctionDefinition,
   ImportDefinition,
   ExternBlock,
 };

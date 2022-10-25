@@ -1,5 +1,4 @@
 use crate::parse::{self,BinOp};
-use crate::gen::*;
 use crate::util::*;
 use indexmap::{indexmap,IndexMap};
 use std::collections::{HashMap};
@@ -79,7 +78,7 @@ fn write_variants(f: &mut fmt::Formatter<'_>, variants: &IndexMap<RefStr, Varian
 }
 
 impl TyS {
-  fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use TyS::*;
     match self {
       Struct(name, params) => {
@@ -98,33 +97,7 @@ impl TyS {
     }
   }
 
-  fn is_same(ty1: Ty, ty2: Ty) -> bool {
-    true
-  }
-
-  fn is_bool(&self) -> bool {
-    let v = self;
-    matches!(TyS::Bool, v)
-  }
-
-  fn is_int(&self) -> bool {
-    use TyS::*;
-    match self {
-      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn => true,
-      _ => false,
-    }
-  }
-  fn is_num(&self) -> bool {
-    use TyS::*;
-    match self {
-      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double => true,
-      _ => false,
-    }
-  }
-}
-
-impl fmt::Debug for TyS {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  fn write_ref(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use TyS::*;
     match self {
       Unresolved => unreachable!(),
@@ -157,6 +130,40 @@ impl fmt::Debug for TyS {
       }
     }
   }
+
+  fn is_same(ty1: Ty, ty2: Ty) -> bool {
+    true
+  }
+
+  fn is_bool(&self) -> bool {
+    let v = self;
+    matches!(TyS::Bool, v)
+  }
+
+  fn is_int(&self) -> bool {
+    use TyS::*;
+    match self {
+      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn => true,
+      _ => false,
+    }
+  }
+  fn is_num(&self) -> bool {
+    use TyS::*;
+    match self {
+      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double => true,
+      _ => false,
+    }
+  }
+}
+
+impl fmt::Debug for TyS {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if f.alternate() {
+      self.write_def(f)
+    } else {
+      self.write_ref(f)
+    }
+  }
 }
 
 /// Expressions
@@ -169,7 +176,7 @@ pub struct ExprS {
 }
 
 pub enum ExprKind {
-  Obj(Obj),
+  Ref(Def),
   Bool(bool),
   Int(usize),
   Char(RefStr),
@@ -177,8 +184,8 @@ pub enum ExprKind {
   Dot(Expr, RefStr),
   Call(Expr, IndexMap<RefStr, Expr>),
   Index(Expr, Expr),
-  Ref(Expr),
-  Deref(Expr),
+  Adr(Expr),
+  Ind(Expr),
   UMinus(Expr),
   Not(Expr),
   LNot(Expr),
@@ -190,7 +197,7 @@ pub enum ExprKind {
   Continue,
   Break(Option<Expr>),
   Return(Option<Expr>),
-  Let(Obj, Expr),
+  Let(Def, Expr),
   If(Expr, Expr, Option<Expr>),
   While(Expr, Expr),
   Loop(Expr),
@@ -200,7 +207,7 @@ impl fmt::Debug for ExprS {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ExprKind::*;
     match &self.kind {
-      Obj(obj) => write!(f, "{}", obj.name),
+      Ref(def) => write!(f, "{}", def.name),
       Bool(val) => write!(f, "{}", val),
       Int(val) => write!(f, "{}", val),
       Char(val) => write!(f, "c{:?}", val),
@@ -212,8 +219,8 @@ impl fmt::Debug for ExprS {
           |f, (name, arg)| write!(f, "{}: {:?}", name, arg))
       }
       Index(arg, idx) => write!(f, "{:?}[{:?}]", arg, idx),
-      Ref(arg) => write!(f, "Ref {:?}", arg),
-      Deref(arg) => write!(f, "Ind {:?}", arg),
+      Adr(arg) => write!(f, "Adr {:?}", arg),
+      Ind(arg) => write!(f, "Ind {:?}", arg),
       UMinus(arg) => write!(f, "Neg {:?}", arg),
       Not(arg) => write!(f, "Not {:?}", arg),
       LNot(arg) => write!(f, "LNot {:?}", arg),
@@ -234,7 +241,7 @@ impl fmt::Debug for ExprS {
       Break(Some(arg)) => write!(f, "break {:?}", arg),
       Return(None) => write!(f, "return"),
       Return(Some(arg)) => write!(f, "return {:?}", arg),
-      Let(obj, init) => write!(f, "let {}: {:?} = {:?}", obj.name, obj.ty, init),
+      Let(def, init) => write!(f, "let {}: {:?} = {:?}", def.name, def.ty, init),
       If(cond, tbody, None) => write!(f, "if {:?} {:?}", cond, tbody),
       If(cond, tbody, Some(ebody)) => write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody),
       While(cond, body) => write!(f, "while {:?} {:?}", cond, body),
@@ -245,117 +252,60 @@ impl fmt::Debug for ExprS {
 
 /// Definitions
 
-pub type Obj = Ptr<ObjS>;
+pub type Def = Ptr<DefS>;
 
-pub struct ObjS {
+pub struct DefS {
   name: RefStr,
   is_mut: bool,
   ty: Ty,
-  val: GenVal,
+  kind: DefKind,
 }
 
-/*
-impl ObjS {
-  fn write_def(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    use ObjKind::*;
-    match &self.kind {
-      Const { val } => write!(f, "const {} = {:?}", self.name, val.as_ref().unwrap()),
-      Fn { .. } => write!(f, "function {}", self.name),
-      Data => write!(f, "data {}", self.name),
-      _ => unreachable!(),
-    }
-  }
-}
-
-pub enum ObjKind {
-  // Constants
-  Const {
-    val: Option<Expr>
-  },
-
-  // Functions and globals
+pub enum DefKind {
+  Const(Expr),
   Fn,
   Data,
-
-  // Function parameters and locals
+  Param(usize),
   Local,
 }
-*/
-
-pub enum Def {
-  Ty(Ty),
-  Const(Expr),
-  Obj(Obj),
-}
-
-/*
-impl fmt::Debug for Def {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    use Def::*;
-    match self {
-      Ty(ty) => ty.write_def(f),
-      Obj(obj) => obj.write_def(f),
-    }
-  }
-}
-*/
 
 /// Errors
 
 #[derive(Debug)]
-struct UnknownTypeError {
+struct UnresolvedIdentError {
   name: RefStr
 }
 
-impl fmt::Display for UnknownTypeError {
+impl fmt::Display for UnresolvedIdentError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unknown typename {}", self.name)
+    write!(f, "Unresolved identifier {}", self.name)
   }
 }
 
-impl error::Error for UnknownTypeError {}
-
-#[derive(Debug)]
-struct UnknownObjectError {
-  name: RefStr
-}
-
-impl fmt::Display for UnknownObjectError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unknown object {}", self.name)
-  }
-}
-
-impl error::Error for UnknownObjectError {}
+impl error::Error for UnresolvedIdentError {}
 
 /// Type checker logic
 
-pub struct CheckCtx<'ctx> {
-  // Code generator
-  gen: &'ctx mut GenCtx,
-
+pub struct CheckCtx {
   // Allocator for IR structures
   arena: Arena,
-  // Symbol table
-  symtab: Vec<HashMap<RefStr, Def>>,
-  // Type variable table
-  tvars: Vec<Ty>,
-
+  // Type definitions
+  ty_defs: HashMap<RefStr, Ty>,
+  // Definitions
+  defs: Vec<HashMap<RefStr, Def>>,
   // Context :(
   return_ty: Ty,
   break_ty: Ty,
 }
 
-impl<'ctx> CheckCtx<'ctx> {
-  pub fn new(gen: &'ctx mut GenCtx) -> Self {
+impl CheckCtx {
+  pub fn new() -> Self {
     let mut arena = Arena::new();
     let unit = arena.alloc(TyS::Tuple(indexmap!{})).ptr();
-
     CheckCtx {
-      gen,
       arena,
-      symtab: vec![ HashMap::new() ],
-      tvars: vec![],
+      ty_defs: HashMap::new(),
+      defs: vec![ HashMap::new() ],
       return_ty: unit,
       break_ty: unit,
     }
@@ -365,69 +315,28 @@ impl<'ctx> CheckCtx<'ctx> {
     self.arena.alloc(val).ptr()
   }
 
-  fn enter(&mut self) {
-    self.symtab.push(HashMap::new());
-  }
-
-  fn exit(&mut self) {
-    assert!(self.symtab.len() > 0);
-    self.symtab.pop();
-  }
-
-  fn define(&mut self, name: RefStr, def: Def) {
-    self.symtab.last_mut().unwrap().insert(name, def);
-  }
+  //
+  // Types
+  //
 
   fn resolve_ty(&mut self, name: RefStr) -> MRes<Ty> {
-    for scope in self.symtab.iter().rev() {
-      if let Some(Def::Ty(ty)) = scope.get(&name) {
-        return Ok(*ty);
-      }
+    if let Some(ty) = self.ty_defs.get(&name) {
+      Ok(*ty)
+    } else {
+      Err(Box::new(UnresolvedIdentError { name }))
     }
-    Err(Box::new(UnknownTypeError { name }))
   }
 
-  fn resolve_obj(&mut self, name: RefStr) -> MRes<Obj> {
-    for scope in self.symtab.iter().rev() {
-      if let Some(Def::Obj(obj)) = scope.get(&name) {
-        return Ok(*obj);
-      }
-    }
-    Err(Box::new(UnknownObjectError { name }))
-  }
-
-  fn newtvar(&mut self) -> Ty {
-    let ty = self.alloc(TyS::Var(self.tvars.len()));
-    self.tvars.push(ty);
-    ty
-  }
-
-  fn check_params(&mut self, params: &IndexMap<RefStr, parse::Ty>) -> MRes<IndexMap<RefStr, Ty>> {
-    let mut nparams = indexmap!{};
+  fn check_params(&mut self, params: &IndexMap<RefStr, parse::TyRef>) -> MRes<IndexMap<RefStr, Ty>> {
+    let mut result = indexmap!{};
     for (name, ty) in params {
-      nparams.insert(*name, self.check_ty(ty)?);
+      result.insert(*name, self.check_ty(ty)?);
     }
-    Ok(nparams)
+    Ok(result)
   }
 
-  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<IndexMap<RefStr, Variant>> {
-    let mut nvariants = indexmap!{};
-    for (name, variant) in variants {
-      use parse::Variant::*;
-      match variant {
-        Unit => {
-          nvariants.insert(*name, Variant::Unit(*name));
-        }
-        Struct(params) => {
-          nvariants.insert(*name, Variant::Struct(*name, self.check_params(params)?));
-        }
-      }
-    }
-    Ok(nvariants)
-  }
-
-  fn check_ty(&mut self, ty: &parse::Ty) -> MRes<Ty> {
-    use parse::Ty::*;
+  fn check_ty(&mut self, ty: &parse::TyRef) -> MRes<Ty> {
+    use parse::TyRef::*;
     Ok(match ty {
       Bool => self.alloc(TyS::Bool),
       Uint8 => self.alloc(TyS::Uint8),
@@ -442,7 +351,9 @@ impl<'ctx> CheckCtx<'ctx> {
       Intn => self.alloc(TyS::Intn),
       Float => self.alloc(TyS::Float),
       Double => self.alloc(TyS::Double),
-      Path(path) => self.resolve_ty(path[0])?,
+      Path(path) => {
+        self.resolve_ty(path[0])?
+      },
       Fn(params, ret_ty) => {
         let ty = TyS::Fn(self.check_params(params)?,
                               self.check_ty(ret_ty)?);
@@ -463,6 +374,102 @@ impl<'ctx> CheckCtx<'ctx> {
       }
     })
   }
+
+  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<IndexMap<RefStr, Variant>> {
+    use parse::Variant::*;
+
+    let mut result = indexmap!{};
+
+    for (name, variant) in variants {
+      result.insert(*name, match variant {
+        Unit => Variant::Unit(*name),
+        Struct(params) => Variant::Struct(*name, self.check_params(params)?),
+      });
+    }
+
+    Ok(result)
+  }
+
+  pub fn check_ty_defs(&mut self, ty_defs: &IndexMap<RefStr, parse::TyDef>) -> MRes<()>  {
+    use parse::TyDef::*;
+
+    let mut queue = vec![];
+
+    // Pass 1: Create objects
+    for (name, ty_def) in ty_defs {
+      let dummy = self.arena.alloc(TyS::Unresolved);
+      self.ty_defs.insert(*name, dummy.ptr());
+      queue.push((*name, ty_def, dummy));
+    }
+
+    // Pass 2: Resolve names
+    for (name, ty_def, mut dest) in queue {
+      *dest = match ty_def {
+        Struct { params } => TyS::Struct(name, self.check_params(params)?),
+        Union { params } => TyS::Union(name, self.check_params(params)?),
+        Enum { variants } => TyS::Enum(name, self.check_variants(variants)?),
+      };
+    }
+
+    Ok(())
+  }
+
+  //
+  // Definitions
+  //
+
+  fn enter(&mut self) {
+    self.defs.push(HashMap::new());
+  }
+
+  fn exit(&mut self) {
+    self.defs.pop().expect("Cannot exit global scope");
+  }
+
+  fn define_const(&mut self, name: RefStr, ty: Ty, val: Expr) -> Def {
+    let def = self.alloc(DefS {
+      name, is_mut: false, ty, kind: DefKind::Const(val)
+    });
+    self.defs.last_mut().unwrap().insert(name, def);
+    def
+  }
+
+  fn define_data(&mut self, name: RefStr, is_mut: bool, ty: Ty) -> Def {
+    let def = self.alloc(DefS {
+      name, is_mut, ty, kind: DefKind::Data
+    });
+    self.defs.last_mut().unwrap().insert(name, def);
+    def
+  }
+
+  fn define_fn(&mut self, name: RefStr, ty: Ty) -> Def {
+    let def = self.alloc(DefS {
+      name, is_mut: false, ty, kind: DefKind::Fn
+    });
+    self.defs.last_mut().unwrap().insert(name, def);
+    def
+  }
+
+  fn define_local(&mut self, name: RefStr, is_mut: bool, ty: Ty) -> Def {
+    let def = self.alloc(DefS {
+      name, is_mut: false, ty, kind: DefKind::Local
+    });
+    self.defs.last_mut().unwrap().insert(name, def);
+    def
+  }
+
+  fn resolve_def(&mut self, name: RefStr) -> MRes<Def> {
+    for scope in self.defs.iter().rev() {
+      if let Some(def) = scope.get(&name) {
+        return Ok(*def);
+      }
+    }
+    Err(Box::new(UnresolvedIdentError { name }))
+  }
+
+  //
+  // Expressions
+  //
 
   fn check_expr(&mut self, expr: &parse::Expr) -> MRes<Expr> {
     use parse::Expr::*;
@@ -507,10 +514,10 @@ impl<'ctx> CheckCtx<'ctx> {
 
     Ok(match expr {
       Path(path) => {
-        let obj = self.resolve_obj(path[0])?;
+        let def = self.resolve_def(path[0])?;
         self.alloc(ExprS {
-          ty: obj.ty,
-          kind: ExprKind::Obj(obj),
+          ty: def.ty,
+          kind: ExprKind::Ref(def),
         })
       }
       Bool(val) => {
@@ -521,21 +528,21 @@ impl<'ctx> CheckCtx<'ctx> {
         })
       }
       Int(val) => {
-        let ty = self.newtvar();
+        let ty = self.alloc(TyS::Intn);
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Int(*val),
         })
       }
       Char(val) => {
-        let ty = self.newtvar();
+        let ty = self.alloc(TyS::Intn);
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Char(*val),
         })
       }
       Str(val) => {
-        let ty = self.newtvar();
+        let ty = self.alloc(TyS::Intn);
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Str(*val),
@@ -588,15 +595,15 @@ impl<'ctx> CheckCtx<'ctx> {
           kind: ExprKind::Index(arg, idx),
         })
       }
-      Ref(arg) => {
+      Adr(arg) => {
         let arg = self.check_expr(arg)?;
         let ty = self.alloc(TyS::Ptr(arg.ty));
         self.alloc(ExprS {
           ty: ty,
-          kind: ExprKind::Ref(arg),
+          kind: ExprKind::Adr(arg),
         })
       }
-      Deref(arg) => {
+      Ind(arg) => {
         let arg = self.check_expr(arg)?;
         let ty = match &*arg.ty {
           TyS::Ptr(ty) => *ty,
@@ -604,7 +611,7 @@ impl<'ctx> CheckCtx<'ctx> {
         };
         self.alloc(ExprS {
           ty: ty,
-          kind: ExprKind::Ref(arg),
+          kind: ExprKind::Ind(arg),
         })
       }
       UPlus(arg) => {
@@ -737,29 +744,23 @@ impl<'ctx> CheckCtx<'ctx> {
         })
       }
       Let(name, is_mut, ty, init) => {
-        // Generate initializer
+        // Check initializer
         let init = self.check_expr(init)?;
 
-        // Define symbol
+        // Check type
         let ty = if let Some(ty) = ty {
-          // FIXME: make sure this is the same type as the type of init
           self.check_ty(ty)?
         } else {
           init.ty
         };
-        let val = self.gen.alloca(ty);
-        let obj = self.alloc(ObjS {
-          name: *name,
-          is_mut: *is_mut,
-          ty: ty,
-          kind: ObjKind::Local(val),
-        });
-        self.define(*name, Def::Obj(obj));
+
+        // Define symbol
+        let def = self.define_local(*name, *is_mut, ty);
 
         let ty = self.alloc(TyS::Tuple(indexmap!{}));
         self.alloc(ExprS {
           ty: ty,
-          kind: ExprKind::Let(obj, init),
+          kind: ExprKind::Let(def, init),
         })
       }
       If(cond, tbody, ebody) => {
@@ -798,112 +799,28 @@ impl<'ctx> CheckCtx<'ctx> {
     })
   }
 
-  fn gen_value(&mut self, expr: Expr) -> MRes<GenVal> {
-    use ExprKind::*;
-    match &expr.kind {
-      Obj(obj) => {
-        use ObjKind::*;
-        match &obj.kind {
-          Const { val } => self.gen_value(val.unwrap())?,
-          Fn => (),
-          Data => (),
-          Local(val) => (),
-        }
-        todo!()
-      }
-      Bool(val) => {
-        todo!()
-      }
-      Int(val) => {
-        todo!()
-      }
-      Char(val) => {
-        todo!()
-      }
-      Str(val) => {
-        todo!()
-      }
-      Dot(arg, name) => {
-        todo!()
-      }
-      Call(arg, args) => {
-        todo!()
-      }
-      Index(arg, idx) => {
-        todo!()
-      }
-      Ref(arg) => {
-        todo!()
-      }
-      Deref(arg) => {
-        todo!()
-      }
-      UMinus(arg) => {
-        todo!()
-      }
-      Not(arg) => {
-        todo!()
-      }
-      LNot(arg) => {
-        todo!()
-      }
-      Cast(_, _) => {
-        todo!()
-      }
-      Bin(op, lhs, rhs) => {
-        todo!()
-      }
-      Rmw(op, lhs, rhs) => {
-        todo!()
-      }
-      As(lhs, rhs) => {
-        todo!()
-      }
-      Block(body) => {
-        todo!()
-      }
-      Continue => {
-        todo!()
-      }
-      Break(arg) => {
-        todo!()
-      }
-      Return(arg) => {
-        todo!()
-      }
-      Let(obj, init) => {
-        todo!()
-      }
-      If(cond, tbody, ebody) => {
-        todo!()
-      }
-      While(cond, body) => {
-        todo!()
-      }
-      Loop(body) => {
-        todo!()
-      }
-    }
-  }
-
   pub fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
-    use parse::Def::*;
+    // Populate type definitions
+    self.check_ty_defs(&module.ty_defs)?;
 
-    // Pass 1: create symbols
-    let mut todo_types = vec![];
-    let mut todo_objects = vec![];
+/*
+    let mut fn_queue = vec![];
+    let mut data_queue = vec![];
+*/
 
+    // Create symbols for objects
     for (name, def) in &module.defs {
-      let def = match def {
-        Struct { .. } |
-        Union { .. } |
-        Enum { .. } => {
-          let ty = self.arena.alloc(TyS::Unresolved);
-          todo_types.push((ty, name, def));
-          Def::Ty(ty.ptr())
+      match def {
+        parse::Def::Const { ty, val } => {
+          let ty = self.check_ty(ty)?;
+          let val = self.check_expr(val)?;
+          self.define_const(*name, ty, val);
         }
-        Fn { params, ret_ty, .. } => {
-          // Create type
+        parse::Def::Data { is_mut, ty, .. } => {
+          let ty = self.check_ty(ty)?;
+          self.define_data(*name, *is_mut, ty);
+        }
+        parse::Def::Fn { params, ret_ty, body } => {
           let mut ty_params = indexmap!{};
           for (name, (is_mut, ty)) in params {
             let ty = self.check_ty(ty)?;
@@ -911,77 +828,22 @@ impl<'ctx> CheckCtx<'ctx> {
           }
           let ret_ty = self.check_ty(ret_ty)?;
           let ty = self.alloc(TyS::Fn(ty_params, ret_ty));
-
-          // Create object
-          let obj = self.arena.alloc(ObjS {
-            name: *name,
-            is_mut: false,
-            ty: ty,
-            kind: ObjKind::Fn,
-          });
-          todo_objects.push((obj, def));
-          Def::Obj(obj.ptr())
+          self.define_fn(*name, ty);
         }
-        Const { ty, val } => {
+        parse::Def::Extern { is_mut, ty } => {
           let ty = self.check_ty(ty)?;
-          let obj = self.arena.alloc(ObjS {
-            name: *name,
-            is_mut: false,
-            ty: ty,
-            kind: ObjKind::Const {
-              val: None
-            }
-          });
-          todo_consts.push((obj, def));
-          Def::Const(obj.ptr())
+          self.define_data(*name, *is_mut, ty);
         }
-        Data { is_mut, ty, .. } => {
-          let ty = self.check_ty(ty)?;
-          let obj = self.arena.alloc(ObjS {
-            name: *name,
-            is_mut: *is_mut,
-            ty: ty,
-            kind: ObjKind::Data
-          });
-          todo_objects.push((obj, def));
-          Def::Obj(obj.ptr())
-        }
-        Extern { is_mut, ty } => {
-          let ty = self.check_ty(ty)?;
-          Def::Obj(self.alloc(ObjS {
-            name: *name,
-            is_mut: *is_mut,
-            ty: ty,
-            kind: ObjKind::Data
-          }))
-        }
-        ExternFn { params, ret_ty } => {
+        parse::Def::ExternFn { params, ret_ty } => {
           let tys = TyS::Fn(self.check_params(params)?,
                               self.check_ty(ret_ty)?);
           let ty = self.alloc(tys);
-          Def::Obj(self.alloc(ObjS {
-            name: *name,
-            is_mut: false,
-            ty: ty,
-            kind: ObjKind::Fn
-          }))
+          self.define_fn(*name, ty);
         }
       };
-
-      self.define(*name, def);
     }
 
-    // Pass 2: resolve references in types
-
-    for (mut ty, name, def) in todo_types.into_iter() {
-      *ty = match def {
-        Struct { params } => TyS::Struct(*name, self.check_params(params)?),
-        Union { params } => TyS::Union(*name, self.check_params(params)?),
-        Enum { variants } => TyS::Enum(*name, self.check_variants(variants)?),
-        _ => unreachable!(),
-      };
-    }
-
+/*
     // Pass 3: type check object bodies
 
     for (mut obj, def) in todo_objects.into_iter() {
@@ -993,14 +855,9 @@ impl<'ctx> CheckCtx<'ctx> {
       match (&mut obj.kind, def) {
         (ObjKind::Fn, Fn { params, body, .. }) => {
           self.enter();
-          self.gen.begin_func(name, ty);
           // Add parameters to scope
           for (idx, (name, (is_mut, ty))) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
-            // Copy parameter to stack
-            let val = self.gen.get_param(idx);
-            let stor = self.gen.alloca(ty);
-            self.gen.store(val, stor);
             // Allocate symbol
             let obj = self.alloc(ObjS {
               name: *name,
@@ -1012,21 +869,15 @@ impl<'ctx> CheckCtx<'ctx> {
           }
           // Type check body
           let body = self.check_expr(body)?;
-          self.gen_value(body);
-          self.gen.end_func();
           self.exit();
         }
         (ObjKind::Data { .. }, Data { init, .. }) => {
-          self.gen.begin_data(name, ty);
           let expr = self.check_expr(init)?;
-          self.gen_value(expr)?;
-          self.gen.end_data();
         }
         _ => unreachable!(),
       };
-    }
+    }*/
 
-    // println!("{:#?}", self.symtab);
     Ok(())
   }
 }

@@ -1,7 +1,6 @@
 #![feature(hash_set_entry)]
 
 mod check;
-mod gen;
 mod parse;
 
 #[allow(dead_code)]
@@ -9,22 +8,20 @@ mod util;
 
 use clap::{Arg,App};
 use check::*;
-use gen::*;
 use parse::*;
 use util::*;
 
 fn compile(path: &str) -> MRes<()> {
   // Parse module
   let module = parse_module(path)?;
-  let module_id = std::path::Path::new(path).file_name().unwrap().to_str().unwrap();
-  
-  // Typecheck and codegen module
-  let mut gen_ctx = GenCtx::new(RefStr::new(module_id));
-  let mut check_ctx = CheckCtx::new(&mut gen_ctx);
-  check_ctx.check_module(&module)?;
 
-  gen_ctx.dump();
-  Ok(())
+  // Typecheck
+  let module_id = std::path::Path::new(path).file_name().unwrap().to_str().unwrap();
+  let mut check_ctx = CheckCtx::new();
+  check_ctx.check_module(&module)
+
+  // let mut gen_ctx = GenCtx::new(RefStr::new(module_id));
+  // gen_ctx.dump();
 }
 
 fn main() {

@@ -11,7 +11,7 @@ lalrpop_mod!(parse_gen);
 pub type Path = Vec<RefStr>;
 
 #[derive(Debug)]
-pub enum Ty {
+pub enum TyRef {
   Bool,
   Uint8,
   Int8,
@@ -26,12 +26,30 @@ pub enum Ty {
   Float,
   Double,
   Path(Path),
-  Fn(IndexMap<RefStr, Ty>, Box<Ty>),
-  Ptr(Box<Ty>),
-  Arr(Box<Expr>, Box<Ty>),
-  Tuple(IndexMap<RefStr, Ty>),
+  Fn(IndexMap<RefStr, TyRef>, Box<TyRef>),
+  Ptr(Box<TyRef>),
+  Arr(Box<Expr>, Box<TyRef>),
+  Tuple(IndexMap<RefStr, TyRef>),
 }
 
+#[derive(Debug)]
+pub enum Variant {
+  Unit,
+  Struct(IndexMap<RefStr, TyRef>),
+}
+
+#[derive(Debug)]
+pub enum TyDef {
+  Struct {
+    params: IndexMap<RefStr, TyRef>,
+  },
+  Union {
+    params: IndexMap<RefStr, TyRef>,
+  },
+  Enum {
+    variants: IndexMap<RefStr, Variant>,
+  },
+}
 
 #[derive(Clone,Copy,Debug)]
 pub enum BinOp {
@@ -50,14 +68,14 @@ pub enum Expr {
   Call(Box<Expr>, IndexMap<RefStr, Expr>),
   Index(Box<Expr>, Box<Expr>),
 
-  Ref(Box<Expr>),
-  Deref(Box<Expr>),
+  Adr(Box<Expr>),
+  Ind(Box<Expr>),
   UPlus(Box<Expr>),
   UMinus(Box<Expr>),
   Not(Box<Expr>),
   LNot(Box<Expr>),
 
-  Cast(Box<Expr>, Ty),
+  Cast(Box<Expr>, TyRef),
 
   Bin(BinOp, Box<Expr>, Box<Expr>),
 
@@ -68,50 +86,35 @@ pub enum Expr {
   Continue,
   Break(Option<Box<Expr>>),
   Return(Option<Box<Expr>>),
-  Let(RefStr, bool, Option<Ty>, Box<Expr>),
+  Let(RefStr, bool, Option<TyRef>, Box<Expr>),
   If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
 }
 
 #[derive(Debug)]
-pub enum Variant {
-  Unit,
-  Struct(IndexMap<RefStr, Ty>),
-}
-
-#[derive(Debug)]
 pub enum Def {
-  Struct {
-    params: IndexMap<RefStr, Ty>,
-  },
-  Union {
-    params: IndexMap<RefStr, Ty>,
-  },
-  Enum {
-    variants: IndexMap<RefStr, Variant>,
-  },
-  Fn {
-    params: IndexMap<RefStr, (bool, Ty)>,
-    ret_ty: Ty,
-    body: Expr,
-  },
   Const {
-    ty: Ty,
+    ty: TyRef,
     val: Expr
   },
   Data {
     is_mut: bool,
-    ty: Ty,
+    ty: TyRef,
     init: Expr
+  },
+  Fn {
+    params: IndexMap<RefStr, (bool, TyRef)>,
+    ret_ty: TyRef,
+    body: Expr,
   },
   Extern {
     is_mut: bool,
-    ty: Ty,
+    ty: TyRef,
   },
   ExternFn {
-    params: IndexMap<RefStr, Ty>,
-    ret_ty: Ty,
+    params: IndexMap<RefStr, TyRef>,
+    ret_ty: TyRef,
   },
 }
 
@@ -119,6 +122,7 @@ pub enum Def {
 pub struct Module {
   pub deps: HashSet<RefStr>,
   pub defs: IndexMap<RefStr, Def>,
+  pub ty_defs: IndexMap<RefStr, TyDef>,
 }
 
 impl Module {
@@ -126,6 +130,7 @@ impl Module {
     Module {
       deps: HashSet::new(),
       defs: IndexMap::new(),
+      ty_defs: IndexMap::new(),
     }
   }
 }
