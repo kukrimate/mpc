@@ -1,6 +1,6 @@
 use crate::parse::{self,BinOp};
 use crate::util::*;
-use indexmap::{indexmap,IndexMap};
+use indexmap::IndexMap;
 use std::collections::{HashMap};
 use std::fmt::Write;
 use std::{error,fmt};
@@ -8,11 +8,6 @@ use std::{error,fmt};
 /// Types
 
 pub type Ty = Ptr<TyS>;
-
-pub enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, IndexMap<RefStr, Ty>),
-}
 
 pub enum TyS {
   Unresolved,
@@ -32,14 +27,19 @@ pub enum TyS {
   Intn,
   Float,
   Double,
-  Fn(IndexMap<RefStr, Ty>, Ty),
+  Fn(Vec<(RefStr, Ty)>, Ty),
   Ptr(Ty),
   Arr(usize, Ty),
-  Tuple(IndexMap<RefStr, Ty>),
+  Tuple(Vec<(RefStr, Ty)>),
 
-  Struct(RefStr, IndexMap<RefStr, Ty>),
-  Union(RefStr, IndexMap<RefStr, Ty>),
-  Enum(RefStr, IndexMap<RefStr, Variant>),
+  Struct(RefStr, Vec<(RefStr, Ty)>),
+  Union(RefStr, Vec<(RefStr, Ty)>),
+  Enum(RefStr, Vec<(RefStr, Variant)>),
+}
+
+pub enum Variant {
+  Unit(RefStr),
+  Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
 fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: W) -> fmt::Result
@@ -59,12 +59,12 @@ fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: W) -
   write!(f, ")")
 }
 
-fn write_params(f: &mut fmt::Formatter<'_>, params: &IndexMap<RefStr, Ty>) -> fmt::Result {
+fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
   write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
 }
 
-fn write_variants(f: &mut fmt::Formatter<'_>, variants: &IndexMap<RefStr, Variant>) -> fmt::Result {
-  write_comma_separated(f, variants.iter(), |f, (name, variant)| {
+fn write_variants(f: &mut fmt::Formatter<'_>, variants: &Vec<(RefStr, Variant)>) -> fmt::Result {
+  write_comma_separated(f, variants.iter(), |f, (_, variant)| {
     match variant {
       Variant::Unit(name) => {
         write!(f, "{}", name)
@@ -130,30 +130,6 @@ impl TyS {
       }
     }
   }
-
-  fn is_same(ty1: Ty, ty2: Ty) -> bool {
-    true
-  }
-
-  fn is_bool(&self) -> bool {
-    let v = self;
-    matches!(TyS::Bool, v)
-  }
-
-  fn is_int(&self) -> bool {
-    use TyS::*;
-    match self {
-      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn => true,
-      _ => false,
-    }
-  }
-  fn is_num(&self) -> bool {
-    use TyS::*;
-    match self {
-      Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double => true,
-      _ => false,
-    }
-  }
 }
 
 impl fmt::Debug for TyS {
@@ -182,7 +158,7 @@ pub enum ExprKind {
   Char(RefStr),
   Str(RefStr),
   Dot(Expr, RefStr),
-  Call(Expr, IndexMap<RefStr, Expr>),
+  Call(Expr, Vec<(RefStr, Expr)>),
   Index(Expr, Expr),
   Adr(Expr),
   Ind(Expr),
@@ -198,7 +174,7 @@ pub enum ExprKind {
   Break(Option<Expr>),
   Return(Option<Expr>),
   Let(Def, Expr),
-  If(Expr, Expr, Option<Expr>),
+  If(Expr, Expr, Expr),
   While(Expr, Expr),
   Loop(Expr),
 }
@@ -242,8 +218,7 @@ impl fmt::Debug for ExprS {
       Return(None) => write!(f, "return"),
       Return(Some(arg)) => write!(f, "return {:?}", arg),
       Let(def, init) => write!(f, "let {}: {:?} = {:?}", def.name, def.ty, init),
-      If(cond, tbody, None) => write!(f, "if {:?} {:?}", cond, tbody),
-      If(cond, tbody, Some(ebody)) => write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody),
+      If(cond, tbody, ebody) => write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody),
       While(cond, body) => write!(f, "while {:?} {:?}", cond, body),
       Loop(body) => write!(f, "loop {:?}", body),
     }
@@ -272,6 +247,18 @@ pub enum DefKind {
 /// Errors
 
 #[derive(Debug)]
+struct TypeError {}
+
+impl fmt::Display for TypeError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Type error")
+  }
+}
+
+impl error::Error for TypeError {}
+
+
+#[derive(Debug)]
 struct UnresolvedIdentError {
   name: RefStr
 }
@@ -289,6 +276,8 @@ impl error::Error for UnresolvedIdentError {}
 pub struct CheckCtx {
   // Allocator for IR structures
   arena: Arena,
+  // Type variables
+  tvars: Vec<Ty>,
   // Type definitions
   ty_defs: HashMap<RefStr, Ty>,
   // Definitions
@@ -301,9 +290,10 @@ pub struct CheckCtx {
 impl CheckCtx {
   pub fn new() -> Self {
     let mut arena = Arena::new();
-    let unit = arena.alloc(TyS::Tuple(indexmap!{})).ptr();
+    let unit = arena.alloc(TyS::Tuple(vec![]));
     CheckCtx {
       arena,
+      tvars: Vec::new(),
       ty_defs: HashMap::new(),
       defs: vec![ HashMap::new() ],
       return_ty: unit,
@@ -311,8 +301,15 @@ impl CheckCtx {
     }
   }
 
+  fn tvar(&mut self) -> Ty {
+    let idx = self.tvars.len();
+    let ty = self.alloc(TyS::Var(idx));
+    self.tvars.push(ty);
+    ty
+  }
+
   fn alloc<T: 'static>(&mut self, val: T) -> Ptr<T> {
-    self.arena.alloc(val).ptr()
+    self.arena.alloc(val)
   }
 
   //
@@ -327,10 +324,10 @@ impl CheckCtx {
     }
   }
 
-  fn check_params(&mut self, params: &IndexMap<RefStr, parse::TyRef>) -> MRes<IndexMap<RefStr, Ty>> {
-    let mut result = indexmap!{};
+  fn check_params(&mut self, params: &IndexMap<RefStr, parse::TyRef>) -> MRes<Vec<(RefStr, Ty)>> {
+    let mut result = vec![];
     for (name, ty) in params {
-      result.insert(*name, self.check_ty(ty)?);
+      result.push((*name, self.check_ty(ty)?));
     }
     Ok(result)
   }
@@ -375,16 +372,15 @@ impl CheckCtx {
     })
   }
 
-  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<IndexMap<RefStr, Variant>> {
+  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<Vec<(RefStr, Variant)>> {
     use parse::Variant::*;
 
-    let mut result = indexmap!{};
-
+    let mut result = vec![];
     for (name, variant) in variants {
-      result.insert(*name, match variant {
+      result.push((*name, match variant {
         Unit => Variant::Unit(*name),
         Struct(params) => Variant::Struct(*name, self.check_params(params)?),
-      });
+      }));
     }
 
     Ok(result)
@@ -450,9 +446,17 @@ impl CheckCtx {
     def
   }
 
+  fn define_param(&mut self, name: RefStr, is_mut: bool, ty: Ty, index: usize) -> Def {
+    let def = self.alloc(DefS {
+      name, is_mut, ty, kind: DefKind::Param(index)
+    });
+    self.defs.last_mut().unwrap().insert(name, def);
+    def
+  }
+
   fn define_local(&mut self, name: RefStr, is_mut: bool, ty: Ty) -> Def {
     let def = self.alloc(DefS {
-      name, is_mut: false, ty, kind: DefKind::Local
+      name, is_mut, ty, kind: DefKind::Local
     });
     self.defs.last_mut().unwrap().insert(name, def);
     def
@@ -468,49 +472,118 @@ impl CheckCtx {
   }
 
   //
+  // Type checking
+  //
+
+  fn check_same(&mut self, ty1: Ty, ty2: Ty) -> MRes<Ty> {
+    use TyS::*;
+    match (&*ty1, &*ty2) {
+      (Bool, Bool) => Ok(ty1),
+      (Uint8, Uint8) => Ok(ty1),
+      (Int8, Int8) => Ok(ty1),
+      (Uint16, Uint16) => Ok(ty1),
+      (Int16, Int16) => Ok(ty1),
+      (Uint32, Uint32) => Ok(ty1),
+      (Int32, Int32) => Ok(ty1),
+      (Uint64, Uint64) => Ok(ty1),
+      (Int64, Int64) => Ok(ty1),
+      (Uintn, Uintn) => Ok(ty1),
+      (Intn, Intn) => Ok(ty1),
+      (Float, Float) => Ok(ty1),
+      (Double, Double) => Ok(ty1),
+      (Fn(par1, ret1), Fn(par2, ret2)) if par1.len() == par2.len() => {
+        for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
+          if n1 != n2 {
+            return Err(Box::new(TypeError {}));
+          }
+          self.check_same(*t1, *t2)?;
+        }
+        self.check_same(*ret1, *ret2)?;
+        Ok(ty1)
+      }
+      (Ptr(base1), Ptr(base2)) => {
+        self.check_same(*base1, *base2)?;
+        Ok(ty1)
+      }
+      (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
+        self.check_same(*elem1, *elem2)?;
+        Ok(ty1)
+      }
+      (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
+        for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
+          if n1 != n2 {
+            return Err(Box::new(TypeError {}));
+          }
+          self.check_same(*t1, *t2)?;
+        }
+        Ok(ty1)
+      }
+      // FIXME: struct/union/enum
+      _ => Err(Box::new(TypeError {}))
+    }
+  }
+
+  fn check_bool(&mut self, ty: Ty) -> MRes<Ty> {
+    use TyS::*;
+    match &*ty {
+      Bool => Ok(ty),
+      _ => Err(Box::new(TypeError {}))
+    }
+  }
+
+  fn check_int(&mut self, ty: Ty) -> MRes<Ty> {
+    use TyS::*;
+    match &*ty {
+      Uint8 | Int8 | Uint16 | Int16 |
+      Uint32 | Int32 | Uint64 | Int64 |
+      Uintn | Intn => Ok(ty),
+      _ => Err(Box::new(TypeError {}))
+    }
+  }
+
+  fn check_num(&self, ty: Ty) -> MRes<Ty> {
+    use TyS::*;
+    match &*ty {
+      Uint8 | Int8 | Uint16 | Int16 |
+      Uint32 | Int32 | Uint64 | Int64 |
+      Uintn | Intn | Float | Double => Ok(ty),
+      _ => Err(Box::new(TypeError {}))
+    }
+  }
+
+  fn check_binop(&mut self, op: BinOp, ty1: Ty, ty2: Ty) -> MRes<Ty> {
+    use BinOp::*;
+    match op {
+      Mul | Div | Add | Sub => {
+        self.check_num(ty1)?;
+        self.check_same(ty1, ty2)
+      }
+      Mod | And | Xor | Or => {
+        self.check_int(ty1)?;
+        self.check_same(ty1, ty2)
+      }
+      Lsh | Rsh => {
+        self.check_int(ty2)?;
+        self.check_int(ty1)
+      }
+      Eq | Ne | Lt | Gt | Le | Ge => {
+        self.check_num(ty1)?;
+        self.check_same(ty1, ty2)?;
+        Ok(self.alloc(TyS::Bool))
+      }
+      LAnd | LOr => {
+        self.check_bool(ty1)?;
+        self.check_bool(ty2)
+      }
+    }
+  }
+
+  //
   // Expressions
   //
 
   fn check_expr(&mut self, expr: &parse::Expr) -> MRes<Expr> {
     use parse::Expr::*;
-
-    fn check_bin(op: BinOp, lhs: Ty, rhs: Ty) -> Option<Ty> {
-      use BinOp::*;
-      match op {
-        // Argument types must match and be numeric
-        Mul | Div | Add | Sub | Eq | Ne | Lt | Gt | Le | Ge => {
-          if TyS::is_same(lhs, rhs) && lhs.is_num() {
-            Some(lhs)
-          } else {
-            None
-          }
-        }
-        // Arguments types must match and be integer
-        Mod | And | Xor | Or => {
-          if TyS::is_same(lhs, rhs) && lhs.is_int() {
-            Some(lhs)
-          } else {
-            None
-          }
-        }
-        // Argument types must be integers
-        Lsh | Rsh => {
-          if lhs.is_int() && rhs.is_int() {
-            Some(lhs)
-          } else {
-            None
-          }
-        }
-        // Argument types must be boolean
-        LAnd | LOr => {
-          if lhs.is_bool() && rhs.is_bool() {
-            Some(lhs)
-          } else {
-            None
-          }
-        }
-      }
-    }
 
     Ok(match expr {
       Path(path) => {
@@ -528,21 +601,21 @@ impl CheckCtx {
         })
       }
       Int(val) => {
-        let ty = self.alloc(TyS::Intn);
+        let ty = self.tvar();
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Int(*val),
         })
       }
       Char(val) => {
-        let ty = self.alloc(TyS::Intn);
+        let ty = self.tvar();
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Char(*val),
         })
       }
       Str(val) => {
-        let ty = self.alloc(TyS::Intn);
+        let ty = self.tvar();
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Str(*val),
@@ -554,7 +627,7 @@ impl CheckCtx {
           TyS::Tuple(params) |
           TyS::Struct(_, params) |
           TyS::Union(_, params) => {
-            if let Some(pty) = params.get(name) {
+            if let Some(pty) = lin_search(params, name) {
               *pty
             } else {
               panic!("No field {} of type {:?}", name, arg.ty)
@@ -573,8 +646,11 @@ impl CheckCtx {
           TyS::Fn(params, ret_ty) => (params, *ret_ty),
           ty => panic!("Type {:?} is not callable", ty)
         };
-        let mut nargs = indexmap!{};
         // FIXME: type check arguments
+        let mut nargs = vec![];
+        for (name, arg) in args {
+          nargs.push((*name, self.check_expr(arg)?));
+        }
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Call(arg, nargs),
@@ -587,9 +663,7 @@ impl CheckCtx {
           ty => panic!("Type {:?} not indexable", ty),
         };
         let idx = self.check_expr(idx)?;
-        if !idx.ty.is_int() {
-          panic!("Type {:?} cannot be used as an index", idx.ty);
-        }
+        self.check_int(idx.ty)?;
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Index(arg, idx),
@@ -616,38 +690,30 @@ impl CheckCtx {
       }
       UPlus(arg) => {
         let arg = self.check_expr(arg)?;
-        if !arg.ty.is_num() {
-          panic!("Unary + applied to non-numeric type {:?}", arg.ty);
-        }
+        self.check_num(arg.ty)?;
         arg
       }
       UMinus(arg) => {
         let arg = self.check_expr(arg)?;
-        if !arg.ty.is_num() {
-          panic!("Unary + applied to non-numeric type {:?}", arg.ty);
-        }
+        let ty = self.check_num(arg.ty)?;
         self.alloc(ExprS {
-          ty: arg.ty,
+          ty: ty,
           kind: ExprKind::UMinus(arg),
         })
       }
       Not(arg) => {
         let arg = self.check_expr(arg)?;
-        if !arg.ty.is_int() {
-          panic!("Bitwise inverse of non-integer type {:?}", arg.ty);
-        }
+        let ty = self.check_int(arg.ty)?;
         self.alloc(ExprS {
-          ty: arg.ty,
+          ty: ty,
           kind: ExprKind::Not(arg),
         })
       }
       LNot(arg) => {
         let arg = self.check_expr(arg)?;
-        if !arg.ty.is_bool() {
-          panic!("Logical inverse of non-boolean type {:?}", arg.ty);
-        }
+        let ty = self.check_bool(arg.ty)?;
         self.alloc(ExprS {
-          ty: arg.ty,
+          ty: ty,
           kind: ExprKind::LNot(arg),
         })
       }
@@ -657,11 +723,7 @@ impl CheckCtx {
       Bin(op, lhs, rhs) => {
         let lhs = self.check_expr(lhs)?;
         let rhs = self.check_expr(rhs)?;
-        let ty = if let Some(ty) = check_bin(*op, lhs.ty, rhs.ty) {
-          ty
-        } else {
-          panic!("Invalid arguments {:?} and {:?} for {:?}", lhs.ty, rhs.ty, op);
-        };
+        let ty = self.check_binop(*op, lhs.ty, rhs.ty)?;
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Bin(*op, lhs, rhs),
@@ -670,11 +732,7 @@ impl CheckCtx {
       Rmw(op, lhs, rhs) => {
         let lhs = self.check_expr(lhs)?;
         let rhs = self.check_expr(rhs)?;
-        let ty = if let Some(ty) = check_bin(*op, lhs.ty, rhs.ty) {
-          ty
-        } else {
-          panic!("Invalid arguments {:?} and {:?} for {:?}", lhs.ty, rhs.ty, op);
-        };
+        let ty = self.check_binop(*op, lhs.ty, rhs.ty)?;
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Rmw(*op, lhs, rhs),
@@ -683,11 +741,9 @@ impl CheckCtx {
       As(lhs, rhs) => {
         let lhs = self.check_expr(lhs)?;
         let rhs = self.check_expr(rhs)?;
-        if !TyS::is_same(lhs.ty, rhs.ty) {
-          panic!("Cannot assign {:?} to {:?}", rhs.ty, lhs.ty)
-        }
+        let ty = self.check_same(lhs.ty, rhs.ty)?;
         self.alloc(ExprS {
-          ty: lhs.ty,
+          ty: ty,
           kind: ExprKind::As(lhs, rhs),
         })
       }
@@ -701,7 +757,7 @@ impl CheckCtx {
         let ty = if let Some(expr) = nbody.last() {
           expr.ty
         } else {
-          self.alloc(TyS::Tuple(indexmap!{}))
+          self.alloc(TyS::Tuple(vec![]))
         };
         self.alloc(ExprS {
           ty: ty,
@@ -709,14 +765,14 @@ impl CheckCtx {
         })
       }
       Continue => {
-        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let ty = self.alloc(TyS::Tuple(vec![]));
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Continue,
         })
       }
       Break(arg) => {
-        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let ty = self.alloc(TyS::Tuple(vec![]));
         let arg = if let Some(expr) = arg {
           let expr = self.check_expr(&*expr)?;
           self.break_ty = expr.ty;
@@ -730,7 +786,7 @@ impl CheckCtx {
         })
       }
       Return(arg) => {
-        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let ty = self.alloc(TyS::Tuple(vec![]));
         let arg = if let Some(expr) = arg {
           let expr = self.check_expr(&*expr)?;
           self.return_ty = expr.ty;
@@ -749,7 +805,8 @@ impl CheckCtx {
 
         // Check type
         let ty = if let Some(ty) = ty {
-          self.check_ty(ty)?
+          let ty = self.check_ty(ty)?;
+          self.check_same(ty, init.ty)?
         } else {
           init.ty
         };
@@ -757,21 +814,31 @@ impl CheckCtx {
         // Define symbol
         let def = self.define_local(*name, *is_mut, ty);
 
-        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let ty = self.alloc(TyS::Tuple(vec![]));
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::Let(def, init),
         })
       }
-      If(cond, tbody, ebody) => {
+      If(cond, tbody, Some(ebody)) => {
         let cond = self.check_expr(cond)?;
         let tbody = self.check_expr(tbody)?;
-        let (ebody, ty) = if let Some(ebody) = ebody {
-          (Some(self.check_expr(ebody)?), tbody.ty)
-        } else {
-          (None, self.alloc(TyS::Tuple(indexmap!{})))
-        };
-
+        let ebody = self.check_expr(ebody)?;
+        let ty = self.check_same(tbody.ty, ebody.ty)?;
+        self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::If(cond, tbody, ebody),
+        })
+      }
+      If(cond, tbody, None) => {
+        let cond = self.check_expr(cond)?;
+        let tbody = self.check_expr(tbody)?;
+        let ty = self.alloc(TyS::Tuple(vec![]));
+        let ebody = self.alloc(ExprS {
+          ty: ty,
+          kind: ExprKind::Block(vec![]),
+        });
+        let ty = self.check_same(tbody.ty, ebody.ty)?;
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::If(cond, tbody, ebody),
@@ -780,7 +847,7 @@ impl CheckCtx {
       While(cond, body) => {
         let cond = self.check_expr(cond)?;
         let body = self.check_expr(body)?;
-        let ty = self.alloc(TyS::Tuple(indexmap!{}));
+        let ty = self.alloc(TyS::Tuple(vec![]));
         self.alloc(ExprS {
           ty: ty,
           kind: ExprKind::While(cond, body),
@@ -803,11 +870,6 @@ impl CheckCtx {
     // Populate type definitions
     self.check_ty_defs(&module.ty_defs)?;
 
-/*
-    let mut fn_queue = vec![];
-    let mut data_queue = vec![];
-*/
-
     // Create symbols for objects
     for (name, def) in &module.defs {
       match def {
@@ -820,11 +882,11 @@ impl CheckCtx {
           let ty = self.check_ty(ty)?;
           self.define_data(*name, *is_mut, ty);
         }
-        parse::Def::Fn { params, ret_ty, body } => {
-          let mut ty_params = indexmap!{};
-          for (name, (is_mut, ty)) in params {
+        parse::Def::Fn { params, ret_ty, .. } => {
+          let mut ty_params = vec![];
+          for (name, (_, ty)) in params {
             let ty = self.check_ty(ty)?;
-            ty_params.insert(*name, ty);
+            ty_params.push((*name, ty));
           }
           let ret_ty = self.check_ty(ret_ty)?;
           let ty = self.alloc(TyS::Fn(ty_params, ret_ty));
@@ -843,40 +905,30 @@ impl CheckCtx {
       };
     }
 
-/*
-    // Pass 3: type check object bodies
-
-    for (mut obj, def) in todo_objects.into_iter() {
-      // Save these to not upset the borrow checker
-      let name = obj.name;
-      let ty = obj.ty;
-
+    // Type check object bodies
+    for (name, def) in &module.defs {
       // Generate object bodies
-      match (&mut obj.kind, def) {
-        (ObjKind::Fn, Fn { params, body, .. }) => {
+      match def {
+        parse::Def::Data { init, .. } => {
+          // Typecheck initializer
+          let init = self.check_expr(init)?;
+          println!("{:#?}", init);
+        }
+        parse::Def::Fn { params, ret_ty, body } => {
           self.enter();
-          // Add parameters to scope
-          for (idx, (name, (is_mut, ty))) in params.iter().enumerate() {
+          // Create parameter symbols
+          for (index, (name, (is_mut, ty))) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
-            // Allocate symbol
-            let obj = self.alloc(ObjS {
-              name: *name,
-              is_mut: *is_mut,
-              ty: ty,
-              kind: ObjKind::Local(stor),
-            });
-            self.define(*name, Def::Obj(obj));
+            self.define_param(*name, *is_mut, ty, index);
           }
-          // Type check body
+          // Typecheck body
           let body = self.check_expr(body)?;
+          println!("{:#?}", body);
           self.exit();
         }
-        (ObjKind::Data { .. }, Data { init, .. }) => {
-          let expr = self.check_expr(init)?;
-        }
-        _ => unreachable!(),
-      };
-    }*/
+        _ => ()
+      }
+    }
 
     Ok(())
   }

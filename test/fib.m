@@ -1,4 +1,4 @@
-data foo: Intn = 5
+data n: Int32 = 100
 
 function fib(n: Int32) {
   let i: Int32 = 0;
@@ -12,5 +12,5 @@ function fib(n: Int32) {
 }
 
 function main() {
-  fib(n: 100)
+  fib(n: n)
 }

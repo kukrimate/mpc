@@ -1,4 +1,5 @@
 #![feature(hash_set_entry)]
+#![feature(hash_raw_entry)]
 
 mod check;
 mod parse;
@@ -16,7 +17,6 @@ fn compile(path: &str) -> MRes<()> {
   let module = parse_module(path)?;
 
   // Typecheck
-  let module_id = std::path::Path::new(path).file_name().unwrap().to_str().unwrap();
   let mut check_ctx = CheckCtx::new();
   check_ctx.check_module(&module)
 
