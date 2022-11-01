@@ -1,8 +1,8 @@
-data n: Int32 = 100
+const n: Int32 = 100
 
 function fib(n: Int32) {
-  let i: Int32 = 0;
-  let j: Int32 = 1;
+  let mut i: Int32 = 0;
+  let mut j: Int32 = 1;
 
   loop {
     let tmp = i + j;

@@ -8,6 +8,18 @@ lalrpop_mod!(parse_gen);
 
 /// Syntax tree produced by the parser
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IsMut { Yes, No }
+
+impl fmt::Display for IsMut {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      IsMut::Yes => write!(f, " mut"),
+      IsMut::No => write!(f, ""),
+    }
+  }
+}
+
 pub type Path = Vec<RefStr>;
 
 #[derive(Debug)]
@@ -27,7 +39,7 @@ pub enum TyRef {
   Double,
   Path(Path),
   Fn(IndexMap<RefStr, TyRef>, Box<TyRef>),
-  Ptr(Box<TyRef>),
+  Ptr(IsMut, Box<TyRef>),
   Arr(Box<Expr>, Box<TyRef>),
   Tuple(IndexMap<RefStr, TyRef>),
 }
@@ -52,6 +64,11 @@ pub enum TyDef {
 }
 
 #[derive(Clone,Copy,Debug)]
+pub enum UnOp {
+  UPlus, UMinus, Not, LNot
+}
+
+#[derive(Clone,Copy,Debug)]
 pub enum BinOp {
   Mul, Div, Mod, Add, Sub, Lsh, Rsh, And, Xor, Or, Eq, Ne, Lt, Gt, Le, Ge, LAnd, LOr
 }
@@ -63,30 +80,21 @@ pub enum Expr {
   Int(usize),
   Char(RefStr),
   Str(RefStr),
-
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, IndexMap<RefStr, Expr>),
   Index(Box<Expr>, Box<Expr>),
-
   Adr(Box<Expr>),
   Ind(Box<Expr>),
-  UPlus(Box<Expr>),
-  UMinus(Box<Expr>),
-  Not(Box<Expr>),
-  LNot(Box<Expr>),
-
+  Un(UnOp, Box<Expr>),
   Cast(Box<Expr>, TyRef),
-
   Bin(BinOp, Box<Expr>, Box<Expr>),
-
   As(Box<Expr>, Box<Expr>),
   Rmw(BinOp, Box<Expr>, Box<Expr>),
-
   Block(Vec<Expr>),
   Continue,
   Break(Option<Box<Expr>>),
   Return(Option<Box<Expr>>),
-  Let(RefStr, bool, Option<TyRef>, Box<Expr>),
+  Let(RefStr, IsMut, Option<TyRef>, Box<Expr>),
   If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -99,17 +107,17 @@ pub enum Def {
     val: Expr
   },
   Data {
-    is_mut: bool,
+    is_mut: IsMut,
     ty: TyRef,
     init: Expr
   },
   Fn {
-    params: IndexMap<RefStr, (bool, TyRef)>,
+    params: IndexMap<RefStr, (IsMut, TyRef)>,
     ret_ty: TyRef,
     body: Expr,
   },
   Extern {
-    is_mut: bool,
+    is_mut: IsMut,
     ty: TyRef,
   },
   ExternFn {

@@ -31,8 +31,8 @@ TypeName: TyRef = {
   <p:Path>    => TyRef::Path(p),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
     TyRef::Fn(params, Box::new(ret)),
-  "*" <ty:TypeName> =>
-    TyRef::Ptr(Box::new(ty)),
+  "*" <is_mut:IsMut> <ty:TypeName> =>
+    TyRef::Ptr(is_mut, Box::new(ty)),
   "[" <l:Expr> "]" <t:TypeName> =>
     TyRef::Arr(Box::new(l), Box::new(t)),
   "(" <params:ParameterListOpt>  ")" =>
@@ -57,6 +57,11 @@ ReturnType: TyRef = {
   => TyRef::Tuple(indexmap! {})
 };
 
+IsMut: IsMut = {
+  "mut" => IsMut::Yes,
+        => IsMut::No
+};
+
 // Blocks
 
 Block: Expr = {
@@ -74,8 +79,8 @@ BlockItemList: Vec<Expr> = {
 
 BlockItem: Expr = {
   Expr,
-  "let" <m:"mut"?> <n:Identifier> <t:LetType> "=" <i:Expr> =>
-    Expr::Let(n, m.is_some(), t, Box::new(i)),
+  "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" <init:Expr> =>
+    Expr::Let(name, is_mut, ty, Box::new(init)),
   "continue" => Expr::Continue,
   "break" <e:Expr?> => Expr::Break(e.map(|e| Box::new(e))),
   "return" <e:Expr?> => Expr::Return(e.map(|e| Box::new(e))),
@@ -171,10 +176,10 @@ PreExpr: Expr = {
   PostExpr,
   "&" <e:PreExpr> => Expr::Adr(Box::new(e)),
   "*" <e:PreExpr> => Expr::Ind(Box::new(e)),
-  "+" <e:PreExpr> => Expr::UPlus(Box::new(e)),
-  "-" <e:PreExpr> => Expr::UMinus(Box::new(e)),
-  "~" <e:PreExpr> => Expr::Not(Box::new(e)),
-  "!" <e:PreExpr> => Expr::LNot(Box::new(e)),
+  "+" <e:PreExpr> => Expr::Un(UnOp::UPlus, Box::new(e)),
+  "-" <e:PreExpr> => Expr::Un(UnOp::UMinus, Box::new(e)),
+  "~" <e:PreExpr> => Expr::Un(UnOp::Not, Box::new(e)),
+  "!" <e:PreExpr> => Expr::Un(UnOp::LNot, Box::new(e)),
 };
 
 PostExpr: Expr = {
@@ -249,8 +254,8 @@ ConstDefinition: () = {
 };
 
 DataDefinition: () = {
-  "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
-    module.defs.insert(name, Def::Data { is_mut: m.is_some(), ty, init });
+  "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
+    module.defs.insert(name, Def::Data { is_mut, ty, init });
   }
 };
 
@@ -262,15 +267,17 @@ FunctionDefinition: () = {
   }
 };
 
-ParameterDefinitionListOpt: IndexMap<RefStr, (bool, TyRef)> = {
+ParameterDefinitionListOpt: IndexMap<RefStr, (IsMut, TyRef)> = {
   ParameterDefinitionList,
   => indexmap! {}
 };
 
-ParameterDefinitionList: IndexMap<RefStr, (bool, TyRef)> = {
-  <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => indexmap ! { name => (m.is_some(), ty) },
-  <mut map:ParameterDefinitionList> "," <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
-    map.insert(name, (m.is_some(), ty));
+ParameterDefinitionList: IndexMap<RefStr, (IsMut, TyRef)> = {
+  <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+    indexmap! { name => (is_mut, ty) }
+  },
+  <mut map:ParameterDefinitionList> "," <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+    map.insert(name, (is_mut, ty));
     map
   },
 };
@@ -285,8 +292,8 @@ ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
     module.defs.insert(name, Def::ExternFn { params, ret_ty });
   },
-  "data" <m:"mut"?> <name:Identifier> ":" <ty:TypeName> => {
-    module.defs.insert(name, Def::Extern { is_mut: m.is_some(), ty });
+  "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+    module.defs.insert(name, Def::Extern { is_mut, ty });
   }
 };
 

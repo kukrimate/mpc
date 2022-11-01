@@ -1,5 +1,4 @@
-use std::any::Any;
-use std::collections::{HashSet,HashMap};
+use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::mem::MaybeUninit;
@@ -249,17 +248,17 @@ impl<T: ?Sized> core::ops::DerefMut for Ptr<T> {
   }
 }
 
-impl<T: ?Sized + PartialEq> PartialEq for Ptr<T> {
+impl<T: ?Sized> PartialEq for Ptr<T> {
   fn eq(&self, rhs: &Ptr<T>) -> bool {
-    unsafe { *self.0 == *rhs.0 }
+    self.0 == rhs.0
   }
 }
 
-impl<T: ?Sized + Eq> Eq for Ptr<T> {}
+impl<T: ?Sized> Eq for Ptr<T> {}
 
-impl<T: ?Sized + std::hash::Hash> core::hash::Hash for Ptr<T> {
+impl<T: ?Sized> core::hash::Hash for Ptr<T> {
   fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
-    unsafe { (*self.0).hash(h); }
+    self.0.hash(h);
   }
 }
 
@@ -272,41 +271,6 @@ impl<T: ?Sized + std::fmt::Display> std::fmt::Display for Ptr<T> {
 impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Ptr<T> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
     unsafe { (*self.0).fmt(f) }
-  }
-}
-
-// "Arena" allocator
-// NOTE: this could be a lot more efficient if we actually allocated from
-// contigous memory buckets
-
-pub struct Arena(Vec<Own<dyn Any>>);
-
-impl Arena {
-  pub fn new() -> Self {
-    Arena(Vec::new())
-  }
-
-  pub fn alloc<T: 'static>(&mut self, val: T) -> Ptr<T> {
-    let raw = Own::new(val).into_raw();
-    self.0.push(Own(raw));
-    Ptr(raw)
-  }
-}
-
-// Intern pool
-
-pub struct InternPool<T>(HashMap<Own<T>, ()>);
-
-impl<T: std::hash::Hash + Eq> InternPool<T> {
-  pub fn new() -> Self {
-    InternPool(HashMap::new())
-  }
-
-  pub fn intern(&mut self, val: T) -> Ptr<T> {
-    let (key, _) = self.0.raw_entry_mut()
-                    .from_key(&val)
-                    .or_insert_with(|| (Own::new(val), ()));
-    key.ptr()
   }
 }
 
