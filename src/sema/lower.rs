@@ -1,5 +1,6 @@
-use crate::check::*;
-use crate::util::*;
+// SPDX-License-Identifier: GPL-2.0-only
+
+use super::*;
 use llvm_sys::prelude::*;
 use llvm_sys::core::*;
 
@@ -23,6 +24,7 @@ impl GenCtx {
     }
   }
 
+/*
   fn ty_to_llvm(&mut self, ty: Ty) -> LLVMTypeRef {
     unsafe {
       use TyS::*;
@@ -53,9 +55,9 @@ impl GenCtx {
       }
     }
   }
+*/
 
-  /// Functions
-
+/*
   fn new_block(&mut self) -> LLVMBasicBlockRef {
     assert!(self.l_value != std::ptr::null_mut());
     unsafe { LLVMAppendBasicBlock(self.l_value, empty_cstr()) }
@@ -64,41 +66,11 @@ impl GenCtx {
   fn enter_block(&mut self, block: LLVMBasicBlockRef) {
     unsafe { LLVMPositionBuilderAtEnd(self.l_builder, block) }
   }
+*/
 
-  pub fn begin_func(&mut self, name: RefStr, ty: Ty) {
-    self.l_value = unsafe {
-      LLVMAddFunction(self.l_module, name.borrow_c(), self.ty_to_llvm(ty))
-    };
-    let entry = self.new_block();
-    self.enter_block(entry);
-  }
-
-  pub fn get_param(&mut self, index: usize) -> GenVal {
-    GenVal(unsafe { LLVMGetParam(self.l_value, index as u32) })
-  }
-
-  pub fn alloca(&mut self, ty: Ty) -> GenVal {
-    GenVal(unsafe { LLVMBuildAlloca(self.l_builder, self.ty_to_llvm(ty), empty_cstr()) })
-  }
-
-  pub fn store(&mut self, val: GenVal, ptr: GenVal) {
-    unsafe { LLVMBuildStore(self.l_builder, val.0, ptr.0); }
-  }
-
-  pub fn end_func(&mut self) {
-    self.l_value = std::ptr::null_mut();
-  }
-
-  /// Global variables
-
-  pub fn begin_data(&mut self, name: RefStr, ty: Ty) {
-    self.l_value = unsafe {
-      LLVMAddGlobal(self.l_module, self.ty_to_llvm(ty), name.borrow_c())
-    };
-  }
-
-  pub fn end_data(&mut self) {
-    self.l_value = std::ptr::null_mut();
+  fn lower_def(&mut self) {
+    // LLVMAddFunction(self.l_module, name.borrow_c(), self.ty_to_llvm(ty))
+    // LLVMAddGlobal(self.l_module, self.ty_to_llvm(ty), name.borrow_c())
   }
 
   pub fn dump(&self) {

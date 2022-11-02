@@ -4,7 +4,7 @@ use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashSet;
 use std::{error,fs,fmt};
 
-lalrpop_mod!(parse_gen);
+lalrpop_mod!(maple, "/parse/maple.rs");
 
 /// Syntax tree produced by the parser
 
@@ -168,7 +168,7 @@ impl error::Error for SyntaxError {}
 pub fn parse_module(path: &str) -> MRes<Module> {
   let input = fs::read_to_string(path)?;
   let mut module = Module::new();
-  match parse_gen::ModuleParser::new().parse(&mut module, &input) {
+  match maple::ModuleParser::new().parse(&mut module, &input) {
     Ok(()) => Ok(module),
     Err(error) => Err(Box::new(
       SyntaxError::new(error))),

@@ -1,20 +1,18 @@
 #![feature(hash_set_entry)]
 
-mod check;
 mod parse;
+mod sema;
 mod util;
 
+use crate::util::*;
 use clap::{Arg,App};
-use check::*;
-use parse::*;
-use util::*;
 
 fn compile(path: &str) -> MRes<()> {
   // Parse module
-  let parsed_module = parse_module(path)?;
+  let parsed_module = parse::parse_module(path)?;
 
   // Typecheck
-  let checked_module = check_module(&parsed_module)?;
+  let checked_module = sema::check::check_module(&parsed_module)?;
 
   println!("{:#?}", checked_module.defs);
 
