@@ -113,10 +113,6 @@ impl std::hash::Hash for RefStr {
   }
 }
 
-pub fn empty_cstr() -> *const i8 {
-  unsafe { std::mem::transmute(&b"\0"[0] as *const u8) }
-}
-
 /// Owning pointer
 
 #[allow(dead_code)]
@@ -277,4 +273,23 @@ pub fn lin_search<'vec, T: PartialEq, U>(vec: &'vec Vec<(T, U)>, want: &T) -> Op
     }
   }
   None
+}
+
+// Write a comma seperated list of values
+
+pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: W) -> fmt::Result
+  where I: Iterator<Item=T>,
+        W: Fn(&mut fmt::Formatter<'_>, &T) -> fmt::Result,
+{
+  write!(f, "(")?;
+  let mut comma = false;
+  for item in iter {
+    if comma {
+      write!(f, ", ")?;
+    } else {
+      comma = true;
+    }
+    wfn(f, &item)?;
+  }
+  write!(f, ")")
 }

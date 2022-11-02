@@ -11,6 +11,7 @@ use crate::parse::{self,IsMut,UnOp,BinOp};
 use crate::util::*;
 use std::fmt::{self,Write};
 use indexmap::IndexMap;
+use llvm_sys::prelude::*;
 
 /// Types
 
@@ -30,7 +31,7 @@ pub enum Ty {
   Intn,
   Float,
   Double,
-  Ref(RefStr, TyDef),
+  Ref(RefStr, Ptr<TyDef>),
   Fn(Vec<(RefStr, Ty)>, Box<Ty>),
   Ptr(IsMut, Box<Ty>),
   Arr(usize, Box<Ty>),
@@ -41,56 +42,52 @@ pub enum Ty {
   ClassInt,
 }
 
-
-pub type TyDef = Ptr<TyDefS>;
-
-pub enum TyDefS {
-  ToBeFilled,
-  Struct(RefStr, Vec<(RefStr, Ty)>),
-  Union(RefStr, Vec<(RefStr, Ty)>),
-  Enum(RefStr, Vec<(RefStr, Variant)>),
-}
-
 pub enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
-fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: W) -> fmt::Result
-  where I: Iterator<Item=T>,
-        W: Fn(&mut fmt::Formatter<'_>, &T) -> fmt::Result,
-{
-  write!(f, "(")?;
-  let mut comma = false;
-  for item in iter {
-    if comma {
-      write!(f, ", ")?;
-    } else {
-      comma = true;
+pub struct TyDef {
+  name: RefStr,
+  kind: TyDefKind,
+  l_type: LLVMTypeRef,
+}
+
+pub enum TyDefKind {
+  ToBeFilled,
+  Struct(Vec<(RefStr, Ty)>),
+  Union(Vec<(RefStr, Ty)>),
+  Enum(Vec<(RefStr, Variant)>),
+}
+
+impl TyDef {
+  fn new(name: RefStr) -> Self {
+    TyDef {
+      name,
+      kind: TyDefKind::ToBeFilled,
+      l_type: std::ptr::null_mut()
     }
-    wfn(f, &item)?;
   }
-  write!(f, ")")
 }
 
 fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
   write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
 }
 
-impl fmt::Debug for TyDefS {
+impl fmt::Debug for TyDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    use TyDefS::*;
-    match self {
-      Struct(name, params) => {
-        write!(f, "struct {} ", name)?;
+    match &self.kind {
+      TyDefKind::ToBeFilled => unreachable!(),
+      TyDefKind::Struct(params) => {
+        write!(f, "struct {} ", self.name)?;
         write_params(f, params)
       },
-      Union(name, params) => {
-        write!(f, "union {} ", name)?;
+      TyDefKind::Union(params) => {
+        write!(f, "union {} ", self.name)?;
         write_params(f, params)
       },
-      Enum(name, variants) => {
-        write!(f, "enum {} ", name)?;
+      TyDefKind::Enum(variants) => {
+        write!(f, "enum {} ", self.name)?;
         write_comma_separated(f, variants.iter(), |f, (_, variant)| {
           match variant {
             Variant::Unit(name) => {
@@ -103,7 +100,6 @@ impl fmt::Debug for TyDefS {
           }
         })
       }
-      _ => unreachable!(),
     }
   }
 }
@@ -143,7 +139,10 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 
-pub struct Expr(Ty, ExprKind);
+pub struct Expr {
+  ty: Ty,
+  kind: ExprKind,
+}
 
 pub enum ExprKind {
   Ref(Ptr<Def>),
@@ -171,10 +170,16 @@ pub enum ExprKind {
   Loop(Box<Expr>),
 }
 
+impl Expr {
+  fn new(ty: Ty, kind: ExprKind) -> Self {
+    Expr { ty, kind }
+  }
+}
+
 impl fmt::Debug for Expr {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ExprKind::*;
-    match &self.1 {
+    match &self.kind {
       Ref(def) => write!(f, "{}", def.name),
       Bool(val) => write!(f, "{}", val),
       Int(val) => write!(f, "{}", val),
@@ -224,6 +229,7 @@ pub struct Def {
   is_mut: IsMut,
   ty: Ty,
   kind: DefKind,
+  l_value: LLVMValueRef,
 }
 
 pub enum DefKind {
@@ -237,12 +243,22 @@ pub enum DefKind {
   Local,
 }
 
+impl Def {
+  fn empty(name: RefStr, is_mut: IsMut, ty: Ty) -> Self {
+    Def { name, is_mut, ty, kind: DefKind::ToBeFilled, l_value: std::ptr::null_mut() }
+  }
+
+  fn with_kind(name: RefStr, is_mut: IsMut, ty: Ty, kind: DefKind) -> Self {
+    Def { name, is_mut, ty, kind, l_value: std::ptr::null_mut() }
+  }
+}
+
 impl fmt::Debug for Def {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match &self.kind {
       DefKind::ToBeFilled => unreachable!(),
       DefKind::Const(val) => {
-        todo!()
+        write!(f, "const {}: {:?} = {:#?}", self.name, val.ty, val)
       }
       DefKind::Func(params, body) => {
         write!(f, "fn {}(", self.name)?;
@@ -255,11 +271,11 @@ impl fmt::Debug for Def {
           }
           write!(f, "{}{}: {:?}", param.is_mut, param.name, param.ty)?;
         }
-        write!(f, ") -> {:?} {:#?}", body.0, body)
+        write!(f, ") -> {:?} {:#?}", body.ty, body)
       }
       DefKind::Data(init) => {
         write!(f, "data {}{}: {:?} = {:#?}",
-          self.is_mut, self.name, init.0, init)
+          self.is_mut, self.name, init.ty, init)
       }
       DefKind::ExternFunc => {
         write!(f, "extern fn {}: {:?}", self.name, self.ty)
@@ -281,7 +297,7 @@ impl fmt::Debug for Def {
 
 pub struct Module {
   // Type definitions
-  pub ty_defs: IndexMap<RefStr, Own<TyDefS>>,
+  pub ty_defs: IndexMap<RefStr, Own<TyDef>>,
   // Definitions
   pub defs: Vec<IndexMap<RefStr, Own<Def>>>,
 }

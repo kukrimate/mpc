@@ -12,9 +12,11 @@ fn compile(path: &str) -> MRes<()> {
   let parsed_module = parse::parse_module(path)?;
 
   // Typecheck
-  let checked_module = sema::check::check_module(&parsed_module)?;
+  let mut checked_module = sema::check::check_module(&parsed_module)?;
+  // println!("{:#?}", checked_module.defs);
 
-  println!("{:#?}", checked_module.defs);
+  // Lower
+  sema::lower::lower_module(&mut checked_module)?;
 
   Ok(())
 }
@@ -25,7 +27,7 @@ fn main() {
   let args = App::new("bootstrap")
     .version("0.1.0")
     .author("Mate Kukri <km@mkukri.xyz>")
-    .about("Boostrap compiler")
+    .about("Bootstrap compiler")
     .arg(Arg::with_name("INPUT")
       .help("Input file")
       .required(true)
