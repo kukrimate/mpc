@@ -28,8 +28,65 @@ pub enum Ty {
   Arr(usize, Box<Ty>),
   Tuple(Vec<(RefStr, Ty)>),
   // Deduction
+  ClassAny,
   ClassNum,
   ClassInt,
+}
+
+fn unify(ty1: Ty, ty2: Ty) -> MRes<Ty> {
+  use Ty::*;
+  match (ty1, ty2) {
+    (ClassAny, ty2) |
+    (ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double)) |
+    (ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn)) => Ok(ty2),
+    (ty1, ClassAny) |
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double), ClassNum) |
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), ClassInt) => Ok(ty1),
+    (Bool, Bool) => Ok(Bool),
+    (Uint8, Uint8) => Ok(Uint8),
+    (Int8, Int8) => Ok(Int8),
+    (Uint16, Uint16) => Ok(Uint16),
+    (Int16, Int16) => Ok(Int16),
+    (Uint32, Uint32) => Ok(Uint32),
+    (Int32, Int32) => Ok(Int32),
+    (Uint64, Uint64) => Ok(Uint64),
+    (Int64, Int64) => Ok(Int64),
+    (Uintn, Uintn) => Ok(Uintn),
+    (Intn, Intn) => Ok(Intn),
+    (Float, Float) => Ok(Float),
+    (Double, Double) => Ok(Double),
+    (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
+      assert_eq!(name1, name2);
+      Ok(Ref(name1, def1))
+    },
+    (Fn(par1, ret1), Fn(par2, ret2)) if par1.len() == par2.len() => {
+      let mut npar = vec![];
+      for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
+        if n1 != n2 {
+          return Err(Box::new(TypeError {}));
+        }
+        npar.push((n1, unify(t1, t2)?));
+      }
+      Ok(Ty::Fn(npar, Box::new(unify(*ret1, *ret2)?)))
+    }
+    (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
+      Ok(Ty::Ptr(is_mut1, Box::new(unify(*base1, *base2)?)))
+    }
+    (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
+      Ok(Ty::Arr(siz1, Box::new(unify(*elem1, *elem2)?)))
+    }
+    (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
+      let mut npar = vec![];
+      for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
+        if n1 != n2 {
+          return Err(Box::new(TypeError {}));
+        }
+        npar.push((n1, unify(t1, t2)?));
+      }
+      Ok(Ty::Tuple(npar))
+    }
+    _ => Err(Box::new(TypeError {}))
+  }
 }
 
 pub type TyDef = Ptr<TyDefS>;
@@ -124,7 +181,9 @@ impl fmt::Debug for Ty {
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
       Tuple(params) => write_params(f, params),
-      ClassNum | ClassInt => unreachable!()
+      ClassAny => write!(f, "ClassAny"),
+      ClassNum => write!(f, "ClassNum"),
+      ClassInt => write!(f, "ClassInt"),
     }
   }
 }
@@ -290,9 +349,12 @@ impl error::Error for UnresolvedIdentError {}
 
 pub struct Module {
   // Type definitions
-  pub ty_defs: IndexMap<RefStr, Own<TyDefS>>,
+  ty_defs: IndexMap<RefStr, Own<TyDefS>>,
   // Definitions
-  pub defs: Vec<IndexMap<RefStr, Own<Def>>>,
+  defs: Vec<IndexMap<RefStr, Own<Def>>>,
+  // Contexts for break/continue, and return
+  loop_ty: Vec<Ty>,
+  ret_ty: Vec<Ty>,
   // Runtime objects
   pub fn_defs: Vec<FnBody>,
   pub data_defs: Vec<DataBody>
@@ -303,6 +365,8 @@ impl Module {
     Module {
       ty_defs: IndexMap::new(),
       defs: vec![ IndexMap::new() ],
+      loop_ty: vec![],
+      ret_ty: vec![],
       fn_defs: vec![],
       data_defs: vec![]
     }
@@ -453,60 +517,6 @@ impl Module {
   // Expressions
   //
 
-  fn unify(&mut self, ty1: Ty, ty2: Ty) -> MRes<Ty> {
-    use Ty::*;
-    match (ty1, ty2) {
-      (ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double)) |
-      (ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn)) => Ok(ty2),
-      (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double), ClassNum) |
-      (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), ClassInt) => Ok(ty1),
-      (Bool, Bool) => Ok(Bool),
-      (Uint8, Uint8) => Ok(Uint8),
-      (Int8, Int8) => Ok(Int8),
-      (Uint16, Uint16) => Ok(Uint16),
-      (Int16, Int16) => Ok(Int16),
-      (Uint32, Uint32) => Ok(Uint32),
-      (Int32, Int32) => Ok(Int32),
-      (Uint64, Uint64) => Ok(Uint64),
-      (Int64, Int64) => Ok(Int64),
-      (Uintn, Uintn) => Ok(Uintn),
-      (Intn, Intn) => Ok(Intn),
-      (Float, Float) => Ok(Float),
-      (Double, Double) => Ok(Double),
-      (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
-        assert_eq!(name1, name2);
-        Ok(Ref(name1, def1))
-      },
-      (Fn(par1, ret1), Fn(par2, ret2)) if par1.len() == par2.len() => {
-        let mut npar = vec![];
-        for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
-          if n1 != n2 {
-            return Err(Box::new(TypeError {}));
-          }
-          npar.push((n1, self.unify(t1, t2)?));
-        }
-        Ok(Ty::Fn(npar, Box::new(self.unify(*ret1, *ret2)?)))
-      }
-      (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
-        Ok(Ty::Ptr(is_mut1, Box::new(self.unify(*base1, *base2)?)))
-      }
-      (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
-        Ok(Ty::Arr(siz1, Box::new(self.unify(*elem1, *elem2)?)))
-      }
-      (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
-        let mut npar = vec![];
-        for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
-          if n1 != n2 {
-            return Err(Box::new(TypeError {}));
-          }
-          npar.push((n1, self.unify(t1, t2)?));
-        }
-        Ok(Ty::Tuple(npar))
-      }
-      _ => Err(Box::new(TypeError {}))
-    }
-  }
-
   fn infer_expr(&mut self, expr: &parse::Expr) -> MRes<Expr> {
     use parse::Expr::*;
 
@@ -579,7 +589,7 @@ impl Module {
         };
 
         // Both sides must have identical types
-        let ty = self.unify(lhs.0, rhs.0)?;
+        let ty = unify(lhs.0, rhs.0)?;
         lhs.0 = ty.clone();
         rhs.0 = ty;
 
@@ -604,21 +614,59 @@ impl Module {
       Continue => {
         Expr(Ty::Tuple(vec![]), ExprKind::Continue)
       }
-      Break(arg) => {
-        let arg = if let Some(arg) = arg {
-          Some(Box::new(self.infer_expr(&*arg)?))
-        } else {
-          None
+      Break(Some(arg)) => {
+        let mut arg = self.infer_expr(&*arg)?;
+
+        // Can only have break inside a loop
+        let loop_ty = match self.loop_ty.last_mut() {
+          Some(loop_ty) => loop_ty,
+          None => return Err(Box::new(TypeError {})),
         };
-        Expr(Ty::Tuple(vec![]), ExprKind::Break(arg))
+
+        // Unify function return type with the returned value's type
+        *loop_ty = unify(loop_ty.clone(), arg.0)?;
+        arg.0 = loop_ty.clone();
+
+        Expr(Ty::Tuple(vec![]), ExprKind::Break(Some(Box::new(arg))))
       }
-      Return(arg) => {
-        let arg = if let Some(arg) = arg {
-          Some(Box::new(self.infer_expr(&*arg)?))
-        } else {
-          None
+      Break(None) => {
+        // Can only have break inside a loop
+        let loop_ty = match self.loop_ty.last_mut() {
+          Some(loop_ty) => loop_ty,
+          None => return Err(Box::new(TypeError {})),
         };
-        Expr(Ty::Tuple(vec![]), ExprKind::Return(arg))
+
+        // Loop type must be an empty tuple
+        *loop_ty = unify(loop_ty.clone(), Ty::Tuple(vec![]))?;
+
+        Expr(Ty::Tuple(vec![]), ExprKind::Break(None))
+      }
+      Return(Some(arg)) => {
+        let mut arg = self.infer_expr(&*arg)?;
+
+        // Can only have return inside a function
+        let ret_ty = match self.ret_ty.last_mut() {
+          Some(ret_ty) => ret_ty,
+          None => return Err(Box::new(TypeError {})),
+        };
+
+        // Unify function return type with the returned value's type
+        *ret_ty = unify(ret_ty.clone(), arg.0)?;
+        arg.0 = ret_ty.clone();
+
+        Expr(Ty::Tuple(vec![]), ExprKind::Return(Some(Box::new(arg))))
+      }
+      Return(None) => {
+        // Can only have return inside a function
+        let ret_ty = match self.ret_ty.last_mut() {
+          Some(ret_ty) => ret_ty,
+          None => return Err(Box::new(TypeError {})),
+        };
+
+        // The return type must be an empty tuple here
+        *ret_ty = unify(ret_ty.clone(), Ty::Tuple(vec![]))?;
+
+        Expr(Ty::Tuple(vec![]), ExprKind::Return(None))
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
@@ -627,7 +675,7 @@ impl Module {
         // Derive declared type
         let ty = if let Some(ty) = ty {
           let ty = self.check_ty(ty)?;
-          self.unify(ty, init.0.clone())?
+          unify(ty, init.0.clone())?
         } else {
           init.0.clone()
         };
@@ -642,7 +690,7 @@ impl Module {
         let cond = self.infer_expr(cond)?;
         let tbody = self.infer_expr(tbody)?;
         let ebody = self.infer_expr(ebody)?;
-        Expr(self.unify(tbody.0.clone(), ebody.0.clone())?,
+        Expr(unify(tbody.0.clone(), ebody.0.clone())?,
           ExprKind::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
       }
       If(cond, tbody, None) => {
@@ -650,17 +698,20 @@ impl Module {
         let tbody = self.infer_expr(tbody)?;
         let ebody = Expr(Ty::Tuple(vec![]),
                           ExprKind::Block(IndexMap::new(), vec![]));
-        Expr(self.unify(tbody.0.clone(), ebody.0.clone())?,
+        Expr(unify(tbody.0.clone(), ebody.0.clone())?,
           ExprKind::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
       }
       While(cond, body) => {
         let cond = self.infer_expr(cond)?;
+        self.loop_ty.push(Ty::Tuple(vec![]));
         let body = self.infer_expr(body)?;
+        self.loop_ty.pop();
         Expr(Ty::Tuple(vec![]), ExprKind::While(Box::new(cond), Box::new(body)))
       }
       Loop(body) => {
+        self.loop_ty.push(Ty::ClassAny);
         let body = self.infer_expr(body)?;
-        Expr(Ty::Tuple(vec![]), ExprKind::Loop(Box::new(body)))
+        Expr(self.loop_ty.pop().unwrap(), ExprKind::Loop(Box::new(body)))
       }
     })
   }
@@ -723,7 +774,7 @@ impl Module {
         return Err(Box::new(TypeError {}))
       }
       let mut arg_val = self.infer_expr(arg_val)?;
-      arg_val.0 = self.unify(arg_val.0, param_ty.clone())?;
+      arg_val.0 = unify(arg_val.0, param_ty.clone())?;
       nargs.push((*arg_name, arg_val));
     }
 
@@ -744,7 +795,7 @@ impl Module {
 
     // Check index type
     let mut idx = self.infer_expr(idx)?;
-    idx.0 = self.unify(idx.0, Ty::Uintn)?;
+    idx.0 = unify(idx.0, Ty::Uintn)?;
 
     Ok(Expr(elem_ty.clone(), ExprKind::Index(is_mut, Box::new(arg), Box::new(idx))))
   }
@@ -769,13 +820,13 @@ impl Module {
     // Check argument type
     match op {
       UnOp::UPlus | UnOp::UMinus => {
-        arg.0 = self.unify(arg.0, Ty::ClassNum)?;
+        arg.0 = unify(arg.0, Ty::ClassNum)?;
       }
       UnOp::Not => {
-        arg.0 = self.unify(arg.0, Ty::ClassInt)?;
+        arg.0 = unify(arg.0, Ty::ClassInt)?;
       }
       UnOp::LNot => {
-        arg.0 = self.unify(arg.0, Ty::Bool)?;
+        arg.0 = unify(arg.0, Ty::Bool)?;
       }
     }
 
@@ -792,8 +843,8 @@ impl Module {
       // Both arguments must have matching numeric types
       // Result has the same type as the arguments
       BinOp::Mul | BinOp::Div | BinOp::Add | BinOp::Sub => {
-        let ty = self.unify(lhs.0, Ty::ClassNum)?;
-        let ty = self.unify(ty, rhs.0)?;
+        let ty = unify(lhs.0, Ty::ClassNum)?;
+        let ty = unify(ty, rhs.0)?;
         lhs.0 = ty.clone();
         rhs.0 = ty.clone();
         ty
@@ -802,8 +853,8 @@ impl Module {
       // Both arguments must have matching integer types
       // Result has the same type as the arguments
       BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
-        let ty = self.unify(lhs.0, Ty::ClassInt)?;
-        let ty = self.unify(ty, rhs.0)?;
+        let ty = unify(lhs.0, Ty::ClassInt)?;
+        let ty = unify(ty, rhs.0)?;
         lhs.0 = ty.clone();
         rhs.0 = ty.clone();
         ty
@@ -812,16 +863,16 @@ impl Module {
       // Both arguments must have integer types
       // Result has the left argument's type
       BinOp::Lsh | BinOp::Rsh => {
-        lhs.0 = self.unify(lhs.0, Ty::ClassInt)?;
-        rhs.0 = self.unify(rhs.0, Ty::ClassInt)?;
+        lhs.0 = unify(lhs.0, Ty::ClassInt)?;
+        rhs.0 = unify(rhs.0, Ty::ClassInt)?;
         lhs.0.clone()
       }
 
       // Both arguments must have matching numeric types
       // Result is a boolean
       BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-        let ty = self.unify(lhs.0, Ty::ClassNum)?;
-        let ty = self.unify(ty, rhs.0)?;
+        let ty = unify(lhs.0, Ty::ClassNum)?;
+        let ty = unify(ty, rhs.0)?;
         lhs.0 = ty.clone();
         rhs.0 = ty.clone();
         Ty::Bool
@@ -830,8 +881,8 @@ impl Module {
       // Both argument must be booleans
       // Result is a boolean
       BinOp::LAnd | BinOp::LOr => {
-        lhs.0 = self.unify(lhs.0, Ty::Bool)?;
-        rhs.0 = self.unify(rhs.0, Ty::Bool)?;
+        lhs.0 = unify(lhs.0, Ty::Bool)?;
+        rhs.0 = unify(rhs.0, Ty::Bool)?;
         Ty::Bool
       }
     };
@@ -884,7 +935,7 @@ impl Module {
           // Check initializer type
           let mut init = self.infer_expr(init)?;
           let ty = self.check_ty(ty)?;
-          init.0 = self.unify(init.0, ty)?;
+          init.0 = unify(init.0, ty)?;
 
           // Add runtime object for codegen
           self.data_defs.push(DataBody { name: *name, is_mut: *is_mut, init });
@@ -901,7 +952,7 @@ impl Module {
           // Typecheck body
           let mut body = self.infer_expr(body)?;
           let ret_ty = self.check_ty(ret_ty)?;
-          body.0 = self.unify(body.0, ret_ty)?;
+          body.0 = unify(body.0, ret_ty)?;
 
           // Exit param scope
           let params = self.exit();
