@@ -1,13 +1,14 @@
-const n: Int32 = 100
+data n: Int32 = 100
 
-function fib(n: Int32) {
+function fib(mut n: Int32) {
   let mut i: Int32 = 0;
   let mut j: Int32 = 1;
 
-  loop {
+  while n > 0 {
     let tmp = i + j;
     i = j;
     j = tmp;
+    n -= 1;
   }
 }
 

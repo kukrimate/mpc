@@ -1,5 +1,7 @@
-import libc
+extern {
+  function puts(str: *Uint8) -> Int32
+}
 
 function main() {
-  libc::puts(str: "Hello World!\n")
+  puts(str: &"Hello World!\n"[0])
 }

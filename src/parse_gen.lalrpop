@@ -186,7 +186,7 @@ PostExpr: Expr = {
   PrimExpr,
   <e:PostExpr> "." <i:Identifier> => Expr::Dot(Box::new(e), i),
   <e:PostExpr> "(" <a:ArgumentListOpt> ")" => Expr::Call(Box::new(e), a),
-  <e:PostExpr> "[" <i:Expr> ")" => Expr::Index(Box::new(e), Box::new(i)),
+  <e:PostExpr> "[" <i:Expr> "]" => Expr::Index(Box::new(e), Box::new(i)),
 };
 
 ArgumentListOpt: IndexMap<RefStr, Expr> = {

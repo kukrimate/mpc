@@ -208,12 +208,6 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Own<T> {
 
 pub struct Ptr<T: ?Sized>(*mut T);
 
-impl<T: ?Sized> Ptr<T> {
-  pub fn ptr(&self) -> Ptr<T> {
-    Ptr(self.0)
-  }
-}
-
 impl<T: ?Sized> Clone for Ptr<T> {
   fn clone(&self) -> Self {
     Ptr(self.0)

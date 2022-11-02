@@ -14,7 +14,7 @@ pub enum IsMut { Yes, No }
 impl fmt::Display for IsMut {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      IsMut::Yes => write!(f, " mut"),
+      IsMut::Yes => write!(f, "mut "),
       IsMut::No => write!(f, ""),
     }
   }

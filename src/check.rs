@@ -1,7 +1,6 @@
 use crate::parse::{self,IsMut,UnOp,BinOp};
 use crate::util::*;
 use indexmap::IndexMap;
-use std::collections::{HashMap};
 use std::fmt::Write;
 use std::{error,fmt};
 
@@ -122,7 +121,7 @@ impl fmt::Debug for Ty {
         write_params(f, params)?;
         write!(f, " -> {:?}", ty)
       },
-      Ptr(is_mut, ty) => write!(f, "*{} {:?}", is_mut, ty),
+      Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
       Tuple(params) => write_params(f, params),
       ClassNum | ClassInt => unreachable!()
@@ -135,7 +134,7 @@ impl fmt::Debug for Ty {
 pub struct Expr(Ty, ExprKind);
 
 pub enum ExprKind {
-  Ref(Def),
+  Ref(Ptr<Def>),
   Bool(bool),
   Int(usize),
   Char(RefStr),
@@ -150,11 +149,11 @@ pub enum ExprKind {
   Bin(BinOp, Box<Expr>, Box<Expr>),
   Rmw(BinOp, Box<Expr>, Box<Expr>),
   As(Box<Expr>, Box<Expr>),
-  Block(HashMap<RefStr, Own<DefS>>, Vec<Expr>),
+  Block(IndexMap<RefStr, Own<Def>>, Vec<Expr>),
   Continue,
   Break(Option<Box<Expr>>),
   Return(Option<Box<Expr>>),
-  Let(Def, Box<Expr>),
+  Let(Ptr<Def>, Box<Expr>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -196,7 +195,7 @@ impl fmt::Debug for Expr {
       Break(Some(arg)) => write!(f, "break {:?}", arg),
       Return(None) => write!(f, "return"),
       Return(Some(arg)) => write!(f, "return {:?}", arg),
-      Let(def, init) => write!(f, "let{} {}: {:?} = {:?}",
+      Let(def, init) => write!(f, "let {}{}: {:?} = {:?}",
                                 def.is_mut, def.name, def.ty, init),
       If(cond, tbody, ebody) => write!(f, "if {:?} {:?} {:?}",
                                         cond, tbody, ebody),
@@ -208,9 +207,7 @@ impl fmt::Debug for Expr {
 
 /// Definitions
 
-pub type Def = Ptr<DefS>;
-
-pub struct DefS {
+pub struct Def {
   name: RefStr,
   is_mut: IsMut,
   ty: Ty,
@@ -223,6 +220,43 @@ pub enum DefKind {
   Data,
   Param(usize),
   Local,
+}
+
+/// Runtime objects (for codegen)
+
+pub struct FnBody {
+  name: RefStr,
+  params: IndexMap<RefStr, Own<Def>>,
+  body: Expr
+}
+
+impl fmt::Debug for FnBody {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "fn {}(", self.name)?;
+    let mut first = true;
+    for (_, def) in &self.params {
+      if first {
+        first = false;
+      } else {
+        write!(f, ", ")?;
+      }
+      write!(f, "{}{}: {:?}", def.is_mut, def.name, def.ty)?;
+    }
+    write!(f, ") -> {:?} {:#?}", self.body.0, self.body)
+  }
+}
+
+pub struct DataBody {
+  name: RefStr,
+  is_mut: IsMut,
+  init: Expr,
+}
+
+impl fmt::Debug for DataBody {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "data {}{}: {:?} = {:#?}",
+      self.is_mut, self.name, self.init.0, self.init)
+  }
 }
 
 /// Errors
@@ -254,18 +288,23 @@ impl error::Error for UnresolvedIdentError {}
 
 /// Type checker logic
 
-pub struct CheckCtx {
+pub struct Module {
   // Type definitions
-  ty_defs: HashMap<RefStr, Own<TyDefS>>,
+  pub ty_defs: IndexMap<RefStr, Own<TyDefS>>,
   // Definitions
-  defs: Vec<HashMap<RefStr, Own<DefS>>>,
+  pub defs: Vec<IndexMap<RefStr, Own<Def>>>,
+  // Runtime objects
+  pub fn_defs: Vec<FnBody>,
+  pub data_defs: Vec<DataBody>
 }
 
-impl CheckCtx {
+impl Module {
   pub fn new() -> Self {
-    CheckCtx {
-      ty_defs: HashMap::new(),
-      defs: vec![ HashMap::new() ],
+    Module {
+      ty_defs: IndexMap::new(),
+      defs: vec![ IndexMap::new() ],
+      fn_defs: vec![],
+      data_defs: vec![]
     }
   }
 
@@ -367,41 +406,41 @@ impl CheckCtx {
   //
 
   fn enter(&mut self) {
-    self.defs.push(HashMap::new());
+    self.defs.push(IndexMap::new());
   }
 
-  fn exit(&mut self) -> HashMap<RefStr, Own<DefS>> {
+  fn exit(&mut self) -> IndexMap<RefStr, Own<Def>> {
     self.defs.pop().unwrap()
   }
 
   fn define_const(&mut self, name: RefStr, ty: Ty, val: Expr) {
-    let def = Own::new(DefS { name, is_mut: IsMut::No, ty, kind: DefKind::Const(val) });
+    let def = Own::new(Def { name, is_mut: IsMut::No, ty, kind: DefKind::Const(val) });
     self.defs.last_mut().unwrap().insert(name, def);
   }
 
   fn define_data(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) {
-    let def = Own::new(DefS { name, is_mut, ty, kind: DefKind::Data });
+    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Data });
     self.defs.last_mut().unwrap().insert(name, def);
   }
 
   fn define_fn(&mut self, name: RefStr, ty: Ty) {
-    let def = Own::new(DefS { name, is_mut: IsMut::No, ty, kind: DefKind::Fn });
+    let def = Own::new(Def { name, is_mut: IsMut::No, ty, kind: DefKind::Fn });
     self.defs.last_mut().unwrap().insert(name, def);
   }
 
   fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) {
-    let def = Own::new(DefS { name, is_mut, ty, kind: DefKind::Param(index) });
+    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Param(index) });
     self.defs.last_mut().unwrap().insert(name, def);
   }
 
-  fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Def {
-    let def = Own::new(DefS { name, is_mut, ty, kind: DefKind::Local });
+  fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
+    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Local });
     let ptr = def.ptr();
     self.defs.last_mut().unwrap().insert(name, def);
     ptr
   }
 
-  fn resolve_def(&mut self, name: RefStr) -> MRes<Def> {
+  fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
     for scope in self.defs.iter().rev() {
       if let Some(def) = scope.get(&name) {
         return Ok(def.ptr());
@@ -610,7 +649,7 @@ impl CheckCtx {
         let cond = self.infer_expr(cond)?;
         let tbody = self.infer_expr(tbody)?;
         let ebody = Expr(Ty::Tuple(vec![]),
-                          ExprKind::Block(HashMap::new(), vec![]));
+                          ExprKind::Block(IndexMap::new(), vec![]));
         Expr(self.unify(tbody.0.clone(), ebody.0.clone())?,
           ExprKind::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
       }
@@ -808,6 +847,7 @@ impl CheckCtx {
     for (name, def) in &module.defs {
       match def {
         parse::Def::Const { ty, val } => {
+          // Infer
           let ty = self.check_ty(ty)?;
           let val = self.infer_expr(val)?;
           self.define_const(*name, ty, val);
@@ -840,31 +880,34 @@ impl CheckCtx {
     for (name, def) in &module.defs {
       // Generate object bodies
       match def {
-        parse::Def::Data { is_mut, init, .. } => {
-          // Typecheck initializer
-          let init = self.infer_expr(init)?;
-          println!("data{} {} = {:#?}", is_mut, name, init);
+        parse::Def::Data { is_mut, ty, init } => {
+          // Check initializer type
+          let mut init = self.infer_expr(init)?;
+          let ty = self.check_ty(ty)?;
+          init.0 = self.unify(init.0, ty)?;
+
+          // Add runtime object for codegen
+          self.data_defs.push(DataBody { name: *name, is_mut: *is_mut, init });
         }
         parse::Def::Fn { params, ret_ty, body } => {
-          print!("fn {}(", name);
           self.enter();
+
           // Create parameter symbols
-          let mut first = true;
           for (index, (name, (is_mut, ty))) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
-            if first {
-              print!("{}: {:?}", name, ty);
-              first = false;
-            } else {
-              print!(", {}: {:?}", name, ty);
-            }
             self.define_param(*name, *is_mut, ty, index);
           }
-          print!(") -> {:?}", self.check_ty(ret_ty)?);
+
           // Typecheck body
-          let body = self.infer_expr(body)?;
-          println!(" {:#?}", body);
-          self.exit();
+          let mut body = self.infer_expr(body)?;
+          let ret_ty = self.check_ty(ret_ty)?;
+          body.0 = self.unify(body.0, ret_ty)?;
+
+          // Exit param scope
+          let params = self.exit();
+
+          // Add runtime object for codegen
+          self.fn_defs.push(FnBody { name: *name, params, body })
         }
         _ => ()
       }
@@ -872,4 +915,10 @@ impl CheckCtx {
 
     Ok(())
   }
+}
+
+pub fn check_module(parsed_module: &parse::Module) -> MRes<Module> {
+  let mut module = Module::new();
+  module.check_module(parsed_module)?;
+  Ok(module)
 }

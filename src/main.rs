@@ -1,10 +1,7 @@
 #![feature(hash_set_entry)]
-#![feature(hash_raw_entry)]
 
 mod check;
 mod parse;
-
-#[allow(dead_code)]
 mod util;
 
 use clap::{Arg,App};
@@ -14,14 +11,15 @@ use util::*;
 
 fn compile(path: &str) -> MRes<()> {
   // Parse module
-  let module = parse_module(path)?;
+  let parsed_module = parse_module(path)?;
 
   // Typecheck
-  let mut check_ctx = CheckCtx::new();
-  check_ctx.check_module(&module)
+  let checked_module = check_module(&parsed_module)?;
 
-  // let mut gen_ctx = GenCtx::new(RefStr::new(module_id));
-  // gen_ctx.dump();
+  println!("{:#?}", checked_module.fn_defs);
+  println!("{:#?}", checked_module.data_defs);
+
+  Ok(())
 }
 
 fn main() {
