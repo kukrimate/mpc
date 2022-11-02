@@ -116,7 +116,7 @@ pub enum Def {
     ret_ty: TyRef,
     body: Expr,
   },
-  Extern {
+  ExternData {
     is_mut: IsMut,
     ty: TyRef,
   },

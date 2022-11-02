@@ -16,8 +16,7 @@ fn compile(path: &str) -> MRes<()> {
   // Typecheck
   let checked_module = check_module(&parsed_module)?;
 
-  println!("{:#?}", checked_module.fn_defs);
-  println!("{:#?}", checked_module.data_defs);
+  println!("{:#?}", checked_module.defs);
 
   Ok(())
 }

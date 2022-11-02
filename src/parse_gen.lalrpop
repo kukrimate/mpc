@@ -293,7 +293,7 @@ ExternDefinition: () = {
     module.defs.insert(name, Def::ExternFn { params, ret_ty });
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    module.defs.insert(name, Def::Extern { is_mut, ty });
+    module.defs.insert(name, Def::ExternData { is_mut, ty });
   }
 };
 

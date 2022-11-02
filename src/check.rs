@@ -92,7 +92,7 @@ fn unify(ty1: Ty, ty2: Ty) -> MRes<Ty> {
 pub type TyDef = Ptr<TyDefS>;
 
 pub enum TyDefS {
-  Unresolved,
+  ToBeFilled,
   Struct(RefStr, Vec<(RefStr, Ty)>),
   Union(RefStr, Vec<(RefStr, Ty)>),
   Enum(RefStr, Vec<(RefStr, Variant)>),
@@ -274,47 +274,53 @@ pub struct Def {
 }
 
 pub enum DefKind {
+  ToBeFilled,
   Const(Expr),
-  Fn,
-  Data,
+  Func(IndexMap<RefStr, Own<Def>>, Expr),
+  Data(Expr),
+  ExternFunc,
+  ExternData,
   Param(usize),
   Local,
 }
 
-/// Runtime objects (for codegen)
-
-pub struct FnBody {
-  name: RefStr,
-  params: IndexMap<RefStr, Own<Def>>,
-  body: Expr
-}
-
-impl fmt::Debug for FnBody {
+impl fmt::Debug for Def {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "fn {}(", self.name)?;
-    let mut first = true;
-    for (_, def) in &self.params {
-      if first {
-        first = false;
-      } else {
-        write!(f, ", ")?;
+    match &self.kind {
+      DefKind::ToBeFilled => unreachable!(),
+      DefKind::Const(val) => {
+        todo!()
       }
-      write!(f, "{}{}: {:?}", def.is_mut, def.name, def.ty)?;
+      DefKind::Func(params, body) => {
+        write!(f, "fn {}(", self.name)?;
+        let mut first = true;
+        for (_, param) in params {
+          if first {
+            first = false;
+          } else {
+            write!(f, ", ")?;
+          }
+          write!(f, "{}{}: {:?}", param.is_mut, param.name, param.ty)?;
+        }
+        write!(f, ") -> {:?} {:#?}", body.0, body)
+      }
+      DefKind::Data(init) => {
+        write!(f, "data {}{}: {:?} = {:#?}",
+          self.is_mut, self.name, init.0, init)
+      }
+      DefKind::ExternFunc => {
+        write!(f, "extern fn {}: {:?}", self.name, self.ty)
+      }
+      DefKind::ExternData => {
+        write!(f, "extern data {}{}: {:?}", self.is_mut, self.name, self.ty)
+      }
+      DefKind::Param(index) => {
+        todo!()
+      }
+      DefKind::Local => {
+        todo!()
+      }
     }
-    write!(f, ") -> {:?} {:#?}", self.body.0, self.body)
-  }
-}
-
-pub struct DataBody {
-  name: RefStr,
-  is_mut: IsMut,
-  init: Expr,
-}
-
-impl fmt::Debug for DataBody {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "data {}{}: {:?} = {:#?}",
-      self.is_mut, self.name, self.init.0, self.init)
   }
 }
 
@@ -349,15 +355,12 @@ impl error::Error for UnresolvedIdentError {}
 
 pub struct Module {
   // Type definitions
-  ty_defs: IndexMap<RefStr, Own<TyDefS>>,
+  pub ty_defs: IndexMap<RefStr, Own<TyDefS>>,
   // Definitions
-  defs: Vec<IndexMap<RefStr, Own<Def>>>,
+  pub defs: Vec<IndexMap<RefStr, Own<Def>>>,
   // Contexts for break/continue, and return
   loop_ty: Vec<Ty>,
   ret_ty: Vec<Ty>,
-  // Runtime objects
-  pub fn_defs: Vec<FnBody>,
-  pub data_defs: Vec<DataBody>
 }
 
 impl Module {
@@ -366,9 +369,7 @@ impl Module {
       ty_defs: IndexMap::new(),
       defs: vec![ IndexMap::new() ],
       loop_ty: vec![],
-      ret_ty: vec![],
-      fn_defs: vec![],
-      data_defs: vec![]
+      ret_ty: vec![]
     }
   }
 
@@ -448,7 +449,7 @@ impl Module {
 
     // Pass 1: Create objects
     for (name, ty_def) in ty_defs {
-      let dummy = Own::new(TyDefS::Unresolved);
+      let dummy = Own::new(TyDefS::ToBeFilled);
       queue.push((*name, ty_def, dummy.ptr()));
       self.ty_defs.insert(*name, dummy);
     }
@@ -477,31 +478,23 @@ impl Module {
     self.defs.pop().unwrap()
   }
 
-  fn define_const(&mut self, name: RefStr, ty: Ty, val: Expr) {
-    let def = Own::new(Def { name, is_mut: IsMut::No, ty, kind: DefKind::Const(val) });
-    self.defs.last_mut().unwrap().insert(name, def);
+  fn define(&mut self, def: Def) -> Ptr<Def> {
+    let def = Own::new(def);
+    let ptr = def.ptr();
+    self.defs.last_mut().unwrap().insert(def.name, def);
+    ptr
   }
 
-  fn define_data(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) {
-    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Data });
-    self.defs.last_mut().unwrap().insert(name, def);
+  fn define_const(&mut self, name: RefStr, ty: Ty, val: Expr) -> Ptr<Def> {
+    self.define(Def { name, is_mut: IsMut::No, ty, kind: DefKind::Const(val) })
   }
 
-  fn define_fn(&mut self, name: RefStr, ty: Ty) {
-    let def = Own::new(Def { name, is_mut: IsMut::No, ty, kind: DefKind::Fn });
-    self.defs.last_mut().unwrap().insert(name, def);
-  }
-
-  fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) {
-    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Param(index) });
-    self.defs.last_mut().unwrap().insert(name, def);
+  fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
+    self.define(Def { name, is_mut, ty, kind: DefKind::Param(index) })
   }
 
   fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
-    let def = Own::new(Def { name, is_mut, ty, kind: DefKind::Local });
-    let ptr = def.ptr();
-    self.defs.last_mut().unwrap().insert(name, def);
-    ptr
+    self.define(Def { name, is_mut, ty, kind: DefKind::Local })
   }
 
   fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
@@ -894,6 +887,8 @@ impl Module {
     // Populate type definitions
     self.check_ty_defs(&module.ty_defs)?;
 
+    let mut queue = vec![];
+
     // Create symbols for objects
     for (name, def) in &module.defs {
       match def {
@@ -905,7 +900,10 @@ impl Module {
         }
         parse::Def::Data { is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
-          self.define_data(*name, *is_mut, ty);
+          let ptr = self.define(Def {
+            name: *name, is_mut: *is_mut, ty, kind: DefKind::ToBeFilled
+          });
+          queue.push((ptr, def));
         }
         parse::Def::Fn { params, ret_ty, .. } => {
           let mut new_params = vec![];
@@ -913,34 +911,42 @@ impl Module {
             new_params.push((*name, self.check_ty(ty)?));
           }
           let ty = Ty::Fn(new_params, Box::new(self.check_ty(ret_ty)?));
-          self.define_fn(*name, ty);
+          let ptr = self.define(Def {
+            name: *name, is_mut: IsMut::No, ty, kind: DefKind::ToBeFilled
+          });
+          queue.push((ptr, def));
         }
-        parse::Def::Extern { is_mut, ty } => {
+        parse::Def::ExternData { is_mut, ty } => {
           let ty = self.check_ty(ty)?;
-          self.define_data(*name, *is_mut, ty);
+          self.define(Def {
+            name: *name, is_mut: *is_mut, ty, kind: DefKind::ExternData
+          });
         }
         parse::Def::ExternFn { params, ret_ty } => {
           let ty = Ty::Fn(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
-          self.define_fn(*name, ty);
+          self.define(Def {
+            name: *name, is_mut: IsMut::No, ty, kind: DefKind::ExternFunc
+          });
         }
       };
     }
 
     // Type check object bodies
-    for (name, def) in &module.defs {
+    for (mut ptr, def) in queue {
       // Generate object bodies
       match def {
-        parse::Def::Data { is_mut, ty, init } => {
+        parse::Def::Data { init, .. } => {
           // Check initializer type
           let mut init = self.infer_expr(init)?;
-          let ty = self.check_ty(ty)?;
-          init.0 = unify(init.0, ty)?;
+          init.0 = unify(init.0, ptr.ty.clone())?;
 
-          // Add runtime object for codegen
-          self.data_defs.push(DataBody { name: *name, is_mut: *is_mut, init });
+          // Complete definition
+          ptr.kind = DefKind::Data(init);
         }
-        parse::Def::Fn { params, ret_ty, body } => {
+        parse::Def::Fn { params, ret_ty, body, .. } => {
+          // FIXME: this could be made better by not re-checking ret_ty
+          // and re-using the value from the first pass
           self.enter();
 
           // Create parameter symbols
@@ -957,8 +963,8 @@ impl Module {
           // Exit param scope
           let params = self.exit();
 
-          // Add runtime object for codegen
-          self.fn_defs.push(FnBody { name: *name, params, body })
+          // Complete definition
+          ptr.kind = DefKind::Func(params, body);
         }
         _ => ()
       }
