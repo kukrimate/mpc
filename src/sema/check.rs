@@ -398,18 +398,15 @@ impl CheckCtx {
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
-        let init = self.infer_expr(init)?;
+        let mut init = self.infer_expr(init)?;
 
-        // Derive declared type
-        let ty = if let Some(ty) = ty {
-          let ty = self.check_ty(ty)?;
-          unify(ty, init.ty.clone())?
-        } else {
-          init.ty.clone()
-        };
+        // Unify type annotation with initializer type
+        if let Some(ty) = ty {
+          init.ty = unify(self.check_ty(ty)?, init.ty)?;
+        }
 
         // Define symbol
-        let def = self.define_local(*name, *is_mut, ty);
+        let def = self.define_local(*name, *is_mut, init.ty.clone());
 
         // Add let expression
         Expr::new(Ty::Tuple(vec![]), ExprKind::Let(def, Box::new(init)))
@@ -472,12 +469,12 @@ impl CheckCtx {
     };
 
     // Find parameter
-    let param_ty = match lin_search(params, &name) {
-      Some(param_ty) => param_ty,
+    let (idx, param_ty) = match lin_search(params, &name) {
+      Some(val) => val,
       None => return Err(Box::new(TypeError {}))
     };
 
-    Ok(Expr::new(param_ty.clone(), ExprKind::Dot(is_mut, Box::new(arg), name)))
+    Ok(Expr::new(param_ty.clone(), ExprKind::Dot(is_mut, Box::new(arg), name, idx)))
   }
 
   fn infer_call(&mut self, arg: &parse::Expr, args: &IndexMap<RefStr, parse::Expr>) -> MRes<Expr> {

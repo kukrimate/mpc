@@ -266,10 +266,10 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Ptr<T> {
 
 // Linear search a vector of pairs
 
-pub fn lin_search<'vec, T: PartialEq, U>(vec: &'vec Vec<(T, U)>, want: &T) -> Option<&'vec U> {
-  for (key, val) in vec.iter() {
+pub fn lin_search<'vec, T: PartialEq, U>(vec: &'vec Vec<(T, U)>, want: &T) -> Option<(usize, &'vec U)> {
+  for (idx, (key, val)) in vec.iter().enumerate() {
     if key == want {
-      return Some(val);
+      return Some((idx, val));
     }
   }
   None
@@ -292,4 +292,10 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
     wfn(f, &item)?;
   }
   write!(f, ")")
+}
+
+// Empty NUL-terminated string
+
+pub fn empty_cstr() -> *const i8 {
+  unsafe { std::mem::transmute(&b"\0"[0] as *const u8) }
 }

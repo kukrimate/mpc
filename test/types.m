@@ -13,3 +13,5 @@ extern {
   data t2: T2
   data t3: T3
 }
+
+data t1p: *Intn = &t1.i

@@ -150,7 +150,7 @@ pub enum ExprKind {
   Int(usize),
   Char(RefStr),
   Str(RefStr),
-  Dot(IsMut, Box<Expr>, RefStr),
+  Dot(IsMut, Box<Expr>, RefStr, usize),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),
   Index(IsMut, Box<Expr>, Box<Expr>),
   Adr(Box<Expr>),
@@ -185,7 +185,7 @@ impl fmt::Debug for Expr {
       Int(val) => write!(f, "{}", val),
       Char(val) => write!(f, "c{:?}", val),
       Str(val) => write!(f, "s{:?}", val),
-      Dot(_, arg, name) => write!(f, ". {:?} {}", arg, name),
+      Dot(_, arg, name, _) => write!(f, ". {:?} {}", arg, name),
       Call(arg, args) => {
         write!(f, "{:?}", arg)?;
         write_comma_separated(f, args.iter(),
