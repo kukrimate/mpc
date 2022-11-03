@@ -406,13 +406,11 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_store(&mut self, ty: &Ty,
-                                    l_type: LLVMTypeRef,
-                                    l_dest: LLVMValueRef,
-                                    l_src: LLVMValueRef) -> LLVMValueRef {
+  unsafe fn lower_store(&mut self, ty: &Ty, l_dest: LLVMValueRef, l_src: LLVMValueRef) -> LLVMValueRef {
     if needs_load(ty) {
       LLVMBuildStore(self.l_builder, l_src, l_dest)
     } else {
+      let l_type = self.ty_to_llvm(ty);
       let align = self.align_of(l_type) as u32;
       let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
                                 self.size_of(l_type) as u64, 0);
@@ -478,18 +476,25 @@ impl LowerCtx {
         self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs)
       }
       Rmw(op, lhs, rhs) => {
-        let l_type = self.ty_to_llvm(&lhs.ty);
-        let l_lhs = self.lower_expr(lhs);
+        // LHS: We need both the address and value
+        let l_addr = self.lower_addr(lhs);
+        let l_lhs = LLVMBuildLoad(self.l_builder, l_addr, empty_cstr());
+        // RHS: We need only the value
         let l_rhs = self.lower_expr(rhs);
-        let tmp = self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs);
-        self.lower_store(&lhs.ty, l_type, l_lhs, tmp);
-        tmp
+        // Then we can perform the computation and do the store
+        let l_tmp = self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs);
+        self.lower_store(&lhs.ty, l_addr, l_tmp);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       As(lhs, rhs) => {
-        let l_type = self.ty_to_llvm(&lhs.ty);
-        let l_lhs = self.lower_expr(lhs);
+        let l_addr = self.lower_addr(lhs);
         let l_rhs = self.lower_expr(rhs);
-        self.lower_store(&lhs.ty, l_type, l_lhs, l_rhs)
+        self.lower_store(&lhs.ty, l_addr, l_rhs);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Block(_, body) => {
         let mut val = LLVMConstNull(self.ty_to_llvm(&expr.ty));
@@ -499,31 +504,48 @@ impl LowerCtx {
         val
       }
       Continue => {
-        todo!()
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Break(arg) => {
-        todo!()
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Return(arg) => {
-        todo!()
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Let(def, init) => {
+        // Allocate stack slot for local variable
         let l_type = self.ty_to_llvm(&def.ty);
-        def.l_value = LLVMBuildAlloca(self.l_builder,
-                                        l_type, def.name.borrow_c());
+        def.l_value = LLVMBuildAlloca(self.l_builder, l_type, def.name.borrow_c());
+
+        // Then store initializer in stack slot
         let l_init = self.lower_expr(init);
-        self.lower_store(&def.ty, l_type, def.l_value, l_init)
+        self.lower_store(&def.ty, def.l_value, l_init);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       If(cond, tbody, ebody) => {
         todo!()
       }
       While(cond, body) => {
         // FIXME: add control flow
-        self.lower_expr(body)
+        self.lower_expr(body);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Loop(body) => {
         // FIXME: add control flow
-        self.lower_expr(body)
+        self.lower_expr(body);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
     }
   }
