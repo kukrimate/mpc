@@ -286,6 +286,11 @@ impl CheckCtx {
       Un(op, arg) => {
         self.infer_un(*op, arg)?
       }
+      LNot(arg) => {
+        let mut arg = self.infer_expr(arg)?;
+        arg.ty = unify(arg.ty, Ty::Bool)?;
+        Expr::new(Ty::Bool, ExprKind::LNot(Box::new(arg)))
+      }
       Cast(arg, ty) => {
         todo!()
       }
@@ -293,17 +298,35 @@ impl CheckCtx {
         let (ty, lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
         Expr::new(ty, ExprKind::Bin(*op, Box::new(lhs), Box::new(rhs)))
       }
-      Rmw(op, lhs, rhs) => {
-        // Infer and check argument types
-        let (_, lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
+      LAnd(lhs, rhs) => {
+        let mut lhs = self.infer_expr(lhs)?;
+        let mut rhs = self.infer_expr(rhs)?;
+        lhs.ty = unify(lhs.ty, Ty::Bool)?;
+        rhs.ty = unify(rhs.ty, Ty::Bool)?;
+        Expr::new(Ty::Bool, ExprKind::LAnd(Box::new(lhs), Box::new(rhs)))
+      }
+      LOr(lhs, rhs) => {
+        let mut lhs = self.infer_expr(lhs)?;
+        let mut rhs = self.infer_expr(rhs)?;
+        lhs.ty = unify(lhs.ty, Ty::Bool)?;
+        rhs.ty = unify(rhs.ty, Ty::Bool)?;
+        Expr::new(Ty::Bool, ExprKind::LOr(Box::new(lhs), Box::new(rhs)))
+      }
+      Block(body) => {
+        self.enter();
+        let mut nbody = vec![];
+        for expr in body {
+          nbody.push(self.infer_expr(expr)?);
+        }
+        let scope = self.exit();
 
-        // Make sure lhs is mutable
-        match self.ensure_lvalue(&lhs)? {
-          IsMut::Yes => (),
-          _ => return Err(Box::new(TypeError {})),
+        let ty = if let Some(expr) = nbody.last() {
+          expr.ty.clone()
+        } else {
+          Ty::Tuple(vec![])
         };
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Rmw(*op, Box::new(lhs), Box::new(rhs)))
+        Expr::new(ty, ExprKind::Block(scope, nbody))
       }
       As(lhs, rhs) => {
         // Infer argument types
@@ -323,21 +346,17 @@ impl CheckCtx {
 
         Expr::new(Ty::Tuple(vec![]), ExprKind::As(Box::new(lhs), Box::new(rhs)))
       }
-      Block(body) => {
-        self.enter();
-        let mut nbody = vec![];
-        for expr in body {
-          nbody.push(self.infer_expr(expr)?);
-        }
-        let scope = self.exit();
+      Rmw(op, lhs, rhs) => {
+        // Infer and check argument types
+        let (_, lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
 
-        let ty = if let Some(expr) = nbody.last() {
-          expr.ty.clone()
-        } else {
-          Ty::Tuple(vec![])
+        // Make sure lhs is mutable
+        match self.ensure_lvalue(&lhs)? {
+          IsMut::Yes => (),
+          _ => return Err(Box::new(TypeError {})),
         };
 
-        Expr::new(ty, ExprKind::Block(scope, nbody))
+        Expr::new(Ty::Tuple(vec![]), ExprKind::Rmw(*op, Box::new(lhs), Box::new(rhs)))
       }
       Continue => {
         Expr::new(Ty::Tuple(vec![]), ExprKind::Continue)
@@ -550,9 +569,6 @@ impl CheckCtx {
       UnOp::Not => {
         arg.ty = unify(arg.ty, Ty::ClassInt)?;
       }
-      UnOp::LNot => {
-        arg.ty = unify(arg.ty, Ty::Bool)?;
-      }
     }
 
     Ok(Expr::new(arg.ty.clone(), ExprKind::Un(op, Box::new(arg))))
@@ -600,14 +616,6 @@ impl CheckCtx {
         let ty = unify(ty, rhs.ty)?;
         lhs.ty = ty.clone();
         rhs.ty = ty.clone();
-        Ty::Bool
-      }
-
-      // Both argument must be booleans
-      // Result is a boolean
-      BinOp::LAnd | BinOp::LOr => {
-        lhs.ty = unify(lhs.ty, Ty::Bool)?;
-        rhs.ty = unify(rhs.ty, Ty::Bool)?;
         Ty::Bool
       }
     };

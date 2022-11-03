@@ -3,5 +3,5 @@ extern {
 }
 
 function main() {
-  puts(str: &"Hello World!\n"[0])
+  puts(str: &"Hello World!\n"[0]);
 }

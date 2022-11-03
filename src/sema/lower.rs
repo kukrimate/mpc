@@ -215,11 +215,13 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn begin_block(&mut self) -> LLVMBasicBlockRef {
+  unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
     assert!(self.l_func != std::ptr::null_mut());
-    let block = LLVMAppendBasicBlock(self.l_func, empty_cstr());
+    LLVMAppendBasicBlock(self.l_func, empty_cstr())
+  }
+
+  unsafe fn enter_block(&mut self, block: LLVMBasicBlockRef) {
     LLVMPositionBuilderAtEnd(self.l_builder, block);
-    block
   }
 
   unsafe fn lower_addr(&mut self, expr: &mut Expr) -> LLVMValueRef {
@@ -418,6 +420,32 @@ impl LowerCtx {
     }
   }
 
+  unsafe fn lower_demorgan(&mut self, expr: &mut Expr,
+                            true_block: LLVMBasicBlockRef,
+                            false_block: LLVMBasicBlockRef) {
+    match &mut expr.kind {
+      ExprKind::LNot(arg) => {
+        self.lower_demorgan(arg, false_block, true_block);
+      }
+      ExprKind::LAnd(lhs, rhs) => {
+        let mid_block = self.new_block();
+        self.lower_demorgan(lhs, mid_block, false_block);
+        self.enter_block(mid_block);
+        self.lower_demorgan(rhs, true_block, false_block);
+      }
+      ExprKind::LOr(lhs, rhs) => {
+        let mid_block = self.new_block();
+        self.lower_demorgan(lhs, true_block, mid_block);
+        self.enter_block(mid_block);
+        self.lower_demorgan(rhs, true_block, false_block);
+      }
+      _ => {
+        let l_expr = self.lower_expr(expr);
+        LLVMBuildCondBr(self.l_builder, l_expr, true_block, false_block);
+      }
+    }
+  }
+
   unsafe fn lower_expr(&mut self, expr: &mut Expr) -> LLVMValueRef {
     use ExprKind::*;
     match &mut expr.kind {
@@ -449,6 +477,38 @@ impl LowerCtx {
       Bool(..) | Int(..) | Char(..) | Str(..) => {
         self.lower_const(expr)
       }
+      LNot(..) | LAnd(..) | LOr(..) => {
+        let l_bool_type = LLVMInt1TypeInContext(self.l_context);
+
+        let true_block = self.new_block();
+        let false_block = self.new_block();
+        self.lower_demorgan(expr, true_block, false_block);
+
+        // Merge point
+        let end_block = self.new_block();
+
+        // True block
+        self.enter_block(true_block);
+        let true_value = LLVMConstAllOnes(l_bool_type);
+        LLVMBuildBr(self.l_builder, end_block);
+
+        // False block
+        self.enter_block(true_block);
+        let false_value = LLVMConstNull(l_bool_type);
+        LLVMBuildBr(self.l_builder, end_block);
+
+        // At the end choose value with phi
+        self.enter_block(end_block);
+        let l_phi = LLVMBuildPhi(self.l_builder, l_bool_type, empty_cstr());
+        // Add incoming values and blocks to phi
+        let mut incoming_values = [ true_value, false_value ];
+        let mut incoming_blocks = [ true_block, false_block ];
+        LLVMAddIncoming(l_phi,
+          &mut incoming_values as *mut LLVMValueRef,
+          &mut incoming_blocks as *mut LLVMBasicBlockRef,
+          incoming_values.len() as u32);
+        l_phi
+      }
       Call(func, args) => {
         let l_func = self.lower_expr(func);
         let mut l_args = vec![];
@@ -475,6 +535,21 @@ impl LowerCtx {
         let l_rhs = self.lower_expr(rhs);
         self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs)
       }
+      Block(_, body) => {
+        let mut val = LLVMConstNull(self.ty_to_llvm(&expr.ty));
+        for expr in body {
+          val = self.lower_expr(expr);
+        }
+        val
+      }
+      As(lhs, rhs) => {
+        let l_addr = self.lower_addr(lhs);
+        let l_rhs = self.lower_expr(rhs);
+        self.lower_store(&lhs.ty, l_addr, l_rhs);
+
+        // Void value
+        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+      }
       Rmw(op, lhs, rhs) => {
         // LHS: We need both the address and value
         let l_addr = self.lower_addr(lhs);
@@ -488,35 +563,14 @@ impl LowerCtx {
         // Void value
         LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
-      As(lhs, rhs) => {
-        let l_addr = self.lower_addr(lhs);
-        let l_rhs = self.lower_expr(rhs);
-        self.lower_store(&lhs.ty, l_addr, l_rhs);
-
-        // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
-      }
-      Block(_, body) => {
-        let mut val = LLVMConstNull(self.ty_to_llvm(&expr.ty));
-        for expr in body {
-          val = self.lower_expr(expr);
-        }
-        val
-      }
       Continue => {
-
-        // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        todo!()
       }
       Break(arg) => {
-
-        // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        todo!()
       }
       Return(arg) => {
-
-        // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        todo!()
       }
       Let(def, init) => {
         // Allocate stack slot for local variable
@@ -534,15 +588,36 @@ impl LowerCtx {
         todo!()
       }
       While(cond, body) => {
-        // FIXME: add control flow
+        let test_block = self.new_block();
+        let body_block = self.new_block();
+        let end_block = self.new_block();
+
+        LLVMBuildBr(self.l_builder, test_block);
+
+        // Initial block is the test as a demorgan expr
+        self.enter_block(test_block);
+        self.lower_demorgan(cond, body_block, end_block);
+
+        // Next block is the loop body
+        self.enter_block(body_block);
         self.lower_expr(body);
+        LLVMBuildBr(self.l_builder, test_block);
+
+        // End of the loop
+        self.enter_block(end_block);
 
         // Void value
         LLVMConstNull(self.ty_to_llvm(&expr.ty))
       }
       Loop(body) => {
-        // FIXME: add control flow
+        let body_block = self.new_block();
+
+        LLVMBuildBr(self.l_builder, body_block);
+
+        // Loop body in one block
+        self.enter_block(body_block);
         self.lower_expr(body);
+        LLVMBuildBr(self.l_builder, body_block);
 
         // Void value
         LLVMConstNull(self.ty_to_llvm(&expr.ty))
@@ -576,7 +651,8 @@ impl LowerCtx {
         DefKind::Func(params, body) => {
           // Entry point
           self.l_func = def_value;
-          self.begin_block();
+          let entry_block = self.new_block();
+          self.enter_block(entry_block);
 
           // Spill parameters
           for (_, param_def) in params.iter_mut() {

@@ -65,12 +65,12 @@ pub enum TyDef {
 
 #[derive(Clone,Copy,Debug)]
 pub enum UnOp {
-  UPlus, UMinus, Not, LNot
+  UPlus, UMinus, Not
 }
 
 #[derive(Clone,Copy,Debug)]
 pub enum BinOp {
-  Mul, Div, Mod, Add, Sub, Lsh, Rsh, And, Xor, Or, Eq, Ne, Lt, Gt, Le, Ge, LAnd, LOr
+  Mul, Div, Mod, Add, Sub, Lsh, Rsh, And, Xor, Or, Eq, Ne, Lt, Gt, Le, Ge
 }
 
 #[derive(Debug)]
@@ -86,11 +86,14 @@ pub enum Expr {
   Adr(Box<Expr>),
   Ind(Box<Expr>),
   Un(UnOp, Box<Expr>),
+  LNot(Box<Expr>),
   Cast(Box<Expr>, TyRef),
   Bin(BinOp, Box<Expr>, Box<Expr>),
+  LAnd(Box<Expr>, Box<Expr>),
+  LOr(Box<Expr>, Box<Expr>),
+  Block(Vec<Expr>),
   As(Box<Expr>, Box<Expr>),
   Rmw(BinOp, Box<Expr>, Box<Expr>),
-  Block(Vec<Expr>),
   Continue,
   Break(Option<Box<Expr>>),
   Return(Option<Box<Expr>>),

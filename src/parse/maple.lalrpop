@@ -115,12 +115,12 @@ Expr: Expr = {
 
 LOrExpr: Expr = {
   LAndExpr,
-  <l:LOrExpr> "||" <r:LAndExpr> => Expr::Bin(BinOp::LOr, Box::new(l), Box::new(r))
+  <l:LOrExpr> "||" <r:LAndExpr> => Expr::LOr(Box::new(l), Box::new(r))
 };
 
 LAndExpr: Expr = {
   CmpExpr,
-  <l:LAndExpr> "&&" <r:CmpExpr> => Expr::Bin(BinOp::LAnd, Box::new(l), Box::new(r))
+  <l:LAndExpr> "&&" <r:CmpExpr> => Expr::LAnd(Box::new(l), Box::new(r))
 };
 
 CmpExpr: Expr = {
@@ -179,7 +179,7 @@ PreExpr: Expr = {
   "+" <e:PreExpr> => Expr::Un(UnOp::UPlus, Box::new(e)),
   "-" <e:PreExpr> => Expr::Un(UnOp::UMinus, Box::new(e)),
   "~" <e:PreExpr> => Expr::Un(UnOp::Not, Box::new(e)),
-  "!" <e:PreExpr> => Expr::Un(UnOp::LNot, Box::new(e)),
+  "!" <e:PreExpr> => Expr::LNot(Box::new(e)),
 };
 
 PostExpr: Expr = {
