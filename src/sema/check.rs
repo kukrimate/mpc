@@ -467,13 +467,9 @@ impl CheckCtx {
     })
   }
 
-  fn ensure_lvalue(&mut self, lval: &mut Expr) -> MRes<IsMut> {
-    match lval.kind_mut() {
-      ExprKind::Ref(expr) => Ok(expr.def.is_mut),
-      ExprKind::Str(..) => Ok(IsMut::No),
-      ExprKind::Dot(expr) => Ok(expr.is_mut),
-      ExprKind::Index(expr) => Ok(expr.is_mut),
-      ExprKind::Ind(expr) => Ok(expr.is_mut),
+  fn ensure_lvalue(&mut self, expr: &Expr) -> MRes<IsMut> {
+    match expr.is_mut_lvalue() {
+      Some(is_mut) => Ok(is_mut),
       _ => return Err(Box::new(TypeError {}))
     }
   }

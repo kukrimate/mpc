@@ -140,41 +140,12 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 
-type Expr = Own<dyn ExprT>;
+type Expr = Own<dyn lower::LowerExpr>;
 
 trait ExprT: fmt::Debug {
   fn ty<'a>(&'a self) -> &'a Ty;
   fn ty_mut<'a>(&'a mut self) -> &'a mut Ty;
-  fn kind_mut<'a>(&'a mut self) -> ExprKind<'a>;
-}
-
-enum ExprKind<'a> {
-  Ref(&'a mut ExprRef),
-  Bool(&'a mut ExprBool),
-  Int(&'a mut ExprInt),
-  Char(&'a mut ExprChar),
-  Str(&'a mut ExprStr),
-  Dot(&'a mut ExprDot),
-  Call(&'a mut ExprCall),
-  Index(&'a mut ExprIndex),
-  Adr(&'a mut ExprAdr),
-  Ind(&'a mut ExprInd),
-  Un(&'a mut ExprUn),
-  LNot(&'a mut ExprLNot),
-  Cast(&'a mut ExprCast),
-  Bin(&'a mut ExprBin),
-  LAnd(&'a mut ExprLAnd),
-  LOr(&'a mut ExprLOr),
-  Block(&'a mut ExprBlock),
-  As(&'a mut ExprAs),
-  Rmw(&'a mut ExprRmw),
-  Continue(&'a mut ExprContinue),
-  Break(&'a mut ExprBreak),
-  Return(&'a mut ExprReturn),
-  Let(&'a mut ExprLet),
-  If(&'a mut ExprIf),
-  While(&'a mut ExprWhile),
-  Loop(&'a mut ExprLoop),
+  fn is_mut_lvalue(&self) -> Option<IsMut> { None }
 }
 
 struct ExprRef { ty: Ty, def: Ptr<Def> }
@@ -379,132 +350,111 @@ impl fmt::Debug for ExprLoop {
 impl ExprT for ExprRef {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Ref(self) }
+  fn is_mut_lvalue(&self) -> Option<IsMut> { Some(self.def.is_mut) }
 }
 impl ExprT for ExprBool {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Bool(self) }
 }
 impl ExprT for ExprInt {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Int(self) }
 }
 impl ExprT for ExprChar {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Char(self) }
 }
 impl ExprT for ExprStr {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Str(self) }
+  fn is_mut_lvalue(&self) -> Option<IsMut> { Some(IsMut::No) }
 }
 impl ExprT for ExprDot {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Dot(self) }
+  fn is_mut_lvalue(&self) -> Option<IsMut> { Some(self.is_mut) }
 }
 impl ExprT for ExprCall {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Call(self) }
 }
 impl ExprT for ExprIndex {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Index(self) }
+  fn is_mut_lvalue(&self) -> Option<IsMut> { Some(self.is_mut) }
 }
 impl ExprT for ExprAdr {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Adr(self) }
 }
 impl ExprT for ExprInd {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Ind(self) }
+  fn is_mut_lvalue(&self) -> Option<IsMut> { Some(self.is_mut) }
 }
 impl ExprT for ExprUn {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Un(self) }
 }
 impl ExprT for ExprLNot {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::LNot(self) }
 }
 impl ExprT for ExprCast {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Cast(self) }
 }
 impl ExprT for ExprBin {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Bin(self) }
 }
 impl ExprT for ExprLAnd {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::LAnd(self) }
 }
 impl ExprT for ExprLOr {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::LOr(self) }
 }
 impl ExprT for ExprBlock {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Block(self) }
 }
 impl ExprT for ExprAs {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::As(self) }
 }
 impl ExprT for ExprRmw {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Rmw(self) }
 }
 impl ExprT for ExprContinue {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Continue(self) }
 }
 impl ExprT for ExprBreak {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Break(self) }
 }
 impl ExprT for ExprReturn {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Return(self) }
 }
 impl ExprT for ExprLet {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Let(self) }
 }
 impl ExprT for ExprIf {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::If(self) }
 }
 impl ExprT for ExprWhile {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::While(self) }
 }
 impl ExprT for ExprLoop {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn kind_mut(&mut self) -> ExprKind { ExprKind::Loop(self) }
 }
 
 /// Definitions
@@ -568,7 +518,7 @@ impl fmt::Debug for Def {
       DefKind::ExternData => {
         write!(f, "extern data {}{}: {:?}", self.is_mut, self.name, self.ty)
       }
-      DefKind::Param(index) => {
+      DefKind::Param(..) => {
         todo!()
       }
       DefKind::Local => {
