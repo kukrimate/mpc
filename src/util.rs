@@ -115,7 +115,6 @@ impl std::hash::Hash for RefStr {
 
 /// Owning pointer
 
-#[allow(dead_code)]
 pub struct Own<T: ?Sized>(*mut T);
 
 impl<T> Own<T> {
@@ -125,12 +124,6 @@ impl<T> Own<T> {
 }
 
 impl<T: ?Sized> Own<T> {
-  fn into_raw(self) -> *mut T {
-    let raw = self.0;
-    std::mem::forget(self);
-    raw
-  }
-
   pub fn ptr(&self) -> Ptr<T> {
     Ptr(self.0)
   }
@@ -199,6 +192,8 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Own<T> {
     unsafe { (*self.0).fmt(f) }
   }
 }
+
+impl<T: ?Sized + std::marker::Unsize<U>, U: ?Sized> std::ops::CoerceUnsized<Own<U>> for Own<T> {}
 
 // Borrowed pointer
 

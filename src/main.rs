@@ -1,4 +1,6 @@
 #![feature(hash_set_entry)]
+#![feature(coerce_unsized)]
+#![feature(unsize)]
 
 mod parse;
 mod sema;
@@ -13,7 +15,7 @@ fn compile(path: &str) -> MRes<()> {
 
   // Typecheck
   let mut checked_module = sema::check::check_module(&parsed_module)?;
-  // println!("{:#?}", checked_module.defs);
+  println!("{:#?}", checked_module);
 
   // Lower
   sema::lower::lower_module(&mut checked_module)?;

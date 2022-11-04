@@ -53,7 +53,7 @@ impl LowerCtx {
 
   unsafe fn params_to_llvm(&mut self, params: &Vec<(RefStr, Ty)>) -> Vec<LLVMTypeRef> {
     let mut l_params = vec![];
-    for (name, ty) in params {
+    for (_, ty) in params {
       l_params.push(self.ty_to_llvm(ty));
     }
     l_params
@@ -131,7 +131,7 @@ impl LowerCtx {
       ty_def.l_type = LLVMStructCreateNamed(self.l_context, name.borrow_c());
     }
     // Pass 2: Resolve bodies
-    for (name, ty_def) in ty_defs.iter_mut() {
+    for (_, ty_def) in ty_defs.iter_mut() {
       let mut l_params = match &ty_def.kind {
         TyDefKind::ToBeFilled => unreachable!(),
         TyDefKind::Struct(params) => {
@@ -172,49 +172,53 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_void(&mut self) -> LLVMValueRef {
+  unsafe fn void_value(&mut self) -> LLVMValueRef {
     LLVMConstNull(LLVMStructTypeInContext(
       self.l_context, std::ptr::null_mut(), 0, 0))
   }
 
-  unsafe fn lower_const_addr(&mut self, expr: &Expr) -> LLVMValueRef {
+  unsafe fn lower_const_addr(&mut self, expr: &mut Expr) -> LLVMValueRef {
     use ExprKind::*;
-    match &expr.kind {
-      Ref(def) => def.l_value,
-      Dot(_, arg, _, idx) => {
-        let l_arg = self.lower_const_addr(arg);
+    match expr.kind_mut() {
+      Ref(expr) => expr.def.l_value,
+      Dot(expr) => {
+        let l_arg = self.lower_const_addr(&mut expr.arg);
         let mut l_idx = [
           LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
           // NOTE: this is not documented in many places, but struct field
           // indices have to be Int32 otherwise LLVM crashes :(
-          LLVMConstInt(LLVMInt32TypeInContext(self.l_context), *idx as u64, 0)
+          LLVMConstInt(LLVMInt32TypeInContext(self.l_context), expr.idx as u64, 0)
         ];
         LLVMConstInBoundsGEP(l_arg, &mut l_idx as *mut LLVMValueRef, l_idx.len() as u32)
       }
-      Index(_, arg, idx) => {
-        let l_arg = self.lower_const_addr(arg);
+      Index(expr) => {
+        let l_arg = self.lower_const_addr(&mut expr.arg);
         let mut l_idx = [
           LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
-          self.lower_const(idx)
+          self.lower_const(&mut expr.idx)
         ];
         LLVMConstInBoundsGEP(l_arg, &mut l_idx as *mut LLVMValueRef, l_idx.len() as u32)
       }
-      Ind(_, arg) => self.lower_const(arg),
+      Ind(expr) => self.lower_const(&mut expr.arg),
       _ => panic!("Expected constant initializer")
     }
   }
 
-  unsafe fn lower_const(&mut self, expr: &Expr) -> LLVMValueRef {
+  unsafe fn lower_const(&mut self, expr: &mut Expr) -> LLVMValueRef {
     use ExprKind::*;
-    match &expr.kind {
-      Bool(val) => LLVMConstInt(self.ty_to_llvm(&expr.ty), *val as u64, 0),
-      Int(val) => LLVMConstInt(self.ty_to_llvm(&expr.ty), *val as u64, 0),
-      Char(val) => todo!(),
-      Str(val) => todo!(),
-      Adr(arg) => self.lower_const_addr(arg),
-      Un(UnOp::UPlus, arg) => self.lower_const(arg),
-      Un(UnOp::UMinus, arg) => LLVMConstNeg(self.lower_const(arg)),
-      Un(UnOp::Not, arg) => LLVMConstNot(self.lower_const(arg)),
+    match expr.kind_mut() {
+      Bool(expr) => LLVMConstInt(self.ty_to_llvm(&mut expr.ty), expr.val as u64, 0),
+      Int(expr) => LLVMConstInt(self.ty_to_llvm(&mut expr.ty), expr.val as u64, 0),
+      Char(..) => todo!(),
+      Str(..) => todo!(),
+      Adr(expr) => self.lower_const_addr(&mut expr.arg),
+      Un(expr) => {
+        match expr.op {
+          UnOp::UPlus => self.lower_const(&mut expr.arg),
+          UnOp::UMinus => LLVMConstNeg(self.lower_const(&mut expr.arg)),
+          UnOp::Not => LLVMConstNot(self.lower_const(&mut expr.arg))
+        }
+      }
       // FIXME: we definitely want to support more constant expressions
       _ => panic!("Expected constant initializer")
     }
@@ -231,34 +235,34 @@ impl LowerCtx {
 
   unsafe fn lower_addr(&mut self, expr: &mut Expr) -> LLVMValueRef {
     use ExprKind::*;
-    match &mut expr.kind {
-      Ref(def) => {
-        def.l_value
+    match expr.kind_mut() {
+      Ref(expr) => {
+        expr.def.l_value
       }
-      Dot(_, arg, _, idx) => {
-        let l_arg = self.lower_addr(arg);
+      Dot(expr) => {
+        let l_arg = self.lower_addr(&mut expr.arg);
         let mut l_idx = [
           LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
-          LLVMConstInt(LLVMInt32TypeInContext(self.l_context), *idx as u64, 0)
+          LLVMConstInt(LLVMInt32TypeInContext(self.l_context), expr.idx as u64, 0)
         ];
         LLVMBuildInBoundsGEP(self.l_builder,
           l_arg, &mut l_idx as *mut LLVMValueRef, l_idx.len() as u32,
           empty_cstr())
       }
-      Index(_, arg, idx) => {
-        let l_arg = self.lower_addr(arg);
+      Index(expr) => {
+        let l_arg = self.lower_addr(&mut expr.arg);
         let mut l_idx = [
           LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
-          self.lower_const(idx)
+          self.lower_const(&mut expr.idx)
         ];
         LLVMBuildInBoundsGEP(self.l_builder,
           l_arg, &mut l_idx as *mut LLVMValueRef, l_idx.len() as u32,
           empty_cstr())
       }
-      Ind(_, arg) => {
-        self.lower_expr(arg)
+      Ind(expr) => {
+        self.lower_expr(&mut expr.arg)
       }
-      _ => panic!("Expected lvalue expression instead of {:?}", expr)
+      _ => panic!("Expected lvalue expression")
     }
   }
 
@@ -428,21 +432,21 @@ impl LowerCtx {
   unsafe fn lower_demorgan(&mut self, expr: &mut Expr,
                             true_block: LLVMBasicBlockRef,
                             false_block: LLVMBasicBlockRef) {
-    match &mut expr.kind {
-      ExprKind::LNot(arg) => {
-        self.lower_demorgan(arg, false_block, true_block);
+    match expr.kind_mut() {
+      ExprKind::LNot(expr) => {
+        self.lower_demorgan(&mut expr.arg, false_block, true_block);
       }
-      ExprKind::LAnd(lhs, rhs) => {
+      ExprKind::LAnd(expr) => {
         let mid_block = self.new_block();
-        self.lower_demorgan(lhs, mid_block, false_block);
+        self.lower_demorgan(&mut expr.lhs, mid_block, false_block);
         self.enter_block(mid_block);
-        self.lower_demorgan(rhs, true_block, false_block);
+        self.lower_demorgan(&mut expr.rhs, true_block, false_block);
       }
-      ExprKind::LOr(lhs, rhs) => {
+      ExprKind::LOr(expr) => {
         let mid_block = self.new_block();
-        self.lower_demorgan(lhs, true_block, mid_block);
+        self.lower_demorgan(&mut expr.lhs, true_block, mid_block);
         self.enter_block(mid_block);
-        self.lower_demorgan(rhs, true_block, false_block);
+        self.lower_demorgan(&mut expr.rhs, true_block, false_block);
       }
       _ => {
         let l_expr = self.lower_expr(expr);
@@ -453,18 +457,18 @@ impl LowerCtx {
 
   unsafe fn lower_expr(&mut self, expr: &mut Expr) -> LLVMValueRef {
     use ExprKind::*;
-    match &mut expr.kind {
-      Ref(def) => {
+    match expr.kind_mut() {
+      Ref(ref_expr) => {
         // NOTE: unlike C, our Function types actually stand for the equivalent
         // of function *pointers* in C, identifiers referring to function names
         // are not lvalues, but instead stand for the addresses of their
         // corresponding functions
-        match def.kind {
+        match ref_expr.def.kind {
           DefKind::Func(..) | DefKind::ExternFunc => {
-            def.l_value
+            ref_expr.def.l_value
           }
           _ => {
-            if needs_load(&expr.ty) {
+            if needs_load(expr.ty()) {
               LLVMBuildLoad(self.l_builder, self.lower_addr(expr), empty_cstr())
             } else {
               self.lower_addr(expr)
@@ -473,7 +477,7 @@ impl LowerCtx {
         }
       }
       Dot(..) | Index(..) | Ind(..) => {
-        if needs_load(&expr.ty) {
+        if needs_load(expr.ty()) {
           LLVMBuildLoad(self.l_builder, self.lower_addr(expr), empty_cstr())
         } else {
           self.lower_addr(expr)
@@ -514,85 +518,87 @@ impl LowerCtx {
           incoming_values.len() as u32);
         l_phi
       }
-      Call(func, args) => {
-        let l_func = self.lower_expr(func);
+      Call(expr) => {
+        let l_func = self.lower_expr(&mut expr.arg);
+
         let mut l_args = vec![];
-        for (_, arg) in args.iter_mut() {
+        for (_, arg) in expr.args.iter_mut() {
           l_args.push(self.lower_expr(arg));
         }
+
         LLVMBuildCall(self.l_builder, l_func,
                       &mut l_args[0] as *mut LLVMValueRef,
                       l_args.len() as u32,
                       empty_cstr())
       }
-      Adr(arg) => {
-        self.lower_addr(arg)
+      Adr(expr) => {
+        self.lower_addr(&mut expr.arg)
       }
-      Un(op, arg) => {
-        let l_arg = self.lower_expr(arg);
-        self.lower_un(&arg.ty, *op, l_arg)
+      Un(expr) => {
+        let l_arg = self.lower_expr(&mut expr.arg);
+        self.lower_un(expr.arg.ty(), expr.op, l_arg)
       }
       Cast(..) => {
         todo!()
       }
-      Bin(op, lhs, rhs) => {
-        let l_lhs = self.lower_expr(lhs);
-        let l_rhs = self.lower_expr(rhs);
-        self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs)
+      Bin(expr) => {
+        let l_lhs = self.lower_expr(&mut expr.lhs);
+        let l_rhs = self.lower_expr(&mut expr.rhs);
+        self.lower_bin(expr.lhs.ty(), expr.op, l_lhs, l_rhs)
       }
-      Block(_, body) => {
-        let mut val = self.lower_void();
-        for expr in body {
+      Block(expr) => {
+        let mut val = self.void_value();
+        for expr in expr.body.iter_mut() {
           val = self.lower_expr(expr);
         }
         val
       }
-      As(lhs, rhs) => {
-        let l_addr = self.lower_addr(lhs);
-        let l_rhs = self.lower_expr(rhs);
-        self.lower_store(&lhs.ty, l_addr, l_rhs);
+      As(expr) => {
+        let l_addr = self.lower_addr(&mut expr.lhs);
+        let l_rhs = self.lower_expr(&mut expr.rhs);
+        self.lower_store(expr.lhs.ty(), l_addr, l_rhs);
 
         // Void value
-        self.lower_void()
+        self.void_value()
       }
-      Rmw(op, lhs, rhs) => {
+      Rmw(expr) => {
         // LHS: We need both the address and value
-        let l_addr = self.lower_addr(lhs);
+        let l_addr = self.lower_addr(&mut expr.lhs);
         let l_lhs = LLVMBuildLoad(self.l_builder, l_addr, empty_cstr());
         // RHS: We need only the value
-        let l_rhs = self.lower_expr(rhs);
+        let l_rhs = self.lower_expr(&mut expr.rhs);
         // Then we can perform the computation and do the store
-        let l_tmp = self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs);
-        self.lower_store(&lhs.ty, l_addr, l_tmp);
+        let l_tmp = self.lower_bin(expr.lhs.ty(), expr.op, l_lhs, l_rhs);
+        self.lower_store(expr.lhs.ty(), l_addr, l_tmp);
 
         // Void value
-        self.lower_void()
+        self.void_value()
       }
-      Continue => {
+      Continue(..) => {
         todo!()
       }
-      Break(arg) => {
+      Break(..) => {
         todo!()
       }
-      Return(arg) => {
+      Return(..) => {
         todo!()
       }
-      Let(def, init) => {
+      Let(expr) => {
         // Allocate stack slot for local variable
-        let l_type = self.ty_to_llvm(&def.ty);
-        def.l_value = LLVMBuildAlloca(self.l_builder, l_type, def.name.borrow_c());
+        let l_type = self.ty_to_llvm(&expr.def.ty);
+        expr.def.l_value = LLVMBuildAlloca(self.l_builder, l_type, expr.def.name.borrow_c());
 
         // Then store initializer in stack slot
-        let l_init = self.lower_expr(init);
-        self.lower_store(&def.ty, def.l_value, l_init);
+        let l_init = self.lower_expr(&mut expr.init);
+        self.lower_store(&expr.def.ty, expr.def.l_value, l_init);
 
         // Void value
-        self.lower_void()
+        self.void_value()
       }
-      If(cond, tbody, ebody) => {
+      If(..) => {
         todo!()
       }
-      While(cond, body) => {
+      While(expr) => {
         let test_block = self.new_block();
         let body_block = self.new_block();
         let end_block = self.new_block();
@@ -601,31 +607,31 @@ impl LowerCtx {
 
         // Initial block is the test as a demorgan expr
         self.enter_block(test_block);
-        self.lower_demorgan(cond, body_block, end_block);
+        self.lower_demorgan(&mut expr.cond, body_block, end_block);
 
         // Next block is the loop body
         self.enter_block(body_block);
-        self.lower_expr(body);
+        self.lower_expr(&mut expr.body);
         LLVMBuildBr(self.l_builder, test_block);
 
         // End of the loop
         self.enter_block(end_block);
 
         // Void value
-        self.lower_void()
+        self.void_value()
       }
-      Loop(body) => {
+      Loop(expr) => {
         let body_block = self.new_block();
 
         LLVMBuildBr(self.l_builder, body_block);
 
         // Loop body in one block
         self.enter_block(body_block);
-        self.lower_expr(body);
+        self.lower_expr(&mut expr.body);
         LLVMBuildBr(self.l_builder, body_block);
 
         // Void value
-        self.lower_void()
+        self.void_value()
       }
     }
   }
@@ -647,11 +653,11 @@ impl LowerCtx {
       }
     }
     // Pass 2: Lower initializers and function bodies
-    for (name, def) in defs.iter_mut() {
+    for (_, def) in defs.iter_mut() {
       let def_value = def.l_value;
       match &mut def.kind {
         DefKind::Data(init) => {
-          LLVMSetInitializer(def_value, self.lower_const(&init));
+          LLVMSetInitializer(def_value, self.lower_const(init));
         }
         DefKind::Func(params, body) => {
           // Entry point
