@@ -3,57 +3,63 @@
 use super::*;
 use std::error;
 
-fn unify(ty1: Ty, ty2: Ty) -> MRes<Ty> {
+fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
   use Ty::*;
   match (ty1, ty2) {
-    (ClassAny, ty2) |
-    (ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double)) |
-    (ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn)) => Ok(ty2),
-    (ty1, ClassAny) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double), ClassNum) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), ClassInt) => Ok(ty1),
-    (Bool, Bool) => Ok(Bool),
-    (Uint8, Uint8) => Ok(Uint8),
-    (Int8, Int8) => Ok(Int8),
-    (Uint16, Uint16) => Ok(Uint16),
-    (Int16, Int16) => Ok(Int16),
-    (Uint32, Uint32) => Ok(Uint32),
-    (Int32, Int32) => Ok(Int32),
-    (Uint64, Uint64) => Ok(Uint64),
-    (Int64, Int64) => Ok(Int64),
-    (Uintn, Uintn) => Ok(Uintn),
-    (Intn, Intn) => Ok(Intn),
-    (Float, Float) => Ok(Float),
-    (Double, Double) => Ok(Double),
+    (ty1 @ ClassAny, ty2) |
+    (ty1 @ ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double)) |
+    (ty1 @ ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn)) => {
+      *ty1 = ty2.clone();
+      Ok(())
+    },
+    (ty1, ty2 @ ClassAny) |
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double), ty2 @ ClassNum) |
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), ty2 @ ClassInt) => {
+      *ty2 = ty1.clone();
+      Ok(())
+    },
+    (Bool, Bool) |
+    (Uint8, Uint8) |
+    (Int8, Int8) |
+    (Uint16, Uint16) |
+    (Int16, Int16) |
+    (Uint32, Uint32) |
+    (Int32, Int32) |
+    (Uint64, Uint64) |
+    (Int64, Int64) |
+    (Uintn, Uintn) |
+    (Intn, Intn) |
+    (Float, Float) |
+    (Double, Double) => {
+      Ok(())
+    }
     (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
       assert_eq!(name1, name2);
-      Ok(Ref(name1, def1))
-    },
+      Ok(())
+    }
     (Fn(par1, ret1), Fn(par2, ret2)) if par1.len() == par2.len() => {
-      let mut npar = vec![];
-      for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
+      for ((n1, t1), (n2, t2)) in par1.iter_mut().zip(par2.iter_mut()) {
         if n1 != n2 {
           return Err(Box::new(TypeError {}));
         }
-        npar.push((n1, unify(t1, t2)?));
+        unify(t1, t2)?;
       }
-      Ok(Ty::Fn(npar, Box::new(unify(*ret1, *ret2)?)))
+      unify(&mut *ret1, &mut *ret2)
     }
     (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
-      Ok(Ty::Ptr(is_mut1, Box::new(unify(*base1, *base2)?)))
+      unify(&mut *base1, &mut *base2)
     }
     (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
-      Ok(Ty::Arr(siz1, Box::new(unify(*elem1, *elem2)?)))
+      unify(&mut *elem1, &mut *elem2)
     }
     (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
-      let mut npar = vec![];
-      for ((n1, t1), (n2, t2)) in par1.into_iter().zip(par2.into_iter()) {
+      for ((n1, t1), (n2, t2)) in par1.iter_mut().zip(par2.iter_mut()) {
         if n1 != n2 {
           return Err(Box::new(TypeError {}));
         }
-        npar.push((n1, unify(t1, t2)?));
+        unify(t1, t2)?;
       }
-      Ok(Ty::Tuple(npar))
+      Ok(())
     }
     _ => Err(Box::new(TypeError {}))
   }
@@ -220,10 +226,6 @@ impl CheckCtx {
     ptr
   }
 
-  fn define_const(&mut self, name: RefStr, ty: Ty, val: Expr) -> Ptr<Def> {
-    self.define(Def::with_kind(name, IsMut::No, ty, DefKind::Const(val)))
-  }
-
   fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
     self.define(Def::with_kind(name, is_mut, ty, DefKind::Param(index)))
   }
@@ -251,20 +253,20 @@ impl CheckCtx {
     Ok(match expr {
       Path(path) => {
         let def = self.resolve_def(path[0])?;
-        Expr::new(def.ty.clone(), ExprKind::Ref(def))
+        ExprS::new(def.ty.clone(), ExprKind::Ref(def))
       }
       Bool(val) => {
-        Expr::new(Ty::Bool, ExprKind::Bool(*val))
+        ExprS::new(Ty::Bool, ExprKind::Bool(*val))
       }
       Int(val) => {
-        Expr::new(Ty::ClassInt, ExprKind::Int(*val))
+        ExprS::new(Ty::ClassInt, ExprKind::Int(*val))
       }
       Char(val) => {
-        Expr::new(Ty::ClassInt, ExprKind::Char(*val))
+        ExprS::new(Ty::ClassInt, ExprKind::Char(*val))
       }
       Str(val) => {
         let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
-        Expr::new(ty, ExprKind::Str(*val))
+        ExprS::new(ty, ExprKind::Str(*val))
       }
       Dot(arg, name) => {
         self.infer_dot(arg, *name)?
@@ -278,7 +280,7 @@ impl CheckCtx {
       Adr(arg) => {
         let arg = self.infer_expr(arg)?;
         let is_mut = self.ensure_lvalue(&arg)?;
-        Expr::new(Ty::Ptr(is_mut, Box::new(arg.ty.clone())), ExprKind::Adr(Box::new(arg)))
+        ExprS::new(Ty::Ptr(is_mut, Box::new(arg.ty.clone())), ExprKind::Adr(arg))
       }
       Ind(arg) => {
         self.infer_ind(arg)?
@@ -288,29 +290,29 @@ impl CheckCtx {
       }
       LNot(arg) => {
         let mut arg = self.infer_expr(arg)?;
-        arg.ty = unify(arg.ty, Ty::Bool)?;
-        Expr::new(Ty::Bool, ExprKind::LNot(Box::new(arg)))
+        unify(&mut arg.ty, &mut Ty::Bool)?;
+        ExprS::new(Ty::Bool, ExprKind::LNot(arg))
       }
       Cast(arg, ty) => {
         todo!()
       }
       Bin(op, lhs, rhs) => {
         let (ty, lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
-        Expr::new(ty, ExprKind::Bin(*op, Box::new(lhs), Box::new(rhs)))
+        ExprS::new(ty, ExprKind::Bin(*op, lhs, rhs))
       }
       LAnd(lhs, rhs) => {
         let mut lhs = self.infer_expr(lhs)?;
         let mut rhs = self.infer_expr(rhs)?;
-        lhs.ty = unify(lhs.ty, Ty::Bool)?;
-        rhs.ty = unify(rhs.ty, Ty::Bool)?;
-        Expr::new(Ty::Bool, ExprKind::LAnd(Box::new(lhs), Box::new(rhs)))
+        unify(&mut lhs.ty, &mut Ty::Bool)?;
+        unify(&mut rhs.ty, &mut Ty::Bool)?;
+        ExprS::new(Ty::Bool, ExprKind::LAnd(lhs, rhs))
       }
       LOr(lhs, rhs) => {
         let mut lhs = self.infer_expr(lhs)?;
         let mut rhs = self.infer_expr(rhs)?;
-        lhs.ty = unify(lhs.ty, Ty::Bool)?;
-        rhs.ty = unify(rhs.ty, Ty::Bool)?;
-        Expr::new(Ty::Bool, ExprKind::LOr(Box::new(lhs), Box::new(rhs)))
+        unify(&mut lhs.ty, &mut Ty::Bool)?;
+        unify(&mut rhs.ty, &mut Ty::Bool)?;
+        ExprS::new(Ty::Bool, ExprKind::LOr(lhs, rhs))
       }
       Block(body) => {
         self.enter();
@@ -326,7 +328,7 @@ impl CheckCtx {
           Ty::Tuple(vec![])
         };
 
-        Expr::new(ty, ExprKind::Block(scope, nbody))
+        ExprS::new(ty, ExprKind::Block(scope, nbody))
       }
       As(lhs, rhs) => {
         // Infer argument types
@@ -340,11 +342,9 @@ impl CheckCtx {
         };
 
         // Both sides must have identical types
-        let ty = unify(lhs.ty, rhs.ty)?;
-        lhs.ty = ty.clone();
-        rhs.ty = ty;
+        unify(&mut lhs.ty, &mut rhs.ty)?;
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::As(Box::new(lhs), Box::new(rhs)))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::As(lhs, rhs))
       }
       Rmw(op, lhs, rhs) => {
         // Infer and check argument types
@@ -356,10 +356,10 @@ impl CheckCtx {
           _ => return Err(Box::new(TypeError {})),
         };
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Rmw(*op, Box::new(lhs), Box::new(rhs)))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Rmw(*op, lhs, rhs))
       }
       Continue => {
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Continue)
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Continue)
       }
       Break(Some(arg)) => {
         let mut arg = self.infer_expr(&*arg)?;
@@ -371,10 +371,9 @@ impl CheckCtx {
         };
 
         // Unify function return type with the returned value's type
-        *loop_ty = unify(loop_ty.clone(), arg.ty)?;
-        arg.ty = loop_ty.clone();
+        unify(loop_ty, &mut arg.ty)?;
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Break(Some(Box::new(arg))))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Break(Some(arg)))
       }
       Break(None) => {
         // Can only have break inside a loop
@@ -384,9 +383,9 @@ impl CheckCtx {
         };
 
         // Loop type must be an empty tuple
-        *loop_ty = unify(loop_ty.clone(), Ty::Tuple(vec![]))?;
+        unify(loop_ty, &mut Ty::Tuple(vec![]))?;
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Break(None))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Break(None))
       }
       Return(Some(arg)) => {
         let mut arg = self.infer_expr(&*arg)?;
@@ -398,10 +397,9 @@ impl CheckCtx {
         };
 
         // Unify function return type with the returned value's type
-        *ret_ty = unify(ret_ty.clone(), arg.ty)?;
-        arg.ty = ret_ty.clone();
+        unify(ret_ty, &mut arg.ty)?;
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Return(Some(Box::new(arg))))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Return(Some(arg)))
       }
       Return(None) => {
         // Can only have return inside a function
@@ -411,51 +409,61 @@ impl CheckCtx {
         };
 
         // The return type must be an empty tuple here
-        *ret_ty = unify(ret_ty.clone(), Ty::Tuple(vec![]))?;
+        unify(ret_ty, &mut Ty::Tuple(vec![]))?;
 
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Return(None))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Return(None))
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
         let mut init = self.infer_expr(init)?;
 
         // Unify type annotation with initializer type
-        if let Some(ty) = ty {
-          init.ty = unify(self.check_ty(ty)?, init.ty)?;
-        }
+        let ty = if let Some(ty) = ty {
+          let mut ty = self.check_ty(ty)?;
+          unify(&mut ty, &mut init.ty)?;
+          ty
+        } else {
+          init.ty.clone()
+        };
 
         // Define symbol
-        let def = self.define_local(*name, *is_mut, init.ty.clone());
+        let def = self.define_local(*name, *is_mut, ty);
 
         // Add let expression
-        Expr::new(Ty::Tuple(vec![]), ExprKind::Let(def, Box::new(init)))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::Let(def, init))
       }
       If(cond, tbody, Some(ebody)) => {
-        let cond = self.infer_expr(cond)?;
-        let tbody = self.infer_expr(tbody)?;
-        let ebody = self.infer_expr(ebody)?;
-        Expr::new(unify(tbody.ty.clone(), ebody.ty.clone())?,
-          ExprKind::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
+        let mut cond = self.infer_expr(cond)?;
+        unify(&mut cond.ty, &mut Ty::Bool)?;
+
+        let mut tbody = self.infer_expr(tbody)?;
+        let mut ebody = self.infer_expr(ebody)?;
+        unify(&mut tbody.ty, &mut ebody.ty)?;
+
+        ExprS::new(tbody.ty.clone(), ExprKind::If(cond, tbody, ebody))
       }
       If(cond, tbody, None) => {
-        let cond = self.infer_expr(cond)?;
-        let tbody = self.infer_expr(tbody)?;
-        let ebody = Expr::new(Ty::Tuple(vec![]),
+        let mut cond = self.infer_expr(cond)?;
+        unify(&mut cond.ty, &mut Ty::Bool)?;
+
+        let mut tbody = self.infer_expr(tbody)?;
+        let mut ebody = ExprS::new(Ty::Tuple(vec![]),
                           ExprKind::Block(IndexMap::new(), vec![]));
-        Expr::new(unify(tbody.ty.clone(), ebody.ty.clone())?,
-          ExprKind::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
+        unify(&mut tbody.ty, &mut ebody.ty)?;
+
+        ExprS::new(tbody.ty.clone(), ExprKind::If(cond, tbody, ebody))
       }
       While(cond, body) => {
         let cond = self.infer_expr(cond)?;
         self.loop_ty.push(Ty::Tuple(vec![]));
         let body = self.infer_expr(body)?;
         self.loop_ty.pop();
-        Expr::new(Ty::Tuple(vec![]), ExprKind::While(Box::new(cond), Box::new(body)))
+        ExprS::new(Ty::Tuple(vec![]), ExprKind::While(cond, body))
       }
       Loop(body) => {
         self.loop_ty.push(Ty::ClassAny);
         let body = self.infer_expr(body)?;
-        Expr::new(self.loop_ty.pop().unwrap(), ExprKind::Loop(Box::new(body)))
+        ExprS::new(self.loop_ty.pop().unwrap(), ExprKind::Loop(body))
       }
     })
   }
@@ -493,7 +501,7 @@ impl CheckCtx {
       None => return Err(Box::new(TypeError {}))
     };
 
-    Ok(Expr::new(param_ty.clone(), ExprKind::Dot(is_mut, Box::new(arg), name, idx)))
+    Ok(ExprS::new(param_ty.clone(), ExprKind::Dot(is_mut, arg, name, idx)))
   }
 
   fn infer_call(&mut self, arg: &parse::Expr, args: &IndexMap<RefStr, parse::Expr>) -> MRes<Expr> {
@@ -518,11 +526,12 @@ impl CheckCtx {
         return Err(Box::new(TypeError {}))
       }
       let mut arg_val = self.infer_expr(arg_val)?;
-      arg_val.ty = unify(arg_val.ty, param_ty.clone())?;
+      let mut param_ty = param_ty.clone();
+      unify(&mut arg_val.ty, &mut param_ty)?;
       nargs.push((*arg_name, arg_val));
     }
 
-    Ok(Expr::new(ret_ty.clone(), ExprKind::Call(Box::new(arg), nargs)))
+    Ok(ExprS::new(ret_ty.clone(), ExprKind::Call(arg, nargs)))
   }
 
   fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<Expr> {
@@ -539,9 +548,9 @@ impl CheckCtx {
 
     // Check index type
     let mut idx = self.infer_expr(idx)?;
-    idx.ty = unify(idx.ty, Ty::Uintn)?;
+    unify(&mut idx.ty, &mut Ty::Uintn)?;
 
-    Ok(Expr::new(elem_ty.clone(), ExprKind::Index(is_mut, Box::new(arg), Box::new(idx))))
+    Ok(ExprS::new(elem_ty.clone(), ExprKind::Index(is_mut, arg, idx)))
   }
 
   fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<Expr> {
@@ -554,7 +563,7 @@ impl CheckCtx {
       _ => return Err(Box::new(TypeError {}))
     };
 
-    Ok(Expr::new(base_ty.clone(), ExprKind::Ind(is_mut, Box::new(arg))))
+    Ok(ExprS::new(base_ty.clone(), ExprKind::Ind(is_mut, arg)))
   }
 
   fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<Expr> {
@@ -564,14 +573,14 @@ impl CheckCtx {
     // Check argument type
     match op {
       UnOp::UPlus | UnOp::UMinus => {
-        arg.ty = unify(arg.ty, Ty::ClassNum)?;
+        unify(&mut arg.ty, &mut Ty::ClassNum)?;
       }
       UnOp::Not => {
-        arg.ty = unify(arg.ty, Ty::ClassInt)?;
+        unify(&mut arg.ty, &mut Ty::ClassInt)?;
       }
     }
 
-    Ok(Expr::new(arg.ty.clone(), ExprKind::Un(op, Box::new(arg))))
+    Ok(ExprS::new(arg.ty.clone(), ExprKind::Un(op, arg)))
   }
 
   fn infer_bin(&mut self, op: BinOp, lhs: &parse::Expr, rhs: &parse::Expr) -> MRes<(Ty, Expr, Expr)> {
@@ -584,38 +593,32 @@ impl CheckCtx {
       // Both arguments must have matching numeric types
       // Result has the same type as the arguments
       BinOp::Mul | BinOp::Div | BinOp::Add | BinOp::Sub => {
-        let ty = unify(lhs.ty, Ty::ClassNum)?;
-        let ty = unify(ty, rhs.ty)?;
-        lhs.ty = ty.clone();
-        rhs.ty = ty.clone();
-        ty
+        unify(&mut lhs.ty, &mut Ty::ClassNum)?;
+        unify(&mut lhs.ty, &mut rhs.ty)?;
+        lhs.ty.clone()
       }
 
       // Both arguments must have matching integer types
       // Result has the same type as the arguments
       BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
-        let ty = unify(lhs.ty, Ty::ClassInt)?;
-        let ty = unify(ty, rhs.ty)?;
-        lhs.ty = ty.clone();
-        rhs.ty = ty.clone();
-        ty
+        unify(&mut lhs.ty, &mut Ty::ClassInt)?;
+        unify(&mut lhs.ty, &mut rhs.ty)?;
+        lhs.ty.clone()
       }
 
       // Both arguments must have integer types
       // Result has the left argument's type
       BinOp::Lsh | BinOp::Rsh => {
-        lhs.ty = unify(lhs.ty, Ty::ClassInt)?;
-        rhs.ty = unify(rhs.ty, Ty::ClassInt)?;
+        unify(&mut lhs.ty, &mut Ty::ClassInt)?;
+        unify(&mut rhs.ty, &mut Ty::ClassInt)?;
         lhs.ty.clone()
       }
 
       // Both arguments must have matching numeric types
       // Result is a boolean
       BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-        let ty = unify(lhs.ty, Ty::ClassNum)?;
-        let ty = unify(ty, rhs.ty)?;
-        lhs.ty = ty.clone();
-        rhs.ty = ty.clone();
+        unify(&mut lhs.ty, &mut Ty::ClassNum)?;
+        unify(&mut lhs.ty, &mut rhs.ty)?;
         Ty::Bool
       }
     };
@@ -636,7 +639,7 @@ impl CheckCtx {
           // Infer
           let ty = self.check_ty(ty)?;
           let val = self.infer_expr(val)?;
-          self.define_const(*name, ty, val);
+          self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
         }
         parse::Def::Data { is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
@@ -671,7 +674,7 @@ impl CheckCtx {
         parse::Def::Data { init, .. } => {
           // Check initializer type
           let mut init = self.infer_expr(init)?;
-          init.ty = unify(init.ty, ptr.ty.clone())?;
+          unify(&mut init.ty, &mut ptr.ty)?;
 
           // Complete definition
           ptr.kind = DefKind::Data(init);
@@ -689,8 +692,8 @@ impl CheckCtx {
 
           // Typecheck body
           let mut body = self.infer_expr(body)?;
-          let ret_ty = self.check_ty(ret_ty)?;
-          body.ty = unify(body.ty, ret_ty)?;
+          let mut ret_ty = self.check_ty(ret_ty)?;
+          unify(&mut body.ty, &mut ret_ty)?;
 
           // Exit param scope
           let params = self.exit();

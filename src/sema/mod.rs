@@ -139,7 +139,9 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 
-pub struct Expr {
+pub type Expr = Own<ExprS>;
+
+pub struct ExprS {
   ty: Ty,
   kind: ExprKind,
 }
@@ -150,36 +152,36 @@ pub enum ExprKind {
   Int(usize),
   Char(RefStr),
   Str(RefStr),
-  Dot(IsMut, Box<Expr>, RefStr, usize),
-  Call(Box<Expr>, Vec<(RefStr, Expr)>),
-  Index(IsMut, Box<Expr>, Box<Expr>),
-  Adr(Box<Expr>),
-  Ind(IsMut, Box<Expr>),
-  Un(UnOp, Box<Expr>),
-  LNot(Box<Expr>),
-  Cast(Box<Expr>, Ty),
-  Bin(BinOp, Box<Expr>, Box<Expr>),
-  LAnd(Box<Expr>, Box<Expr>),
-  LOr(Box<Expr>, Box<Expr>),
+  Dot(IsMut, Expr, RefStr, usize),
+  Call(Expr, Vec<(RefStr, Expr)>),
+  Index(IsMut, Expr, Expr),
+  Adr(Expr),
+  Ind(IsMut, Expr),
+  Un(UnOp, Expr),
+  LNot(Expr),
+  Cast(Expr, Ty),
+  Bin(BinOp, Expr, Expr),
+  LAnd(Expr, Expr),
+  LOr(Expr, Expr),
   Block(IndexMap<RefStr, Own<Def>>, Vec<Expr>),
-  As(Box<Expr>, Box<Expr>),
-  Rmw(BinOp, Box<Expr>, Box<Expr>),
+  As(Expr, Expr),
+  Rmw(BinOp, Expr, Expr),
   Continue,
-  Break(Option<Box<Expr>>),
-  Return(Option<Box<Expr>>),
-  Let(Ptr<Def>, Box<Expr>),
-  If(Box<Expr>, Box<Expr>, Box<Expr>),
-  While(Box<Expr>, Box<Expr>),
-  Loop(Box<Expr>),
+  Break(Option<Expr>),
+  Return(Option<Expr>),
+  Let(Ptr<Def>, Expr),
+  If(Expr, Expr, Expr),
+  While(Expr, Expr),
+  Loop(Expr),
 }
 
-impl Expr {
-  fn new(ty: Ty, kind: ExprKind) -> Self {
-    Expr { ty, kind }
+impl ExprS {
+  fn new(ty: Ty, kind: ExprKind) -> Expr {
+    Own::new(ExprS { ty, kind })
   }
 }
 
-impl fmt::Debug for Expr {
+impl fmt::Debug for ExprS {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     use ExprKind::*;
     match &self.kind {

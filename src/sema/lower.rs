@@ -172,6 +172,11 @@ impl LowerCtx {
     }
   }
 
+  unsafe fn lower_void(&mut self) -> LLVMValueRef {
+    LLVMConstNull(LLVMStructTypeInContext(
+      self.l_context, std::ptr::null_mut(), 0, 0))
+  }
+
   unsafe fn lower_const_addr(&mut self, expr: &Expr) -> LLVMValueRef {
     use ExprKind::*;
     match &expr.kind {
@@ -536,7 +541,7 @@ impl LowerCtx {
         self.lower_bin(&lhs.ty, *op, l_lhs, l_rhs)
       }
       Block(_, body) => {
-        let mut val = LLVMConstNull(self.ty_to_llvm(&expr.ty));
+        let mut val = self.lower_void();
         for expr in body {
           val = self.lower_expr(expr);
         }
@@ -548,7 +553,7 @@ impl LowerCtx {
         self.lower_store(&lhs.ty, l_addr, l_rhs);
 
         // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        self.lower_void()
       }
       Rmw(op, lhs, rhs) => {
         // LHS: We need both the address and value
@@ -561,7 +566,7 @@ impl LowerCtx {
         self.lower_store(&lhs.ty, l_addr, l_tmp);
 
         // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        self.lower_void()
       }
       Continue => {
         todo!()
@@ -582,7 +587,7 @@ impl LowerCtx {
         self.lower_store(&def.ty, def.l_value, l_init);
 
         // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        self.lower_void()
       }
       If(cond, tbody, ebody) => {
         todo!()
@@ -607,7 +612,7 @@ impl LowerCtx {
         self.enter_block(end_block);
 
         // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        self.lower_void()
       }
       Loop(body) => {
         let body_block = self.new_block();
@@ -620,7 +625,7 @@ impl LowerCtx {
         LLVMBuildBr(self.l_builder, body_block);
 
         // Void value
-        LLVMConstNull(self.ty_to_llvm(&expr.ty))
+        self.lower_void()
       }
     }
   }
