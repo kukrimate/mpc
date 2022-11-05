@@ -13,5 +13,5 @@ function fib(mut n: Int32) {
 }
 
 function main() {
-  fib(n: n)
+  fib(n: n);
 }

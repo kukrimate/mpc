@@ -201,6 +201,12 @@ pub(super) trait LowerExpr: ExprT {
   }
 }
 
+impl LowerExpr for ExprNull {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    ctx.void_value()
+  }
+}
+
 impl LowerExpr for ExprRef {
   unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> LLVMValueRef {
     match self.def.kind {

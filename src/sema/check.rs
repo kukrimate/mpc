@@ -251,6 +251,9 @@ impl CheckCtx {
     use parse::Expr::*;
 
     Ok(match expr {
+      Null => {
+        ExprNull::new(Ty::Tuple(vec![]))
+      }
       Path(path) => {
         let def = self.resolve_def(path[0])?;
         ExprRef::new(def.ty.clone(), def)
@@ -361,7 +364,7 @@ impl CheckCtx {
       Continue => {
         ExprContinue::new(Ty::Tuple(vec![]))
       }
-      Break(Some(arg)) => {
+      Break(arg) => {
         let mut arg = self.infer_expr(&*arg)?;
 
         // Can only have break inside a loop
@@ -373,21 +376,9 @@ impl CheckCtx {
         // Unify function return type with the returned value's type
         unify(loop_ty, arg.ty_mut())?;
 
-        ExprBreak::new(Ty::Tuple(vec![]), Some(arg))
+        ExprBreak::new(Ty::Tuple(vec![]), arg)
       }
-      Break(None) => {
-        // Can only have break inside a loop
-        let loop_ty = match self.loop_ty.last_mut() {
-          Some(loop_ty) => loop_ty,
-          None => return Err(Box::new(TypeError {})),
-        };
-
-        // Loop type must be an empty tuple
-        unify(loop_ty, &mut Ty::Tuple(vec![]))?;
-
-        ExprBreak::new(Ty::Tuple(vec![]), None)
-      }
-      Return(Some(arg)) => {
+      Return(arg) => {
         let mut arg = self.infer_expr(&*arg)?;
 
         // Can only have return inside a function
@@ -399,19 +390,7 @@ impl CheckCtx {
         // Unify function return type with the returned value's type
         unify(ret_ty, arg.ty_mut())?;
 
-        ExprReturn::new(Ty::Tuple(vec![]), Some(arg))
-      }
-      Return(None) => {
-        // Can only have return inside a function
-        let ret_ty = match self.ret_ty.last_mut() {
-          Some(ret_ty) => ret_ty,
-          None => return Err(Box::new(TypeError {})),
-        };
-
-        // The return type must be an empty tuple here
-        unify(ret_ty, &mut Ty::Tuple(vec![]))?;
-
-        ExprReturn::new(Ty::Tuple(vec![]), None)
+        ExprReturn::new(Ty::Tuple(vec![]), arg)
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
@@ -432,22 +411,12 @@ impl CheckCtx {
         // Add let expression
         ExprLet::new(Ty::Tuple(vec![]), def, init)
       }
-      If(cond, tbody, Some(ebody)) => {
+      If(cond, tbody, ebody) => {
         let mut cond = self.infer_expr(cond)?;
         unify(cond.ty_mut(), &mut Ty::Bool)?;
 
         let mut tbody = self.infer_expr(tbody)?;
         let mut ebody = self.infer_expr(ebody)?;
-        unify(tbody.ty_mut(), ebody.ty_mut())?;
-
-        ExprIf::new(tbody.ty().clone(), cond, tbody, ebody)
-      }
-      If(cond, tbody, None) => {
-        let mut cond = self.infer_expr(cond)?;
-        unify(cond.ty_mut(), &mut Ty::Bool)?;
-
-        let mut tbody = self.infer_expr(tbody)?;
-        let mut ebody = ExprBlock::new(Ty::Tuple(vec![]), IndexMap::new(), vec![]);
         unify(tbody.ty_mut(), ebody.ty_mut())?;
 
         ExprIf::new(tbody.ty().clone(), cond, tbody, ebody)

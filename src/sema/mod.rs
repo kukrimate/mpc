@@ -148,6 +148,7 @@ trait ExprT: fmt::Debug {
   fn is_mut_lvalue(&self) -> Option<IsMut> { None }
 }
 
+struct ExprNull { ty: Ty }
 struct ExprRef { ty: Ty, def: Ptr<Def> }
 struct ExprBool { ty: Ty, val: bool }
 struct ExprInt { ty: Ty, val: usize }
@@ -168,13 +169,14 @@ struct ExprBlock { ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<Expr> }
 struct ExprAs { ty: Ty, lhs: Expr, rhs: Expr }
 struct ExprRmw { ty: Ty, op: BinOp, lhs: Expr, rhs: Expr }
 struct ExprContinue { ty: Ty }
-struct ExprBreak { ty: Ty, arg: Option<Expr> }
-struct ExprReturn { ty: Ty, arg: Option<Expr> }
+struct ExprBreak { ty: Ty, arg: Expr }
+struct ExprReturn { ty: Ty, arg: Expr }
 struct ExprLet { ty: Ty, def: Ptr<Def>, init: Expr }
 struct ExprIf { ty: Ty, cond: Expr, tbody: Expr, ebody: Expr }
 struct ExprWhile { ty: Ty, cond: Expr, body: Expr }
 struct ExprLoop { ty: Ty, body: Expr }
 
+impl ExprNull { fn new(ty: Ty) -> Expr { Own::new(Self { ty }) } }
 impl ExprRef { fn new(ty: Ty, def: Ptr<Def>) -> Expr { Own::new(Self { ty, def }) } }
 impl ExprBool { fn new(ty: Ty, val: bool) -> Expr { Own::new(Self { ty, val }) } }
 impl ExprInt { fn new(ty: Ty, val: usize) -> Expr { Own::new(Self { ty, val }) } }
@@ -195,13 +197,18 @@ impl ExprBlock { fn new(ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<Exp
 impl ExprAs { fn new(ty: Ty, lhs: Expr, rhs: Expr) -> Expr { Own::new(Self { ty, lhs, rhs }) } }
 impl ExprRmw { fn new(ty: Ty, op: BinOp, lhs: Expr, rhs: Expr) -> Expr { Own::new(Self { ty, op, lhs, rhs }) } }
 impl ExprContinue { fn new(ty: Ty) -> Expr { Own::new(Self { ty }) } }
-impl ExprBreak { fn new(ty: Ty, arg: Option<Expr>) -> Expr { Own::new(Self { ty, arg }) } }
-impl ExprReturn { fn new(ty: Ty, arg: Option<Expr>) -> Expr { Own::new(Self { ty, arg }) } }
+impl ExprBreak { fn new(ty: Ty, arg: Expr) -> Expr { Own::new(Self { ty, arg }) } }
+impl ExprReturn { fn new(ty: Ty, arg: Expr) -> Expr { Own::new(Self { ty, arg }) } }
 impl ExprLet { fn new(ty: Ty, def: Ptr<Def>, init: Expr) -> Expr { Own::new(Self { ty, def, init }) } }
 impl ExprIf { fn new(ty: Ty, cond: Expr, tbody: Expr, ebody: Expr) -> Expr { Own::new(Self { ty, cond, tbody, ebody }) } }
 impl ExprWhile { fn new(ty: Ty, cond: Expr, body: Expr) -> Expr { Own::new(Self { ty, cond, body }) } }
 impl ExprLoop { fn new(ty: Ty, body: Expr) -> Expr { Own::new(Self { ty, body }) } }
 
+impl fmt::Debug for ExprNull {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Null")
+  }
+}
 impl fmt::Debug for ExprRef {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{}", self.def.name)
@@ -311,18 +318,12 @@ impl fmt::Debug for ExprContinue {
 }
 impl fmt::Debug for ExprBreak {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match &self.arg {
-      Some(arg) => write!(f, "break {:?}", arg),
-      None => write!(f, "break")
-    }
+    write!(f, "break {:?}", self.arg)
   }
 }
 impl fmt::Debug for ExprReturn {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match &self.arg {
-      Some(arg) => write!(f, "return {:?}", arg),
-      None => write!(f, "return")
-    }
+    write!(f, "return {:?}", self.arg)
   }
 }
 impl fmt::Debug for ExprLet {
@@ -347,6 +348,10 @@ impl fmt::Debug for ExprLoop {
   }
 }
 
+impl ExprT for ExprNull {
+  fn ty(&self) -> &Ty { &self.ty }
+  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
+}
 impl ExprT for ExprRef {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }

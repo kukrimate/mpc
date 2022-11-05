@@ -65,8 +65,12 @@ IsMut: IsMut = {
 // Blocks
 
 Block: Expr = {
-  "{" "}" => Expr::Block(vec![]),
-  "{" <v:BlockItemList> ";"? "}" => Expr::Block(v),
+  "{" "}" => Expr::Null,
+  "{" <v:BlockItemList> "}" => Expr::Block(v),
+  "{" <mut v:BlockItemList> ";" "}" => {
+    v.push(Expr::Null);
+    Expr::Block(v)
+  }
 };
 
 BlockItemList: Vec<Expr> = {
@@ -82,9 +86,9 @@ BlockItem: Expr = {
   "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" <init:Expr> =>
     Expr::Let(name, is_mut, ty, Box::new(init)),
   "continue" => Expr::Continue,
-  "break" <e:Expr?> => Expr::Break(e.map(|e| Box::new(e))),
-  "return" <e:Expr?> => Expr::Return(e.map(|e| Box::new(e))),
-  "if" <e:Expr> <b:Block> => Expr::If(Box::new(e), Box::new(b), None),
+  "break" <e:ExprOpt> => Expr::Break(Box::new(e)),
+  "return" <e:ExprOpt> => Expr::Return(Box::new(e)),
+  "if" <e:Expr> <b:Block> => Expr::If(Box::new(e), Box::new(b), Box::new(Expr::Null)),
   "while" <e:Expr> <b:Block> => Expr::While(Box::new(e), Box::new(b)),
 
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
@@ -100,6 +104,11 @@ BlockItem: Expr = {
   <l:Expr> "|=" <r:Expr> => Expr::Rmw(BinOp::Or, Box::new(l), Box::new(r)),
 };
 
+ExprOpt: Expr = {
+  <e:Expr>  => e,
+            => Expr::Null
+};
+
 LetType: Option<TyRef> = {
   ":" <ty:TypeName> => Some(ty),
                     => None,
@@ -109,7 +118,7 @@ LetType: Option<TyRef> = {
 
 Expr: Expr = {
   LOrExpr,
-  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Some(Box::new(e))),
+  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
   "loop" <b:Block> => Expr::Loop(Box::new(b))
 };
 

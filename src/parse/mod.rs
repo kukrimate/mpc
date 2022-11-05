@@ -75,6 +75,7 @@ pub enum BinOp {
 
 #[derive(Debug)]
 pub enum Expr {
+  Null,
   Path(Path),
   Bool(bool),
   Int(usize),
@@ -95,10 +96,10 @@ pub enum Expr {
   As(Box<Expr>, Box<Expr>),
   Rmw(BinOp, Box<Expr>, Box<Expr>),
   Continue,
-  Break(Option<Box<Expr>>),
-  Return(Option<Box<Expr>>),
+  Break(Box<Expr>),
+  Return(Box<Expr>),
   Let(RefStr, IsMut, Option<TyRef>, Box<Expr>),
-  If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+  If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
 }
