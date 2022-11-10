@@ -174,10 +174,14 @@ const TRIPLE: &str = "x86_64-pc-linux-gnu";
 const DATALAYOUT: &str = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128";
 
 pub(super) struct LowerCtx {
+  // LLVM handles
   l_context: LLVMContextRef,
   l_builder: LLVMBuilderRef,
   l_module: LLVMModuleRef,
   l_func: LLVMValueRef,
+
+  // String literals
+  string_lits: IndexMap<RefStr, LLVMValueRef>,
 }
 
 pub(super) trait LowerExpr: ExprT {
@@ -276,7 +280,15 @@ impl LowerExpr for ExprInt {
 
 impl LowerExpr for ExprChar {}  // TODO
 
-impl LowerExpr for ExprStr {}   // TODO
+impl LowerExpr for ExprStr {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    ctx.build_string_lit(self.val)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    ctx.build_string_lit(self.val)
+  }
+}
 
 impl LowerExpr for ExprDot {
   unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
@@ -554,7 +566,9 @@ impl LowerCtx {
     LLVMSetTarget(l_module, RefStr::new(TRIPLE).borrow_c());
     LLVMSetDataLayout(l_module, RefStr::new(DATALAYOUT).borrow_c());
 
-    LowerCtx { l_context, l_builder, l_module, l_func: std::ptr::null_mut() }
+    LowerCtx { l_context, l_builder, l_module,
+                l_func: std::ptr::null_mut(),
+                string_lits: IndexMap::new() }
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
@@ -700,6 +714,30 @@ impl LowerCtx {
 
   unsafe fn enter_block(&mut self, block: LLVMBasicBlockRef) {
     LLVMPositionBuilderAtEnd(self.l_builder, block);
+  }
+
+  unsafe fn build_string_lit(&mut self, s: RefStr) -> LLVMValueRef {
+    // Borrow checker :/
+    let l_module = self.l_module;
+    let l_context = self.l_context;
+    let index = self.string_lits.len();
+
+    *self.string_lits.entry(s).or_insert_with(|| {
+      // Create name
+      let name = RefStr::new(&format!(".str.{}", index));
+
+      // Create global
+      let len = s.borrow_rs().len() as u32;
+      let val = LLVMAddGlobal(l_module,
+                  LLVMArrayType(LLVMInt8TypeInContext(l_context), len),
+                  name.borrow_c());
+
+      // Set initializer
+      // NOTE: for now these are NUL-terminated
+      LLVMSetInitializer(val, LLVMConstStringInContext(l_context, s.borrow_c(), len, 1));
+
+      val
+    })
   }
 
   unsafe fn build_un(&mut self, ty: &Ty, op: UnOp, l_arg: LLVMValueRef) -> LLVMValueRef {
