@@ -7,165 +7,322 @@ use llvm_sys::target_machine::*;
 use llvm_sys::LLVMIntPredicate::*;
 use llvm_sys::LLVMRealPredicate::*;
 
-fn needs_load(ty: &Ty) -> bool {
-  use Ty::*;
-  match ty {
-    Bool | Uint8 | Int8 | Uint16 |
-    Int16 |Uint32 | Int32 | Uint64 |
-    Int64 | Uintn | Intn | Float |
-    Double | Ptr(..) => true,
-    Fn(..) | Ref(..) | Arr(..) | Tuple(..) => false,
-    ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
+type BB = LLVMBasicBlockRef;
+type Val = LLVMValueRef;
+
+pub(super) trait LowerExpr: ExprT {
+  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val { unreachable!() }
+  unsafe fn lower_const_value(&self, _: &mut LowerCtx) -> Val { unreachable!() }
+
+  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val { unreachable!() }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.lower_addr(ctx);
+    ctx.build_load(self.ty(), addr)
+  }
+
+  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+    let cond = self.lower_value(ctx);
+    ctx.exit_block_cond_br(cond, next1, next2);
   }
 }
 
-unsafe fn const_un(ty: &Ty, op: UnOp, arg: LLVMValueRef) -> LLVMValueRef {
-  use Ty::*;
-  use UnOp::*;
-
-  match (op, ty) {
-    (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
-      arg
-    }
-    (UMinus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstNeg(arg)
-    }
-    (UMinus, Float | Double) => {
-      LLVMConstFNeg(arg)
-    }
-    (Not, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstNot(arg)
-    }
-    _ => unreachable!()
+impl LowerExpr for ExprNull {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_void()
   }
 }
 
-unsafe fn const_bin(ty: &Ty, op: BinOp, lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef {
-  use Ty::*;
-  use BinOp::*;
+impl LowerExpr for ExprRef {
+  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val {
+    self.def.l_value
+  }
 
-  match (op, ty) {
-    // Integer multiply
-    (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstMul(lhs, rhs)
+  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val {
+    self.def.l_value
+  }
+}
+
+impl LowerExpr for ExprBool {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_bool(self.val)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_bool(self.val)
+  }
+}
+
+impl LowerExpr for ExprInt {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_int(&self.ty, self.val)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_int(&self.ty, self.val)
+  }
+}
+
+impl LowerExpr for ExprFlt {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_flt(&self.ty, self.val)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_flt(&self.ty, self.val)
+  }
+}
+
+impl LowerExpr for ExprChar {}  // TODO
+
+impl LowerExpr for ExprStr {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_string_lit(self.val)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_string_lit(self.val)
+  }
+}
+
+impl LowerExpr for ExprDot {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_const_addr(ctx);
+    ctx.build_const_dot(addr, self.idx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_addr(ctx);
+    ctx.build_dot(addr, self.idx)
+  }
+}
+
+impl LowerExpr for ExprCall {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let func = self.arg.lower_value(ctx);
+    let args = self.args.iter_mut()
+      .map(|(_, arg)| arg.lower_value(ctx))
+      .collect();
+    ctx.build_call(func, args)
+  }
+}
+
+impl LowerExpr for ExprIndex {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_const_addr(ctx);
+    let idx = self.idx.lower_const_value(ctx);
+    ctx.build_const_index(addr, idx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_addr(ctx);
+    let idx = self.idx.lower_value(ctx);
+    ctx.build_index(addr, idx)
+  }
+}
+
+impl LowerExpr for ExprAdr {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_const_addr(ctx)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_addr(ctx)
+  }
+}
+
+impl LowerExpr for ExprInd {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_const_value(ctx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_value(ctx)
+  }
+}
+
+impl LowerExpr for ExprUn {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    let arg = self.arg.lower_const_value(ctx);
+    ctx.build_const_un(self.ty(), self.op, arg)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let arg = self.arg.lower_value(ctx);
+    ctx.build_un(self.ty(), self.op, arg)
+  }
+}
+
+impl LowerExpr for ExprLNot {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    let arg = self.arg.lower_const_value(ctx);
+    ctx.build_const_lnot(arg)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let arg = self.arg.lower_value(ctx);
+    ctx.build_lnot(arg)
+  }
+
+  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+    self.arg.lower_bool(ctx, next2, next1);
+  }
+}
+
+impl LowerExpr for ExprCast {}  // TODO
+
+impl LowerExpr for ExprBin {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
+    let lhs = self.lhs.lower_const_value(ctx);
+    let rhs = self.rhs.lower_const_value(ctx);
+    ctx.build_const_bin(self.ty(), self.op, lhs, rhs)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let lhs = self.lhs.lower_value(ctx);
+    let rhs = self.rhs.lower_value(ctx);
+    ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs)
+  }
+}
+
+impl LowerExpr for ExprLAnd {
+  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val {
+    todo!() // TODO
+  }
+
+  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+    let mid_block = ctx.new_block();
+    self.lhs.lower_bool(ctx, mid_block, next2);
+    ctx.enter_block(mid_block);
+    self.rhs.lower_bool(ctx, next1, next2);
+  }
+}
+
+impl LowerExpr for ExprLOr {
+  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val {
+    todo!() // TODO
+  }
+
+  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+    let mid_block = ctx.new_block();
+    self.lhs.lower_bool(ctx, next1, mid_block);
+    ctx.enter_block(mid_block);
+    self.rhs.lower_bool(ctx, next1, next2);
+  }
+}
+
+impl LowerExpr for ExprBlock {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let mut val = ctx.build_void();
+    for expr in self.body.iter_mut() {
+      val = expr.lower_value(ctx);
     }
-    // Floating point multiply
-    (Mul, Float | Double) => {
-      LLVMConstFMul(lhs, rhs)
-    }
-    // Unsigned integer divide
-    (Div, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstUDiv(lhs, rhs)
-    }
-    // Signed integer divide
-    (Div, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstSDiv(lhs, rhs)
-    }
-    // Floating point divide
-    (Div, Float | Double) => {
-      LLVMConstFDiv(lhs, rhs)
-    }
-    // Unsigned integer modulo
-    (Mod, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstURem(lhs, rhs)
-    }
-    // Signed integer modulo
-    (Mod, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstSRem(lhs, rhs)
-    }
-    // Integer addition
-    (Add, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstAdd(lhs, rhs)
-    }
-    // Floating point addition
-    (Add, Float | Double) => {
-      LLVMConstFAdd(lhs, rhs)
-    }
-    // Integer substraction
-    (Sub, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstSub(lhs, rhs)
-    }
-    // Floating point substraction
-    (Sub, Float | Double) => {
-      LLVMConstFSub(lhs, rhs)
-    }
-    // Left shift
-    (Lsh, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstShl(lhs, rhs)
-    }
-    // Unsigned (logical) right shift
-    (Rsh, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstLShr(lhs, rhs)
-    }
-    // Signed (arithmetic) right shift
-    (Rsh, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstAShr(lhs, rhs)
-    }
-    // Bitwise and
-    (And, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstAnd(lhs, rhs)
-    }
-    // Bitwise xor
-    (Xor, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstXor(lhs, rhs)
-    }
-    // Bitwise or
-    (Or, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstOr(lhs, rhs)
-    }
-    // Integer equality and inequality
-    (Eq, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstICmp(LLVMIntEQ, lhs, rhs)
-    }
-    (Ne, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-      LLVMConstICmp(LLVMIntNE, lhs, rhs)
-    }
-    // Unsigned integer comparisons
-    (Lt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstICmp(LLVMIntULT, lhs, rhs)
-    }
-    (Gt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstICmp(LLVMIntUGT, lhs, rhs)
-    }
-    (Le, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstICmp(LLVMIntULE, lhs, rhs)
-    }
-    (Ge, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-      LLVMConstICmp(LLVMIntUGE, lhs, rhs)
-    }
-    // Signed integer comparisons
-    (Lt, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstICmp(LLVMIntSLT, lhs, rhs)
-    }
-    (Gt, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstICmp(LLVMIntSGT, lhs, rhs)
-    }
-    (Le, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstICmp(LLVMIntSLE, lhs, rhs)
-    }
-    (Ge, Int8 | Int16 | Int32 | Int64 | Intn) => {
-      LLVMConstICmp(LLVMIntSGE, lhs, rhs)
-    }
-    // Float Comparisons
-    (Eq, Float | Double) => {
-      LLVMConstFCmp(LLVMRealOEQ, lhs, rhs)
-    }
-    (Ne, Float | Double) => {
-      LLVMConstFCmp(LLVMRealONE, lhs, rhs)
-    }
-    (Lt, Float | Double) => {
-      LLVMConstFCmp(LLVMRealOLT, lhs, rhs)
-    }
-    (Gt, Float | Double) => {
-      LLVMConstFCmp(LLVMRealOGT, lhs, rhs)
-    }
-    (Le, Float | Double) => {
-      LLVMConstFCmp(LLVMRealOLE, lhs, rhs)
-    }
-    (Ge, Float | Double) => {
-      LLVMConstFCmp(LLVMRealOGE, lhs, rhs)
-    }
-    _ => unreachable!()
+    val
+  }
+}
+
+impl LowerExpr for ExprAs {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let dest = self.lhs.lower_addr(ctx);
+    let src = self.rhs.lower_value(ctx);
+    ctx.build_store(self.lhs.ty(), dest, src);
+    // Void value
+    ctx.build_void()
+  }
+}
+
+impl LowerExpr for ExprRmw {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    // LHS: We need both the address and value
+    let dest = self.lhs.lower_addr(ctx);
+    let lhs = ctx.build_load(self.lhs.ty(), dest);
+    // RHS: We need only the value
+    let rhs = self.rhs.lower_value(ctx);
+    // Then we can perform the computation and do the store
+    let tmp = ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs);
+    ctx.build_store(self.lhs.ty(), dest, tmp);
+    // Void value
+    ctx.build_void()
+  }
+}
+
+impl LowerExpr for ExprContinue {}
+impl LowerExpr for ExprBreak {}
+impl LowerExpr for ExprReturn {}
+
+impl LowerExpr for ExprLet {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    // Allocate stack slot for local variable
+    self.def.l_value = ctx.build_alloca(self.def.name, &self.def.ty);
+
+    // Store initializer in stack slot
+    let init = self.init.lower_value(ctx);
+    ctx.build_store(&self.def.ty, self.def.l_value, init);
+
+    // Void value
+    ctx.build_void()
+  }
+}
+
+impl LowerExpr for ExprIf {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let then_block = ctx.new_block();
+    let else_block = ctx.new_block();
+    let end_block = ctx.new_block();
+
+    self.cond.lower_bool(ctx, then_block, else_block);
+
+    ctx.enter_block(then_block);
+    self.tbody.lower_value(ctx);
+    ctx.exit_block_br(end_block);
+
+    ctx.enter_block(else_block);
+    self.ebody.lower_value(ctx);
+    ctx.exit_block_br(end_block);
+
+    ctx.enter_block(end_block);
+    ctx.build_void()
+  }
+}
+
+impl LowerExpr for ExprWhile {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let test_block = ctx.new_block();
+    let body_block = ctx.new_block();
+    let end_block = ctx.new_block();
+
+    ctx.exit_block_br(test_block);
+
+    // Initial block is the test as a demorgan expr
+    ctx.enter_block(test_block);
+    self.cond.lower_bool(ctx, body_block, end_block);
+
+    // Next block is the loop body
+    ctx.enter_block(body_block);
+    self.body.lower_value(ctx);
+    ctx.exit_block_br(test_block);
+
+    // End of the loop
+    ctx.enter_block(end_block);
+
+    // Void value
+    ctx.build_void()
+  }
+}
+
+impl LowerExpr for ExprLoop {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let body_block = ctx.new_block();
+
+    ctx.exit_block_br(body_block);
+
+    // Loop body in one block
+    ctx.enter_block(body_block);
+    self.body.lower_value(ctx);
+    ctx.exit_block_br(body_block);
+
+    // Void value
+    ctx.build_void()
   }
 }
 
@@ -183,382 +340,6 @@ pub(super) struct LowerCtx {
 
   // String literals
   string_lits: IndexMap<RefStr, LLVMValueRef>,
-}
-
-pub(super) trait LowerExpr: ExprT {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> LLVMValueRef { unreachable!() }
-  unsafe fn lower_const_value(&self, _: &mut LowerCtx) -> LLVMValueRef { unreachable!() }
-
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> LLVMValueRef { unreachable!() }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    if needs_load(self.ty()) {
-      LLVMBuildLoad(ctx.l_builder, self.lower_addr(ctx), empty_cstr())
-    } else {
-      self.lower_addr(ctx)
-    }
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx,
-                        true_block: LLVMBasicBlockRef,
-                        false_block: LLVMBasicBlockRef) {
-    LLVMBuildCondBr(ctx.l_builder, self.lower_value(ctx), true_block, false_block);
-  }
-}
-
-impl LowerExpr for ExprNull {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprRef {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> LLVMValueRef {
-    self.def.l_value
-  }
-
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> LLVMValueRef {
-    self.def.l_value
-  }
-}
-
-impl LowerExpr for ExprBool {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstInt(ctx.ty_to_llvm(self.ty()), self.val as u64, 0)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstInt(ctx.ty_to_llvm(self.ty()), self.val as u64, 0)
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx,
-                        true_block: LLVMBasicBlockRef,
-                        false_block: LLVMBasicBlockRef) {
-    if self.val {
-      LLVMBuildBr(ctx.l_builder, true_block);
-    } else {
-      LLVMBuildBr(ctx.l_builder, false_block);
-    }
-  }
-}
-
-impl LowerExpr for ExprInt {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstInt(ctx.ty_to_llvm(self.ty()), self.val as u64, 0)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstInt(ctx.ty_to_llvm(self.ty()), self.val as u64, 0)
-  }
-}
-
-impl LowerExpr for ExprFlt {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstReal(ctx.ty_to_llvm(self.ty()), self.val)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    LLVMConstReal(ctx.ty_to_llvm(self.ty()), self.val)
-  }
-}
-
-impl LowerExpr for ExprChar {}  // TODO
-
-impl LowerExpr for ExprStr {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    ctx.build_string_lit(self.val)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    ctx.build_string_lit(self.val)
-  }
-}
-
-impl LowerExpr for ExprDot {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let ptr = self.arg.lower_const_addr(ctx);
-    let mut indices = [
-      LLVMConstInt(LLVMInt8TypeInContext(ctx.l_context), 0, 0),
-      // NOTE: this is not documented in many places, but struct field
-      // indices have to be Int32 otherwise LLVM crashes :(
-      LLVMConstInt(LLVMInt32TypeInContext(ctx.l_context), self.idx as u64, 0)
-    ];
-    LLVMConstInBoundsGEP(ptr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let ptr = self.arg.lower_addr(ctx);
-    let mut indices = [
-      LLVMConstInt(LLVMInt8TypeInContext(ctx.l_context), 0, 0),
-      // NOTE: this is not documented in many places, but struct field
-      // indices have to be Int32 otherwise LLVM crashes :(
-      LLVMConstInt(LLVMInt32TypeInContext(ctx.l_context), self.idx as u64, 0)
-    ];
-    LLVMBuildInBoundsGEP(ctx.l_builder, ptr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32,
-      empty_cstr())
-  }
-}
-
-impl LowerExpr for ExprCall {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let func = self.arg.lower_value(ctx);
-
-    let mut args = vec![];
-    for (_, arg) in self.args.iter_mut() {
-      args.push(arg.lower_value(ctx));
-    }
-
-    LLVMBuildCall(ctx.l_builder, func,
-                  &mut args[0] as *mut LLVMValueRef,
-                  args.len() as u32,
-                  empty_cstr())
-  }
-}
-
-impl LowerExpr for ExprIndex {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let ptr = self.arg.lower_const_addr(ctx);
-    let mut indices = [
-      LLVMConstInt(LLVMInt8TypeInContext(ctx.l_context), 0, 0),
-      self.idx.lower_const_value(ctx)
-    ];
-    LLVMConstInBoundsGEP(ptr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let ptr = self.arg.lower_addr(ctx);
-    let mut indices = [
-      LLVMConstInt(LLVMInt8TypeInContext(ctx.l_context), 0, 0),
-      self.idx.lower_value(ctx)
-    ];
-    LLVMBuildInBoundsGEP(ctx.l_builder, ptr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32,
-      empty_cstr())
-  }
-}
-
-impl LowerExpr for ExprAdr {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    self.arg.lower_const_addr(ctx)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    self.arg.lower_addr(ctx)
-  }
-}
-
-impl LowerExpr for ExprInd {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    self.arg.lower_const_value(ctx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    self.arg.lower_value(ctx)
-  }
-}
-
-impl LowerExpr for ExprUn {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let arg = self.arg.lower_const_value(ctx);
-    const_un(self.ty(), self.op, arg)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let arg = self.arg.lower_value(ctx);
-    ctx.build_un(self.ty(), self.op, arg)
-  }
-}
-
-impl LowerExpr for ExprLNot {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let arg = self.arg.lower_const_value(ctx);
-    if LLVMIsNull(arg) == 1 {
-      LLVMConstInt(LLVMInt1TypeInContext(ctx.l_context), 1, 0)
-    } else {
-      LLVMConstInt(LLVMInt1TypeInContext(ctx.l_context), 0, 0)
-    }
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let arg = self.arg.lower_value(ctx);
-    LLVMBuildIsNull(ctx.l_builder, arg, empty_cstr())
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx,
-                        true_block: LLVMBasicBlockRef,
-                        false_block: LLVMBasicBlockRef) {
-    self.arg.lower_bool(ctx, false_block, true_block);
-  }
-}
-
-impl LowerExpr for ExprCast {}  // TODO
-
-impl LowerExpr for ExprBin {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let lhs = self.lhs.lower_const_value(ctx);
-    let rhs = self.rhs.lower_const_value(ctx);
-    const_bin(self.ty(), self.op, lhs, rhs)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let lhs = self.lhs.lower_value(ctx);
-    let rhs = self.rhs.lower_value(ctx);
-    ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs)
-  }
-}
-
-impl LowerExpr for ExprLAnd {
-  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> LLVMValueRef {
-    todo!() // TODO
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx,
-                        true_block: LLVMBasicBlockRef,
-                        false_block: LLVMBasicBlockRef) {
-    let mid_block = ctx.new_block();
-    self.lhs.lower_bool(ctx, mid_block, false_block);
-    ctx.enter_block(mid_block);
-    self.rhs.lower_bool(ctx, true_block, false_block);
-  }
-}
-
-impl LowerExpr for ExprLOr {
-  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> LLVMValueRef {
-    todo!() // TODO
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx,
-                        true_block: LLVMBasicBlockRef,
-                        false_block: LLVMBasicBlockRef) {
-    let mid_block = ctx.new_block();
-    self.lhs.lower_bool(ctx, true_block, mid_block);
-    ctx.enter_block(mid_block);
-    self.rhs.lower_bool(ctx, true_block, false_block);
-  }
-}
-
-impl LowerExpr for ExprBlock {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let mut val = ctx.void_value();
-    for expr in self.body.iter_mut() {
-      val = expr.lower_value(ctx);
-    }
-    val
-  }
-}
-
-impl LowerExpr for ExprAs {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let dest = self.lhs.lower_addr(ctx);
-    let src = self.rhs.lower_value(ctx);
-    ctx.build_store(self.lhs.ty(), dest, src);
-    // Void value
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprRmw {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    // LHS: We need both the address and value
-    let dest = self.lhs.lower_addr(ctx);
-    let lhs = LLVMBuildLoad(ctx.l_builder, dest, empty_cstr());
-    // RHS: We need only the value
-    let rhs = self.rhs.lower_value(ctx);
-    // Then we can perform the computation and do the store
-    let tmp = ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs);
-    ctx.build_store(self.lhs.ty(), dest, tmp);
-    // Void value
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprContinue {}
-impl LowerExpr for ExprBreak {}
-impl LowerExpr for ExprReturn {}
-
-impl LowerExpr for ExprLet {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    // Allocate stack slot for local variable
-    self.def.l_value = LLVMBuildAlloca(ctx.l_builder,
-                                        ctx.ty_to_llvm(&self.def.ty),
-                                        self.def.name.borrow_c());
-
-    // Store initializer in stack slot
-    let init = self.init.lower_value(ctx);
-    ctx.build_store(&self.def.ty, self.def.l_value, init);
-
-    // Void value
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprIf {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let then_block = ctx.new_block();
-    let else_block = ctx.new_block();
-    let end_block = ctx.new_block();
-
-    self.cond.lower_bool(ctx, then_block, else_block);
-
-    ctx.enter_block(then_block);
-    self.tbody.lower_value(ctx);
-    LLVMBuildBr(ctx.l_builder, end_block);
-
-    ctx.enter_block(else_block);
-    self.ebody.lower_value(ctx);
-    LLVMBuildBr(ctx.l_builder, end_block);
-
-    ctx.enter_block(end_block);
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprWhile {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let test_block = ctx.new_block();
-    let body_block = ctx.new_block();
-    let end_block = ctx.new_block();
-
-    LLVMBuildBr(ctx.l_builder, test_block);
-
-    // Initial block is the test as a demorgan expr
-    ctx.enter_block(test_block);
-    self.cond.lower_bool(ctx, body_block, end_block);
-
-    // Next block is the loop body
-    ctx.enter_block(body_block);
-    self.body.lower_value(ctx);
-    LLVMBuildBr(ctx.l_builder, test_block);
-
-    // End of the loop
-    ctx.enter_block(end_block);
-
-    // Void value
-    ctx.void_value()
-  }
-}
-
-impl LowerExpr for ExprLoop {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    let body_block = ctx.new_block();
-
-    LLVMBuildBr(ctx.l_builder, body_block);
-
-    // Loop body in one block
-    ctx.enter_block(body_block);
-    self.body.lower_value(ctx);
-    LLVMBuildBr(ctx.l_builder, body_block);
-
-    // Void value
-    ctx.void_value()
-  }
 }
 
 impl LowerCtx {
@@ -742,11 +523,6 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn void_value(&mut self) -> LLVMValueRef {
-    LLVMConstNull(LLVMStructTypeInContext(
-      self.l_context, std::ptr::null_mut(), 0, 0))
-  }
-
   unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
     assert!(self.l_func != std::ptr::null_mut());
     LLVMAppendBasicBlock(self.l_func, empty_cstr())
@@ -754,6 +530,21 @@ impl LowerCtx {
 
   unsafe fn enter_block(&mut self, block: LLVMBasicBlockRef) {
     LLVMPositionBuilderAtEnd(self.l_builder, block);
+  }
+
+  unsafe fn exit_block_br(&mut self, dest: LLVMBasicBlockRef) {
+    LLVMBuildBr(self.l_builder, dest);
+  }
+
+  unsafe fn exit_block_cond_br(&mut self, cond: LLVMValueRef,
+                                dest1: LLVMBasicBlockRef,
+                                dest2: LLVMBasicBlockRef) {
+    LLVMBuildCondBr(self.l_builder, cond, dest1, dest2);
+  }
+
+  unsafe fn build_void(&mut self) -> LLVMValueRef {
+    LLVMConstNull(LLVMStructTypeInContext(
+      self.l_context, std::ptr::null_mut(), 0, 0))
   }
 
   unsafe fn build_string_lit(&mut self, s: RefStr) -> LLVMValueRef {
@@ -778,6 +569,272 @@ impl LowerCtx {
 
       val
     })
+  }
+
+  unsafe fn build_bool(&mut self, val: bool) -> LLVMValueRef {
+    LLVMConstInt(LLVMInt1TypeInContext(self.l_context), val as u64, 0)
+  }
+
+  unsafe fn build_int(&mut self, ty: &Ty, val: usize) -> LLVMValueRef {
+    LLVMConstInt(self.ty_to_llvm(ty), val as u64, 0)
+  }
+
+  unsafe fn build_flt(&mut self, ty: &Ty, val: f64) -> LLVMValueRef {
+    LLVMConstReal(self.ty_to_llvm(ty), val)
+  }
+
+  unsafe fn build_const_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+    let mut indices = [
+      LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
+      // NOTE: this is not documented in many places, but struct field
+      // indices have to be Int32 otherwise LLVM crashes :(
+      LLVMConstInt(LLVMInt32TypeInContext(self.l_context), idx as u64, 0)
+    ];
+    LLVMConstInBoundsGEP(l_addr,
+      &mut indices as *mut LLVMValueRef,
+      indices.len() as u32)
+
+  }
+
+  unsafe fn build_const_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
+    let mut indices = [
+      LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
+      l_idx
+    ];
+    LLVMConstInBoundsGEP(l_addr,
+      &mut indices as *mut LLVMValueRef,
+      indices.len() as u32)
+  }
+
+  unsafe fn build_const_un(&mut self, ty: &Ty, op: UnOp, arg: LLVMValueRef) -> LLVMValueRef {
+    use Ty::*;
+    use UnOp::*;
+
+    match (op, ty) {
+      (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
+        arg
+      }
+      (UMinus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstNeg(arg)
+      }
+      (UMinus, Float | Double) => {
+        LLVMConstFNeg(arg)
+      }
+      (Not, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstNot(arg)
+      }
+      _ => unreachable!()
+    }
+  }
+
+  unsafe fn build_const_lnot(&mut self, l_arg: LLVMValueRef) -> LLVMValueRef {
+    if LLVMIsNull(l_arg) == 1 {
+      self.build_bool(true)
+    } else {
+      self.build_bool(false)
+    }
+  }
+
+  unsafe fn build_const_bin(&mut self, ty: &Ty, op: BinOp, lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef {
+    use Ty::*;
+    use BinOp::*;
+
+    match (op, ty) {
+      // Integer multiply
+      (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstMul(lhs, rhs)
+      }
+      // Floating point multiply
+      (Mul, Float | Double) => {
+        LLVMConstFMul(lhs, rhs)
+      }
+      // Unsigned integer divide
+      (Div, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstUDiv(lhs, rhs)
+      }
+      // Signed integer divide
+      (Div, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstSDiv(lhs, rhs)
+      }
+      // Floating point divide
+      (Div, Float | Double) => {
+        LLVMConstFDiv(lhs, rhs)
+      }
+      // Unsigned integer modulo
+      (Mod, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstURem(lhs, rhs)
+      }
+      // Signed integer modulo
+      (Mod, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstSRem(lhs, rhs)
+      }
+      // Integer addition
+      (Add, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstAdd(lhs, rhs)
+      }
+      // Floating point addition
+      (Add, Float | Double) => {
+        LLVMConstFAdd(lhs, rhs)
+      }
+      // Integer substraction
+      (Sub, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstSub(lhs, rhs)
+      }
+      // Floating point substraction
+      (Sub, Float | Double) => {
+        LLVMConstFSub(lhs, rhs)
+      }
+      // Left shift
+      (Lsh, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstShl(lhs, rhs)
+      }
+      // Unsigned (logical) right shift
+      (Rsh, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstLShr(lhs, rhs)
+      }
+      // Signed (arithmetic) right shift
+      (Rsh, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstAShr(lhs, rhs)
+      }
+      // Bitwise and
+      (And, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstAnd(lhs, rhs)
+      }
+      // Bitwise xor
+      (Xor, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstXor(lhs, rhs)
+      }
+      // Bitwise or
+      (Or, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstOr(lhs, rhs)
+      }
+      // Integer equality and inequality
+      (Eq, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstICmp(LLVMIntEQ, lhs, rhs)
+      }
+      (Ne, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
+        LLVMConstICmp(LLVMIntNE, lhs, rhs)
+      }
+      // Unsigned integer comparisons
+      (Lt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstICmp(LLVMIntULT, lhs, rhs)
+      }
+      (Gt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstICmp(LLVMIntUGT, lhs, rhs)
+      }
+      (Le, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstICmp(LLVMIntULE, lhs, rhs)
+      }
+      (Ge, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
+        LLVMConstICmp(LLVMIntUGE, lhs, rhs)
+      }
+      // Signed integer comparisons
+      (Lt, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstICmp(LLVMIntSLT, lhs, rhs)
+      }
+      (Gt, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstICmp(LLVMIntSGT, lhs, rhs)
+      }
+      (Le, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstICmp(LLVMIntSLE, lhs, rhs)
+      }
+      (Ge, Int8 | Int16 | Int32 | Int64 | Intn) => {
+        LLVMConstICmp(LLVMIntSGE, lhs, rhs)
+      }
+      // Float Comparisons
+      (Eq, Float | Double) => {
+        LLVMConstFCmp(LLVMRealOEQ, lhs, rhs)
+      }
+      (Ne, Float | Double) => {
+        LLVMConstFCmp(LLVMRealONE, lhs, rhs)
+      }
+      (Lt, Float | Double) => {
+        LLVMConstFCmp(LLVMRealOLT, lhs, rhs)
+      }
+      (Gt, Float | Double) => {
+        LLVMConstFCmp(LLVMRealOGT, lhs, rhs)
+      }
+      (Le, Float | Double) => {
+        LLVMConstFCmp(LLVMRealOLE, lhs, rhs)
+      }
+      (Ge, Float | Double) => {
+        LLVMConstFCmp(LLVMRealOGE, lhs, rhs)
+      }
+      _ => unreachable!()
+    }
+  }
+
+  /// Determine if a type should use value or pointer semantics
+
+  fn backend_value_semantics(ty: &Ty) -> bool {
+    use Ty::*;
+    match ty {
+      Bool | Uint8 | Int8 | Uint16 |
+      Int16 |Uint32 | Int32 | Uint64 |
+      Int64 | Uintn | Intn | Float |
+      Double | Ptr(..) => true,
+      Fn(..) | Ref(..) | Arr(..) | Tuple(..) => false,
+      ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
+    }
+  }
+
+  unsafe fn build_alloca(&mut self, name: RefStr, ty: &Ty) -> LLVMValueRef {
+    LLVMBuildAlloca(self.l_builder, self.ty_to_llvm(ty), name.borrow_c())
+  }
+
+  unsafe fn build_load(&mut self, ty: &Ty, l_src: LLVMValueRef) -> LLVMValueRef {
+    if Self::backend_value_semantics(ty) {
+      LLVMBuildLoad(self.l_builder, l_src, empty_cstr())
+    } else {
+      l_src
+    }
+  }
+
+  unsafe fn build_store(&mut self, ty: &Ty, l_dest: LLVMValueRef, l_src: LLVMValueRef) {
+    if Self::backend_value_semantics(ty) {
+      LLVMBuildStore(self.l_builder, l_src, l_dest);
+    } else {
+      let l_type = self.ty_to_llvm(ty);
+      let align = self.align_of(l_type) as u32;
+      let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
+                                self.size_of(l_type) as u64, 0);
+      LLVMBuildMemCpy(self.l_builder, l_dest, align, l_src, align, size);
+    }
+  }
+
+  unsafe fn build_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+    let mut indices = [
+      LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
+      // NOTE: this is not documented in many places, but struct field
+      // indices have to be Int32 otherwise LLVM crashes :(
+      LLVMConstInt(LLVMInt32TypeInContext(self.l_context), idx as u64, 0)
+    ];
+    LLVMBuildInBoundsGEP(self.l_builder, l_addr,
+      &mut indices as *mut LLVMValueRef,
+      indices.len() as u32,
+      empty_cstr())
+  }
+
+  unsafe fn build_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
+    let mut indices = [
+      LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
+      l_idx
+    ];
+    LLVMBuildInBoundsGEP(self.l_builder, l_addr,
+      &mut indices as *mut LLVMValueRef,
+      indices.len() as u32,
+      empty_cstr())
+  }
+
+  unsafe fn build_call(&mut self, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
+    LLVMBuildCall(self.l_builder, l_func,
+                  &mut l_args[0] as *mut Val,
+                  l_args.len() as u32,
+                  empty_cstr())
+  }
+
+  unsafe fn build_lnot(&mut self, l_arg: LLVMValueRef) -> LLVMValueRef {
+    LLVMBuildIsNull(self.l_builder, l_arg, empty_cstr())
   }
 
   unsafe fn build_un(&mut self, ty: &Ty, op: UnOp, l_arg: LLVMValueRef) -> LLVMValueRef {
@@ -930,18 +987,6 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn build_store(&mut self, ty: &Ty, l_dest: LLVMValueRef, l_src: LLVMValueRef) {
-    if needs_load(ty) {
-      LLVMBuildStore(self.l_builder, l_src, l_dest);
-    } else {
-      let l_type = self.ty_to_llvm(ty);
-      let align = self.align_of(l_type) as u32;
-      let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
-                                self.size_of(l_type) as u64, 0);
-      LLVMBuildMemCpy(self.l_builder, l_dest, align, l_src, align, size);
-    }
-  }
-
   unsafe fn lower_defs(&mut self, defs: &mut IndexMap<RefStr, Own<Def>>) {
     // Pass 1: Create LLVM values for each definition
     for (name, def) in defs.iter_mut() {
@@ -978,8 +1023,7 @@ impl LowerCtx {
               _ => unreachable!(),
             };
 
-            let l_type = self.ty_to_llvm(&param_def.ty);
-            param_def.l_value = LLVMBuildAlloca(self.l_builder, l_type, param_def.name.borrow_c());
+            param_def.l_value = self.build_alloca(param_def.name, &param_def.ty);
             LLVMBuildStore(self.l_builder, LLVMGetParam(def_value, index as u32), param_def.l_value);
           }
 
