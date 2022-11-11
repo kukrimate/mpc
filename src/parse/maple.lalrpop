@@ -217,6 +217,7 @@ PrimExpr: Expr = {
   "true" => Expr::Bool(true),
   "false" => Expr::Bool(false),
   Integer => Expr::Int(<>),
+  Float => Expr::Flt(<>),
   Character => Expr::Char(<>),
   String => Expr::Str(<>),
 };
@@ -320,6 +321,7 @@ pub Module: () = Seq<GlobalDefinition>;
 
 Identifier: RefStr = r"[_a-zA-Z][_a-zA-Z0-9]*" => RefStr::new(<>);
 Integer: usize = r"[0-9]+" => usize::from_str(<>).unwrap();
+Float: f64 = r"[0-9]*[.][0-9]+([eE][+-]?[0-9]+)?" => f64::from_str(<>).unwrap();
 Character: RefStr = <s:r#"'([^']|\\')*'"#> => RefStr::new(&s[1..s.len()-1]);
 String: RefStr = <s:r#""([^"]|\\")*""#> => RefStr::new(&s[1..s.len()-1]);
 

@@ -3,18 +3,63 @@
 use super::*;
 use std::error;
 
+/// Errors
+
+#[derive(Debug)]
+struct TypeError {}
+
+impl fmt::Display for TypeError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Type error")
+  }
+}
+
+impl error::Error for TypeError {}
+
+#[derive(Debug)]
+struct CannotUnifyError(Ty, Ty);
+
+impl fmt::Display for CannotUnifyError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Cannot unify types {:?} and {:?}", self.0, self.1)
+  }
+}
+
+impl error::Error for CannotUnifyError {}
+
+#[derive(Debug)]
+struct UnresolvedIdentError {
+  name: RefStr
+}
+
+impl fmt::Display for UnresolvedIdentError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Unresolved identifier {}", self.name)
+  }
+}
+
+impl error::Error for UnresolvedIdentError {}
+
+/// Type unification
+
 fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
   use Ty::*;
   match (ty1, ty2) {
     (ty1 @ ClassAny, ty2) |
-    (ty1 @ ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double)) |
-    (ty1 @ ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn)) => {
+    (ty1 @ ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+                            Uintn|Intn|Float|Double|ClassInt|ClassFlt|ClassNum)) |
+    (ty1 @ ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+                            Uintn|Intn|ClassInt)) |
+    (ty1 @ ClassFlt, ty2 @ (Float|Double|ClassFlt)) => {
       *ty1 = ty2.clone();
       Ok(())
     },
     (ty1, ty2 @ ClassAny) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double), ty2 @ ClassNum) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), ty2 @ ClassInt) => {
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+            Uintn|Intn|Float|Double|ClassInt|ClassFlt), ty2 @ ClassNum) |
+    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+            Uintn|Intn), ty2 @ ClassInt) |
+    (ty1 @ (Float|Double), ty2 @ ClassFlt) => {
       *ty2 = ty1.clone();
       Ok(())
     },
@@ -61,36 +106,11 @@ fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
       }
       Ok(())
     }
-    _ => Err(Box::new(TypeError {}))
+    (ty1, ty2) => {
+      Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
+    }
   }
 }
-
-/// Errors
-
-#[derive(Debug)]
-struct TypeError {}
-
-impl fmt::Display for TypeError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Type error")
-  }
-}
-
-impl error::Error for TypeError {}
-
-
-#[derive(Debug)]
-struct UnresolvedIdentError {
-  name: RefStr
-}
-
-impl fmt::Display for UnresolvedIdentError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unresolved identifier {}", self.name)
-  }
-}
-
-impl error::Error for UnresolvedIdentError {}
 
 /// Type checker logic
 
@@ -269,6 +289,9 @@ impl CheckCtx {
       }
       Int(val) => {
         ExprInt::new(Ty::ClassInt, *val)
+      }
+      Flt(val) => {
+        ExprFlt::new(Ty::ClassFlt, *val)
       }
       Char(val) => {
         ExprChar::new(Ty::ClassInt, *val)

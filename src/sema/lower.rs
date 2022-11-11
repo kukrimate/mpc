@@ -15,7 +15,7 @@ fn needs_load(ty: &Ty) -> bool {
     Int64 | Uintn | Intn | Float |
     Double | Fn(..) | Ptr(..) => true,
     Ref(..) | Arr(..) | Tuple(..) => false,
-    ClassAny | ClassNum | ClassInt => unreachable!()
+    ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
   }
 }
 
@@ -276,6 +276,16 @@ impl LowerExpr for ExprInt {
 
   unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
     LLVMConstInt(ctx.ty_to_llvm(self.ty()), self.val as u64, 0)
+  }
+}
+
+impl LowerExpr for ExprFlt {
+  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    LLVMConstReal(ctx.ty_to_llvm(self.ty()), self.val)
+  }
+
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    LLVMConstReal(ctx.ty_to_llvm(self.ty()), self.val)
   }
 }
 
@@ -678,7 +688,7 @@ impl LowerCtx {
         LLVMStructTypeInContext(self.l_context,
           l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0)
       }
-      ClassAny | ClassNum | ClassInt => {
+      ClassAny | ClassNum | ClassInt | ClassFlt => {
         // FIXME: make sure this never happens
         panic!("Error: non-deduced type reached lowering")
       }

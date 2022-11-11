@@ -81,6 +81,7 @@ pub enum Expr {
   Path(Path),
   Bool(bool),
   Int(usize),
+  Flt(f64),
   Char(RefStr),
   Str(RefStr),
   Dot(Box<Expr>, RefStr),

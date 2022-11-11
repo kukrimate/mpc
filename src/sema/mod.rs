@@ -41,6 +41,7 @@ enum Ty {
   ClassAny,
   ClassNum,
   ClassInt,
+  ClassFlt,
 }
 
 enum Variant {
@@ -134,6 +135,7 @@ impl fmt::Debug for Ty {
       ClassAny => write!(f, "ClassAny"),
       ClassNum => write!(f, "ClassNum"),
       ClassInt => write!(f, "ClassInt"),
+      ClassFlt => write!(f, "ClassFlt"),
     }
   }
 }
@@ -152,6 +154,7 @@ struct ExprNull { ty: Ty }
 struct ExprRef { ty: Ty, def: Ptr<Def> }
 struct ExprBool { ty: Ty, val: bool }
 struct ExprInt { ty: Ty, val: usize }
+struct ExprFlt { ty: Ty, val: f64 }
 struct ExprChar { ty: Ty, val: RefStr }
 struct ExprStr { ty: Ty, val: RefStr }
 struct ExprDot { ty: Ty, is_mut: IsMut, arg: Expr, name: RefStr, idx: usize }
@@ -180,6 +183,7 @@ impl ExprNull { fn new(ty: Ty) -> Expr { Own::new(Self { ty }) } }
 impl ExprRef { fn new(ty: Ty, def: Ptr<Def>) -> Expr { Own::new(Self { ty, def }) } }
 impl ExprBool { fn new(ty: Ty, val: bool) -> Expr { Own::new(Self { ty, val }) } }
 impl ExprInt { fn new(ty: Ty, val: usize) -> Expr { Own::new(Self { ty, val }) } }
+impl ExprFlt { fn new(ty: Ty, val: f64) -> Expr { Own::new(Self { ty, val }) } }
 impl ExprChar { fn new(ty: Ty, val: RefStr) -> Expr { Own::new(Self { ty, val }) } }
 impl ExprStr { fn new(ty: Ty, val: RefStr) -> Expr { Own::new(Self { ty, val }) } }
 impl ExprDot { fn new(ty: Ty, is_mut: IsMut, arg: Expr, name: RefStr, idx: usize) -> Expr { Own::new(Self { ty, is_mut, arg, name, idx }) } }
@@ -220,6 +224,11 @@ impl fmt::Debug for ExprBool {
   }
 }
 impl fmt::Debug for ExprInt {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.val)
+  }
+}
+impl fmt::Debug for ExprFlt {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "{}", self.val)
   }
@@ -362,6 +371,10 @@ impl ExprT for ExprBool {
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
 }
 impl ExprT for ExprInt {
+  fn ty(&self) -> &Ty { &self.ty }
+  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
+}
+impl ExprT for ExprFlt {
   fn ty(&self) -> &Ty { &self.ty }
   fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
 }
