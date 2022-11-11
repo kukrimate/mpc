@@ -516,7 +516,26 @@ impl LowerExpr for ExprLet {
   }
 }
 
-impl LowerExpr for ExprIf {}    // TODO
+impl LowerExpr for ExprIf {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
+    let then_block = ctx.new_block();
+    let else_block = ctx.new_block();
+    let end_block = ctx.new_block();
+
+    self.cond.lower_bool(ctx, then_block, else_block);
+
+    ctx.enter_block(then_block);
+    self.tbody.lower_value(ctx);
+    LLVMBuildBr(ctx.l_builder, end_block);
+
+    ctx.enter_block(else_block);
+    self.ebody.lower_value(ctx);
+    LLVMBuildBr(ctx.l_builder, end_block);
+
+    ctx.enter_block(end_block);
+    ctx.void_value()
+  }
+}
 
 impl LowerExpr for ExprWhile {
   unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
@@ -772,7 +791,7 @@ impl LowerCtx {
 
       // Set initializer
       // NOTE: for now these are NUL-terminated
-      LLVMSetInitializer(val, LLVMConstStringInContext(l_context, s.borrow_c(), len, 1));
+      LLVMSetInitializer(val, LLVMConstStringInContext(l_context, s.borrow_c(), len, 0));
 
       val
     })
