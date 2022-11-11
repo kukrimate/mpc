@@ -1,5 +1,4 @@
 use crate::util::*;
-use indexmap::IndexMap;
 use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashSet;
 use std::{error,fs,fmt};
@@ -38,28 +37,31 @@ pub enum TyRef {
   Float,
   Double,
   Path(Path),
-  Fn(IndexMap<RefStr, TyRef>, Box<TyRef>),
+  Fn(Vec<(RefStr, TyRef)>, Box<TyRef>),
   Ptr(IsMut, Box<TyRef>),
   Arr(Box<Expr>, Box<TyRef>),
-  Tuple(IndexMap<RefStr, TyRef>),
+  Tuple(Vec<(RefStr, TyRef)>),
 }
 
 #[derive(Debug)]
 pub enum Variant {
   Unit,
-  Struct(IndexMap<RefStr, TyRef>),
+  Struct(Vec<(RefStr, TyRef)>),
 }
 
 #[derive(Debug)]
 pub enum TyDef {
   Struct {
-    params: IndexMap<RefStr, TyRef>,
+    name: RefStr,
+    params: Vec<(RefStr, TyRef)>,
   },
   Union {
-    params: IndexMap<RefStr, TyRef>,
+    name: RefStr,
+    params: Vec<(RefStr, TyRef)>,
   },
   Enum {
-    variants: IndexMap<RefStr, Variant>,
+    name: RefStr,
+    variants: Vec<(RefStr, Variant)>,
   },
 }
 
@@ -82,7 +84,7 @@ pub enum Expr {
   Char(RefStr),
   Str(RefStr),
   Dot(Box<Expr>, RefStr),
-  Call(Box<Expr>, IndexMap<RefStr, Expr>),
+  Call(Box<Expr>, Vec<(RefStr, Expr)>),
   Index(Box<Expr>, Box<Expr>),
   Adr(Box<Expr>),
   Ind(Box<Expr>),
@@ -107,25 +109,30 @@ pub enum Expr {
 #[derive(Debug)]
 pub enum Def {
   Const {
+    name: RefStr,
     ty: TyRef,
     val: Expr
   },
   Data {
+    name: RefStr,
     is_mut: IsMut,
     ty: TyRef,
     init: Expr
   },
   Fn {
-    params: IndexMap<RefStr, (IsMut, TyRef)>,
+    name: RefStr,
+    params: Vec<(RefStr, IsMut, TyRef)>,
     ret_ty: TyRef,
     body: Expr,
   },
   ExternData {
+    name: RefStr,
     is_mut: IsMut,
     ty: TyRef,
   },
   ExternFn {
-    params: IndexMap<RefStr, TyRef>,
+    name: RefStr,
+    params: Vec<(RefStr, TyRef)>,
     ret_ty: TyRef,
   },
 }
@@ -133,16 +140,16 @@ pub enum Def {
 #[derive(Debug)]
 pub struct Module {
   pub deps: HashSet<RefStr>,
-  pub defs: IndexMap<RefStr, Def>,
-  pub ty_defs: IndexMap<RefStr, TyDef>,
+  pub defs: Vec<Def>,
+  pub ty_defs: Vec<TyDef>,
 }
 
 impl Module {
   pub fn new() -> Module {
     Module {
       deps: HashSet::new(),
-      defs: IndexMap::new(),
-      ty_defs: IndexMap::new(),
+      defs: Vec::new(),
+      ty_defs: Vec::new(),
     }
   }
 }

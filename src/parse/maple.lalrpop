@@ -1,5 +1,4 @@
 use crate::parse::*;
-use indexmap::{indexmap,IndexMap};
 use std::str::FromStr;
 
 grammar(module: &mut Module);
@@ -39,22 +38,22 @@ TypeName: TyRef = {
     TyRef::Tuple(params)
 };
 
-ParameterListOpt: IndexMap<RefStr, TyRef> = {
+ParameterListOpt: Vec<(RefStr, TyRef)> = {
   ParameterList,
-  => indexmap! {},
+  => vec![],
 };
 
-ParameterList: IndexMap<RefStr, TyRef> = {
-  <name:Identifier> ":" <ty:TypeName> => indexmap! { name => ty },
+ParameterList: Vec<(RefStr, TyRef)> = {
+  <name:Identifier> ":" <ty:TypeName> => vec![ (name, ty) ],
   <mut l:ParameterList> "," <name:Identifier> ":" <ty:TypeName> => {
-    l.insert(name, ty);
+    l.push((name, ty));
     l
   },
 };
 
 ReturnType: TyRef = {
   "->" <t:TypeName> => t,
-  => TyRef::Tuple(indexmap! {})
+  => TyRef::Tuple(vec![])
 };
 
 IsMut: IsMut = {
@@ -198,16 +197,16 @@ PostExpr: Expr = {
   <e:PostExpr> "[" <i:Expr> "]" => Expr::Index(Box::new(e), Box::new(i)),
 };
 
-ArgumentListOpt: IndexMap<RefStr, Expr> = {
+ArgumentListOpt: Vec<(RefStr, Expr)> = {
   ArgumentList,
-  => indexmap! {},
+  => vec![],
 }
 
-ArgumentList: IndexMap<RefStr, Expr> = {
-  <name:Identifier> ":" <expr:Expr> => indexmap! { name => expr },
-  <mut map:ArgumentList> "," <name:Identifier> ":" <expr:Expr> => {
-    map.insert(name, expr);
-    map
+ArgumentList: Vec<(RefStr, Expr)> = {
+  <name:Identifier> ":" <expr:Expr> => vec![ (name, expr) ],
+  <mut l:ArgumentList> "," <name:Identifier> ":" <expr:Expr> => {
+    l.push((name, expr));
+    l
   }
 };
 
@@ -226,25 +225,25 @@ PrimExpr: Expr = {
 
 TypeDefinition: () = {
   "struct" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.insert(name, TyDef::Struct { params });
+    module.ty_defs.push(TyDef::Struct { name, params });
   },
   "union" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.insert(name, TyDef::Union { params });
+    module.ty_defs.push(TyDef::Union { name, params });
   },
   "enum" <name:Identifier> "(" <variants:VariantListOpt> ")" => {
-    module.ty_defs.insert(name, TyDef::Enum { variants });
+    module.ty_defs.push(TyDef::Enum { name, variants });
   },
 };
 
-VariantListOpt: IndexMap<RefStr, Variant> = {
+VariantListOpt: Vec<(RefStr, Variant)> = {
   VariantList,
-  => indexmap! {},
+  => vec![],
 };
 
-VariantList: IndexMap<RefStr, Variant> = {
-  <v:Variant> => indexmap! { v.0 => v.1 },
+VariantList: Vec<(RefStr, Variant)> = {
+  <v:Variant> => vec![ (v.0, v.1) ],
   <mut l:VariantList> "," <v:Variant> => {
-    l.insert(v.0, v.1);
+    l.push((v.0, v.1));
     l
   },
 };
@@ -258,13 +257,13 @@ Variant: (RefStr, Variant) = {
 
 ConstDefinition: () = {
   "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
-    module.defs.insert(name, Def::Const { ty, val });
+    module.defs.push(Def::Const { name, ty, val });
   }
 };
 
 DataDefinition: () = {
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
-    module.defs.insert(name, Def::Data { is_mut, ty, init });
+    module.defs.push(Def::Data { name, is_mut, ty, init });
   }
 };
 
@@ -272,22 +271,22 @@ FunctionDefinition: () = {
   "function" <name:Identifier>
       "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType>
       <body:Block> => {
-    module.defs.insert(name, Def::Fn { params, ret_ty, body });
+    module.defs.push(Def::Fn { name, params, ret_ty, body });
   }
 };
 
-ParameterDefinitionListOpt: IndexMap<RefStr, (IsMut, TyRef)> = {
+ParameterDefinitionListOpt: Vec<(RefStr, IsMut, TyRef)> = {
   ParameterDefinitionList,
-  => indexmap! {}
+  => vec![]
 };
 
-ParameterDefinitionList: IndexMap<RefStr, (IsMut, TyRef)> = {
+ParameterDefinitionList: Vec<(RefStr, IsMut, TyRef)> = {
   <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    indexmap! { name => (is_mut, ty) }
+    vec![ (name, is_mut, ty) ]
   },
-  <mut map:ParameterDefinitionList> "," <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    map.insert(name, (is_mut, ty));
-    map
+  <mut l:ParameterDefinitionList> "," <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+    l.push((name, is_mut, ty));
+    l
   },
 };
 
@@ -299,10 +298,10 @@ ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
-    module.defs.insert(name, Def::ExternFn { params, ret_ty });
+    module.defs.push(Def::ExternFn { name, params, ret_ty });
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    module.defs.insert(name, Def::ExternData { is_mut, ty });
+    module.defs.push(Def::ExternData { name, is_mut, ty });
   }
 };
 

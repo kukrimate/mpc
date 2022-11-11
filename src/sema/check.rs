@@ -126,7 +126,7 @@ impl CheckCtx {
     }
   }
 
-  fn check_params(&mut self, params: &IndexMap<RefStr, parse::TyRef>) -> MRes<Vec<(RefStr, Ty)>> {
+  fn check_params(&mut self, params: &Vec<(RefStr, parse::TyRef)>) -> MRes<Vec<(RefStr, Ty)>> {
     let mut result = vec![];
     for (name, ty) in params {
       result.push((*name, self.check_ty(ty)?));
@@ -169,7 +169,7 @@ impl CheckCtx {
     })
   }
 
-  fn check_variants(&mut self, variants: &IndexMap<RefStr, parse::Variant>) -> MRes<Vec<(RefStr, Variant)>> {
+  fn check_variants(&mut self, variants: &Vec<(RefStr, parse::Variant)>) -> MRes<Vec<(RefStr, Variant)>> {
     use parse::Variant::*;
 
     let mut result = vec![];
@@ -183,24 +183,30 @@ impl CheckCtx {
     Ok(result)
   }
 
-  fn check_ty_defs(&mut self, ty_defs: &IndexMap<RefStr, parse::TyDef>) -> MRes<()>  {
+  fn check_ty_defs(&mut self, ty_defs: &Vec<parse::TyDef>) -> MRes<()>  {
     use parse::TyDef::*;
 
     let mut queue = vec![];
 
     // Pass 1: Create objects
-    for (name, ty_def) in ty_defs {
-      let dummy = Own::new(TyDef::new(*name));
-      queue.push((ty_def, dummy.ptr()));
-      self.module.ty_defs.insert(*name, dummy);
+    for ty_def in ty_defs {
+      match ty_def {
+        parse::TyDef::Struct { name, .. } |
+        parse::TyDef::Union { name, .. } |
+        parse::TyDef::Enum { name, .. } => {
+          let dummy = Own::new(TyDef::new(*name));
+          queue.push((ty_def, dummy.ptr()));
+          self.module.ty_defs.insert(*name, dummy);
+        }
+      }
     }
 
     // Pass 2: Resolve names
     for (ty_def, mut dest) in queue {
       dest.kind = match ty_def {
-        Struct { params } => TyDefKind::Struct(self.check_params(params)?),
-        Union { params } => TyDefKind::Union(self.check_params(params)?),
-        Enum { variants } => TyDefKind::Enum(self.check_variants(variants)?),
+        Struct { params, .. } => TyDefKind::Struct(self.check_params(params)?),
+        Union { params, .. } => TyDefKind::Union(self.check_params(params)?),
+        Enum { variants, .. } => TyDefKind::Enum(self.check_variants(variants)?),
       };
     }
 
@@ -468,7 +474,7 @@ impl CheckCtx {
     Ok(ExprDot::new(param_ty.clone(), is_mut, arg, name, idx))
   }
 
-  fn infer_call(&mut self, arg: &parse::Expr, args: &IndexMap<RefStr, parse::Expr>) -> MRes<Expr> {
+  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<Expr> {
     // Infer function type
     let arg = self.infer_expr(arg)?;
 
@@ -597,33 +603,33 @@ impl CheckCtx {
     let mut queue = vec![];
 
     // Create symbols for objects
-    for (name, def) in &module.defs {
+    for def in &module.defs {
       match def {
-        parse::Def::Const { ty, val } => {
+        parse::Def::Const { name, ty, val } => {
           // Infer
           let ty = self.check_ty(ty)?;
           let val = self.infer_expr(val)?;
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
         }
-        parse::Def::Data { is_mut, ty, .. } => {
+        parse::Def::Data { name, is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
           let ptr = self.define(Def::empty(*name, *is_mut, ty));
           queue.push((ptr, def));
         }
-        parse::Def::Fn { params, ret_ty, .. } => {
+        parse::Def::Fn { name, params, ret_ty, .. } => {
           let mut new_params = vec![];
-          for (name, (_, ty)) in params {
+          for (name, _, ty) in params {
             new_params.push((*name, self.check_ty(ty)?));
           }
           let ty = Ty::Fn(new_params, Box::new(self.check_ty(ret_ty)?));
           let ptr = self.define(Def::empty(*name, IsMut::No, ty));
           queue.push((ptr, def));
         }
-        parse::Def::ExternData { is_mut, ty } => {
+        parse::Def::ExternData { name, is_mut, ty } => {
           let ty = self.check_ty(ty)?;
           self.define(Def::with_kind(*name, *is_mut, ty, DefKind::ExternData));
         }
-        parse::Def::ExternFn { params, ret_ty } => {
+        parse::Def::ExternFn { name, params, ret_ty } => {
           let ty = Ty::Fn(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::ExternFunc));
@@ -649,7 +655,7 @@ impl CheckCtx {
           self.enter();
 
           // Create parameter symbols
-          for (index, (name, (is_mut, ty))) in params.iter().enumerate() {
+          for (index, (name, is_mut, ty)) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
             self.define_param(*name, *is_mut, ty, index);
           }
