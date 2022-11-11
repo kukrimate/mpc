@@ -13,8 +13,8 @@ fn needs_load(ty: &Ty) -> bool {
     Bool | Uint8 | Int8 | Uint16 |
     Int16 |Uint32 | Int32 | Uint64 |
     Int64 | Uintn | Intn | Float |
-    Double | Fn(..) | Ptr(..) => true,
-    Ref(..) | Arr(..) | Tuple(..) => false,
+    Double | Ptr(..) => true,
+    Fn(..) | Ref(..) | Arr(..) | Tuple(..) => false,
     ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
   }
 }
@@ -214,38 +214,11 @@ impl LowerExpr for ExprNull {
 
 impl LowerExpr for ExprRef {
   unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> LLVMValueRef {
-    match self.def.kind {
-      DefKind::Func(..) | DefKind::ExternFunc => unreachable!(),
-      _ => self.def.l_value
-    }
-  }
-
-  unsafe fn lower_const_value(&self, _: &mut LowerCtx) -> LLVMValueRef {
-    match self.def.kind {
-      DefKind::Func(..) | DefKind::ExternFunc => self.def.l_value,
-      _ => unreachable!()
-    }
+    self.def.l_value
   }
 
   unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> LLVMValueRef {
-    match self.def.kind {
-      // Function definitions are not lvalues!
-      DefKind::Func(..) | DefKind::ExternFunc => unreachable!(),
-      // Any other reference to symbol can be an lvalue
-      _ => self.def.l_value
-    }
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> LLVMValueRef {
-    match self.def.kind {
-      // Function definitions yield their address as values!
-      DefKind::Func(..) | DefKind::ExternFunc => self.def.l_value,
-      // Otherwise the value might need to be loaded based on its type
-      _ if needs_load(&self.ty) => {
-        LLVMBuildLoad(ctx.l_builder, self.lower_addr(ctx), empty_cstr())
-      }
-      _ => self.lower_addr(ctx)
-    }
+    self.def.l_value
   }
 }
 
