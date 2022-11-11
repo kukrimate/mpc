@@ -52,7 +52,11 @@ pub type MRes<T> = Result<T, Box<dyn Error>>;
 static mut STRING_TABLE: MaybeUninit<HashSet<String>> = MaybeUninit::uninit();
 
 pub fn init() {
-  unsafe { STRING_TABLE = MaybeUninit::new(HashSet::new()) }
+  unsafe { STRING_TABLE.write(HashSet::new()); }
+}
+
+pub fn uninit() {
+  unsafe { STRING_TABLE.assume_init_drop(); }
 }
 
 fn to_owned_c(s: &str) -> String {
@@ -81,7 +85,7 @@ impl RefStr {
   }
 
   pub fn borrow_c(&self) -> *const i8 {
-    unsafe { std::mem::transmute(&self.s.as_bytes()[0] as *const u8) }
+    unsafe { std::mem::transmute(self.s.as_ptr()) }
   }
 }
 

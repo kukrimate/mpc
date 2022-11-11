@@ -3,6 +3,7 @@
 use super::*;
 use llvm_sys::core::*;
 use llvm_sys::target::*;
+use llvm_sys::target_machine::*;
 use llvm_sys::LLVMIntPredicate::*;
 use llvm_sys::LLVMRealPredicate::*;
 
@@ -168,17 +169,17 @@ unsafe fn const_bin(ty: &Ty, op: BinOp, lhs: LLVMValueRef, rhs: LLVMValueRef) ->
   }
 }
 
-// Strings describing the target and data layout for LLVM
-// These match AMD64 clang on Linux for now
-const TRIPLE: &str = "x86_64-pc-linux-gnu";
-const DATALAYOUT: &str = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128";
-
 pub(super) struct LowerCtx {
+  // Target machine
+  l_machine: LLVMTargetMachineRef,
+  l_layout: LLVMTargetDataRef,
+
   // LLVM handles
   l_context: LLVMContextRef,
   l_builder: LLVMBuilderRef,
   l_module: LLVMModuleRef,
   l_func: LLVMValueRef,
+
 
   // String literals
   string_lits: IndexMap<RefStr, LLVMValueRef>,
@@ -560,25 +561,62 @@ impl LowerExpr for ExprLoop {
 
 impl LowerCtx {
   unsafe fn new(module_id: RefStr) -> Self {
+    LLVM_InitializeAllTargetInfos();
+    LLVM_InitializeAllTargets();
+    LLVM_InitializeAllTargetMCs();
+    LLVM_InitializeAllAsmParsers();
+    LLVM_InitializeAllAsmPrinters();
+
+    let l_triple = LLVMGetDefaultTargetTriple();
+    let l_cpu_name = LLVMGetHostCPUName();
+    let l_cpu_features = LLVMGetHostCPUFeatures();
+
+    let mut l_target = std::ptr::null_mut();
+    let mut l_errors = std::ptr::null_mut();
+    LLVMGetTargetFromTriple(l_triple, &mut l_target, &mut l_errors);
+    assert!(l_errors.is_null());
+
+    let l_machine = LLVMCreateTargetMachine(
+      l_target,
+      l_triple,
+      l_cpu_name,
+      l_cpu_features,
+      LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
+      LLVMRelocMode::LLVMRelocDefault,
+      LLVMCodeModel::LLVMCodeModelDefault);
+
+    let l_layout = LLVMCreateTargetDataLayout(l_machine);
+
     let l_context = LLVMGetGlobalContext();
     let l_builder = LLVMCreateBuilderInContext(l_context);
     let l_module = LLVMModuleCreateWithNameInContext(module_id.borrow_c(), l_context);
-    LLVMSetTarget(l_module, RefStr::new(TRIPLE).borrow_c());
-    LLVMSetDataLayout(l_module, RefStr::new(DATALAYOUT).borrow_c());
 
-    LowerCtx { l_context, l_builder, l_module,
-                l_func: std::ptr::null_mut(),
-                string_lits: IndexMap::new() }
+    LLVMSetTarget(l_module, l_triple);
+    let l_layout_str = LLVMCopyStringRepOfTargetData(l_layout);
+    LLVMSetDataLayout(l_module, l_layout_str);
+    LLVMDisposeMessage(l_layout_str);
+
+    LLVMDisposeMessage(l_triple);
+    LLVMDisposeMessage(l_cpu_name);
+    LLVMDisposeMessage(l_cpu_features);
+
+    LowerCtx {
+      l_machine,
+      l_layout,
+      l_context,
+      l_builder,
+      l_module,
+      l_func: std::ptr::null_mut(),
+      string_lits: IndexMap::new()
+    }
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
-    let l_layout = LLVMGetModuleDataLayout(self.l_module);
-    LLVMPreferredAlignmentOfType(l_layout, l_type) as usize
+    LLVMPreferredAlignmentOfType(self.l_layout, l_type) as usize
   }
 
   unsafe fn size_of(&mut self, l_type: LLVMTypeRef) -> usize {
-    let l_layout = LLVMGetModuleDataLayout(self.l_module);
-    LLVMStoreSizeOfType(l_layout, l_type) as usize
+    LLVMStoreSizeOfType(self.l_layout, l_type) as usize
   }
 
   unsafe fn params_to_llvm(&mut self, params: &Vec<(RefStr, Ty)>) -> Vec<LLVMTypeRef> {
@@ -959,19 +997,68 @@ impl LowerCtx {
   unsafe fn dump(&self) {
     LLVMDumpModule(self.l_module)
   }
+
+  unsafe fn write_ir(&self, output_path: &str) {
+    let errors = std::ptr::null_mut();
+    LLVMPrintModuleToFile(self.l_module, RefStr::new(output_path).borrow_c(), errors);
+    assert!(errors.is_null());
+  }
+
+  unsafe fn write_asm(&self, output_path: &str) {
+    let errors = std::ptr::null_mut();
+    LLVMTargetMachineEmitToFile(
+      self.l_machine,
+      self.l_module,
+      // NOTE: this transmute is borked, but LLVMTargetMachineEmitToFile
+      // should take a const pointer anyways, so it seems like the Rust FFI
+      // bindings are at fault here.
+      std::mem::transmute(RefStr::new(output_path).borrow_c()),
+      LLVMCodeGenFileType::LLVMAssemblyFile,
+      errors);
+    assert!(errors.is_null());
+  }
+
+  unsafe fn write_obj(&self, output_path: &str) {
+    let errors = std::ptr::null_mut();
+    LLVMTargetMachineEmitToFile(
+      self.l_machine,
+      self.l_module,
+      std::mem::transmute(RefStr::new(output_path).borrow_c()),
+      LLVMCodeGenFileType::LLVMObjectFile,
+      errors);
+    assert!(errors.is_null());
+  }
 }
 
 impl Drop for LowerCtx {
   fn drop(&mut self) {
-    unsafe { LLVMDisposeModule(self.l_module) }
+    unsafe {
+      LLVMDisposeTargetMachine(self.l_machine);
+      LLVMDisposeTargetData(self.l_layout);
+      LLVMDisposeBuilder(self.l_builder);
+      LLVMDisposeModule(self.l_module);
+      LLVMContextDispose(self.l_context);
+    }
   }
 }
 
-pub fn lower_module(module: &mut Module) -> MRes<()> {
+pub enum CompileTo {
+  LLVMIr,
+  Assembly,
+  Object,
+}
+
+
+pub fn lower_module(module: &mut Module, path: &str, compile_to: CompileTo) -> MRes<()> {
   unsafe {
     let mut ctx = LowerCtx::new(RefStr::new(""));
     ctx.lower_module(module);
     ctx.dump();
+    match compile_to {
+      CompileTo::LLVMIr => ctx.write_ir(path),
+      CompileTo::Assembly => ctx.write_asm(path),
+      CompileTo::Object => ctx.write_obj(path),
+    };
     Ok(())
   }
 }
