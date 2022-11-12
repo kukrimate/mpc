@@ -10,16 +10,75 @@ use llvm_sys::LLVMRealPredicate::*;
 type BB = LLVMBasicBlockRef;
 type Val = LLVMValueRef;
 
+/// Expressions that have addresses
+
+pub(super) trait LowerAddr: LValueT {
+  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val;
+  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val;
+}
+
+impl LowerAddr for ExprRef {
+  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val {
+    self.def.l_value
+  }
+
+  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val {
+    self.def.l_value
+  }
+}
+
+impl LowerAddr for ExprStr {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_string_lit(self.val)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    ctx.build_string_lit(self.val)
+  }
+}
+
+impl LowerAddr for ExprDot {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_const_addr(ctx);
+    ctx.build_const_dot(addr, self.idx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_addr(ctx);
+    ctx.build_dot(addr, self.idx)
+  }
+}
+
+impl LowerAddr for ExprIndex {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_const_addr(ctx);
+    let idx = self.idx.lower_const_value(ctx);
+    ctx.build_const_index(addr, idx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_addr(ctx);
+    let idx = self.idx.lower_value(ctx);
+    ctx.build_index(addr, idx)
+  }
+}
+
+impl LowerAddr for ExprInd {
+  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_const_value(ctx)
+  }
+
+  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
+    self.arg.lower_value(ctx)
+  }
+}
+
+/// Expressions that have values
+
 pub(super) trait LowerExpr: ExprT {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val { unreachable!() }
   unsafe fn lower_const_value(&self, _: &mut LowerCtx) -> Val { unreachable!() }
 
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val { unreachable!() }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.lower_addr(ctx);
-    ctx.build_load(self.ty(), addr)
-  }
+  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val { unreachable!() }
 
   unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
     let cond = self.lower_value(ctx);
@@ -33,13 +92,10 @@ impl LowerExpr for ExprNull {
   }
 }
 
-impl LowerExpr for ExprRef {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val {
-    self.def.l_value
-  }
-
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val {
-    self.def.l_value
+impl LowerExpr for ExprLoad {
+  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
+    let addr = self.arg.lower_addr(ctx);
+    ctx.build_load(self.ty(), addr)
   }
 }
 
@@ -75,28 +131,6 @@ impl LowerExpr for ExprFlt {
 
 impl LowerExpr for ExprChar {}  // TODO
 
-impl LowerExpr for ExprStr {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_string_lit(self.val)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_string_lit(self.val)
-  }
-}
-
-impl LowerExpr for ExprDot {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_const_addr(ctx);
-    ctx.build_const_dot(addr, self.idx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_addr(ctx);
-    ctx.build_dot(addr, self.idx)
-  }
-}
-
 impl LowerExpr for ExprCall {
   unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
     let func = self.arg.lower_value(ctx);
@@ -107,20 +141,6 @@ impl LowerExpr for ExprCall {
   }
 }
 
-impl LowerExpr for ExprIndex {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_const_addr(ctx);
-    let idx = self.idx.lower_const_value(ctx);
-    ctx.build_const_index(addr, idx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_addr(ctx);
-    let idx = self.idx.lower_value(ctx);
-    ctx.build_index(addr, idx)
-  }
-}
-
 impl LowerExpr for ExprAdr {
   unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
     self.arg.lower_const_addr(ctx)
@@ -128,16 +148,6 @@ impl LowerExpr for ExprAdr {
 
   unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
     self.arg.lower_addr(ctx)
-  }
-}
-
-impl LowerExpr for ExprInd {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_const_value(ctx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_value(ctx)
   }
 }
 

@@ -273,6 +273,168 @@ impl CheckCtx {
   // Expressions
   //
 
+  fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValueExpr> {
+    // Infer argument type
+    let arg = self.infer_addr(arg)?;
+
+    // Find parameter list
+    let params = match arg.ty() {
+      Ty::Ref(_, ty_def) => match &ty_def.kind {
+        TyDefKind::Struct(params) | TyDefKind::Union(params) => params,
+        _ => return Err(Box::new(TypeError {})),
+      },
+      Ty::Tuple(params) => params,
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    // Find parameter
+    let (idx, param_ty) = match lin_search(params, &name) {
+      Some(val) => val,
+      None => return Err(Box::new(TypeError {}))
+    };
+
+    Ok(ExprDot::new(param_ty.clone(), arg.is_mut(), arg, name, idx))
+  }
+
+  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<Expr> {
+    // Infer function type
+    let arg = self.infer_expr(arg)?;
+
+    // Find parameter list and return type
+    let (params, ret_ty) = match arg.ty() {
+      Ty::Fn(params, ret_ty) => (params, &**ret_ty),
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    // Typecheck call arguments
+    let mut nargs = vec![];
+
+    if args.len() != params.len() {
+      return Err(Box::new(TypeError {}))
+    }
+
+    for ((arg_name, arg_val), (param_name, param_ty)) in args.iter().zip(params.iter()) {
+      if arg_name != param_name {
+        return Err(Box::new(TypeError {}))
+      }
+      let mut arg_val = self.infer_expr(arg_val)?;
+      let mut param_ty = param_ty.clone();
+      unify(arg_val.ty_mut(), &mut param_ty)?;
+      nargs.push((*arg_name, arg_val));
+    }
+
+    Ok(ExprCall::new(ret_ty.clone(), arg, nargs))
+  }
+
+  fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValueExpr> {
+    // Infer array type
+    let arg = self.infer_addr(arg)?;
+
+    // Find element type
+    let elem_ty = match arg.ty() {
+      Ty::Arr(_, elem_ty) => &**elem_ty,
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    // Check index type
+    let mut idx = self.infer_expr(idx)?;
+    unify(idx.ty_mut(), &mut Ty::Uintn)?;
+
+    Ok(ExprIndex::new(elem_ty.clone(), arg.is_mut(), arg, idx))
+  }
+
+  fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<LValueExpr> {
+    // Infer pointer type
+    let arg = self.infer_expr(arg)?;
+
+    // Find base type
+    let (is_mut, base_ty) = match arg.ty() {
+      Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    Ok(ExprInd::new(base_ty.clone(), is_mut, arg))
+  }
+
+  fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<Expr> {
+    // Infer argument type
+    let mut arg = self.infer_expr(arg)?;
+
+    // Check argument type
+    match op {
+      UnOp::UPlus | UnOp::UMinus => {
+        unify(arg.ty_mut(), &mut Ty::ClassNum)?;
+      }
+      UnOp::Not => {
+        unify(arg.ty_mut(), &mut Ty::ClassInt)?;
+      }
+    }
+
+    Ok(ExprUn::new(arg.ty().clone(), op, arg))
+  }
+
+  fn infer_bin(&mut self, op: BinOp, lhs: &mut Ty, rhs: &mut Ty) -> MRes<Ty> {
+    // Check argument types and infer result type
+    Ok(match op {
+      // Both arguments must have matching numeric types
+      // Result has the same type as the arguments
+      BinOp::Mul | BinOp::Div | BinOp::Add | BinOp::Sub => {
+        unify(lhs, &mut Ty::ClassNum)?;
+        unify(lhs, rhs)?;
+        lhs.clone()
+      }
+
+      // Both arguments must have matching integer types
+      // Result has the same type as the arguments
+      BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
+        unify(lhs, &mut Ty::ClassInt)?;
+        unify(lhs, rhs)?;
+        lhs.clone()
+      }
+
+      // Both arguments must have integer types
+      // Result has the left argument's type
+      BinOp::Lsh | BinOp::Rsh => {
+        unify(lhs, &mut Ty::ClassInt)?;
+        unify(rhs, &mut Ty::ClassInt)?;
+        lhs.clone()
+      }
+
+      // Both arguments must have matching numeric types
+      // Result is a boolean
+      BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+        unify(lhs, &mut Ty::ClassNum)?;
+        unify(lhs, rhs)?;
+        Ty::Bool
+      }
+    })
+  }
+
+  fn infer_addr(&mut self, expr: &parse::Expr) -> MRes<LValueExpr> {
+    use parse::Expr::*;
+
+    Ok(match expr {
+      Path(path) => {
+        let def = self.resolve_def(path[0])?;
+        ExprRef::new(def.ty.clone(), def)
+      }
+      Str(val) => {
+        let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
+        ExprStr::new(ty, *val)
+      }
+      Dot(arg, name) => {
+        self.infer_dot(arg, *name)?
+      }
+      Index(arg, idx) => {
+        self.infer_index(arg, idx)?
+      }
+      Ind(arg) => {
+        self.infer_ind(arg)?
+      }
+      _ => return Err(Box::new(TypeError {}))
+    })
+  }
+
   fn infer_expr(&mut self, expr: &parse::Expr) -> MRes<Expr> {
     use parse::Expr::*;
 
@@ -280,9 +442,9 @@ impl CheckCtx {
       Null => {
         ExprNull::new(Ty::Tuple(vec![]))
       }
-      Path(path) => {
-        let def = self.resolve_def(path[0])?;
-        ExprRef::new(def.ty.clone(), def)
+      Path(..) | Str(..) | Dot(..) | Index(..) | Ind(..) => {
+        let arg = self.infer_addr(expr)?;
+        ExprLoad::new(arg.ty().clone(), arg)
       }
       Bool(val) => {
         ExprBool::new(Ty::Bool, *val)
@@ -296,26 +458,12 @@ impl CheckCtx {
       Char(val) => {
         ExprChar::new(Ty::ClassInt, *val)
       }
-      Str(val) => {
-        let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
-        ExprStr::new(ty, *val)
-      }
-      Dot(arg, name) => {
-        self.infer_dot(arg, *name)?
-      }
       Call(arg, args) => {
         self.infer_call(arg, args)?
       }
-      Index(arg, idx) => {
-        self.infer_index(arg, idx)?
-      }
       Adr(arg) => {
-        let mut arg = self.infer_expr(arg)?;
-        let is_mut = self.ensure_lvalue(&mut arg)?;
-        ExprAdr::new(Ty::Ptr(is_mut, Box::new(arg.ty().clone())), arg)
-      }
-      Ind(arg) => {
-        self.infer_ind(arg)?
+        let arg = self.infer_addr(arg)?;
+        ExprAdr::new(Ty::Ptr(arg.is_mut(), Box::new(arg.ty().clone())), arg)
       }
       Un(op, arg) => {
         self.infer_un(*op, arg)?
@@ -329,7 +477,9 @@ impl CheckCtx {
         todo!()
       }
       Bin(op, lhs, rhs) => {
-        let (ty, lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
+        let mut lhs = self.infer_expr(lhs)?;
+        let mut rhs = self.infer_expr(rhs)?;
+        let ty = self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
         ExprBin::new(ty, *op, lhs, rhs)
       }
       LAnd(lhs, rhs) => {
@@ -364,26 +514,26 @@ impl CheckCtx {
       }
       As(lhs, rhs) => {
         // Infer argument types
-        let mut lhs = self.infer_expr(lhs)?;
+        let mut lhs = self.infer_addr(lhs)?;
         let mut rhs = self.infer_expr(rhs)?;
+        unify(lhs.ty_mut(), rhs.ty_mut())?;
 
         // Make sure lhs is mutable
-        match self.ensure_lvalue(&mut lhs)? {
+        match lhs.is_mut() {
           IsMut::Yes => (),
           _ => return Err(Box::new(TypeError {})),
         };
-
-        // Both sides must have identical types
-        unify(lhs.ty_mut(), rhs.ty_mut())?;
 
         ExprAs::new(Ty::Tuple(vec![]), lhs, rhs)
       }
       Rmw(op, lhs, rhs) => {
         // Infer and check argument types
-        let (_, mut lhs, rhs) = self.infer_bin(*op, lhs, rhs)?;
+        let mut lhs = self.infer_addr(lhs)?;
+        let mut rhs = self.infer_expr(rhs)?;
+        self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
 
         // Make sure lhs is mutable
-        match self.ensure_lvalue(&mut lhs)? {
+        match lhs.is_mut() {
           IsMut::Yes => (),
           _ => return Err(Box::new(TypeError {})),
         };
@@ -463,160 +613,6 @@ impl CheckCtx {
         ExprLoop::new(self.loop_ty.pop().unwrap(), body)
       }
     })
-  }
-
-  fn ensure_lvalue(&mut self, expr: &Expr) -> MRes<IsMut> {
-    match expr.is_mut_lvalue() {
-      Some(is_mut) => Ok(is_mut),
-      _ => return Err(Box::new(TypeError {}))
-    }
-  }
-
-  fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<Expr> {
-    // Infer argument type
-    let mut arg = self.infer_expr(arg)?;
-    // Infer mutablity
-    let is_mut = self.ensure_lvalue(&mut arg)?;
-
-    // Find parameter list
-    let params = match arg.ty() {
-      Ty::Ref(_, ty_def) => match &ty_def.kind {
-        TyDefKind::Struct(params) | TyDefKind::Union(params) => params,
-        _ => return Err(Box::new(TypeError {})),
-      },
-      Ty::Tuple(params) => params,
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    // Find parameter
-    let (idx, param_ty) = match lin_search(params, &name) {
-      Some(val) => val,
-      None => return Err(Box::new(TypeError {}))
-    };
-
-    Ok(ExprDot::new(param_ty.clone(), is_mut, arg, name, idx))
-  }
-
-  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<Expr> {
-    // Infer function type
-    let arg = self.infer_expr(arg)?;
-
-    // Find parameter list and return type
-    let (params, ret_ty) = match arg.ty() {
-      Ty::Fn(params, ret_ty) => (params, &**ret_ty),
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    // Typecheck call arguments
-    let mut nargs = vec![];
-
-    if args.len() != params.len() {
-      return Err(Box::new(TypeError {}))
-    }
-
-    for ((arg_name, arg_val), (param_name, param_ty)) in args.iter().zip(params.iter()) {
-      if arg_name != param_name {
-        return Err(Box::new(TypeError {}))
-      }
-      let mut arg_val = self.infer_expr(arg_val)?;
-      let mut param_ty = param_ty.clone();
-      unify(arg_val.ty_mut(), &mut param_ty)?;
-      nargs.push((*arg_name, arg_val));
-    }
-
-    Ok(ExprCall::new(ret_ty.clone(), arg, nargs))
-  }
-
-  fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<Expr> {
-    // Infer array type
-    let mut arg = self.infer_expr(arg)?;
-    // Infer mutablity
-    let is_mut = self.ensure_lvalue(&mut arg)?;
-
-    // Find element type
-    let elem_ty = match arg.ty() {
-      Ty::Arr(_, elem_ty) => &**elem_ty,
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    // Check index type
-    let mut idx = self.infer_expr(idx)?;
-    unify(idx.ty_mut(), &mut Ty::Uintn)?;
-
-    Ok(ExprIndex::new(elem_ty.clone(), is_mut, arg, idx))
-  }
-
-  fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<Expr> {
-    // Infer pointer type
-    let arg = self.infer_expr(arg)?;
-
-    // Find base type
-    let (is_mut, base_ty) = match arg.ty() {
-      Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    Ok(ExprInd::new(base_ty.clone(), is_mut, arg))
-  }
-
-  fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<Expr> {
-    // Infer argument type
-    let mut arg = self.infer_expr(arg)?;
-
-    // Check argument type
-    match op {
-      UnOp::UPlus | UnOp::UMinus => {
-        unify(arg.ty_mut(), &mut Ty::ClassNum)?;
-      }
-      UnOp::Not => {
-        unify(arg.ty_mut(), &mut Ty::ClassInt)?;
-      }
-    }
-
-    Ok(ExprUn::new(arg.ty().clone(), op, arg))
-  }
-
-  fn infer_bin(&mut self, op: BinOp, lhs: &parse::Expr, rhs: &parse::Expr) -> MRes<(Ty, Expr, Expr)> {
-    // Infer argument types
-    let mut lhs = self.infer_expr(lhs)?;
-    let mut rhs = self.infer_expr(rhs)?;
-
-    // Check argument types and infer result type
-    let ty = match op {
-      // Both arguments must have matching numeric types
-      // Result has the same type as the arguments
-      BinOp::Mul | BinOp::Div | BinOp::Add | BinOp::Sub => {
-        unify(lhs.ty_mut(), &mut Ty::ClassNum)?;
-        unify(lhs.ty_mut(), rhs.ty_mut())?;
-        lhs.ty().clone()
-      }
-
-      // Both arguments must have matching integer types
-      // Result has the same type as the arguments
-      BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
-        unify(lhs.ty_mut(), &mut Ty::ClassInt)?;
-        unify(lhs.ty_mut(), rhs.ty_mut())?;
-        lhs.ty().clone()
-      }
-
-      // Both arguments must have integer types
-      // Result has the left argument's type
-      BinOp::Lsh | BinOp::Rsh => {
-        unify(lhs.ty_mut(), &mut Ty::ClassInt)?;
-        unify(rhs.ty_mut(), &mut Ty::ClassInt)?;
-        lhs.ty().clone()
-      }
-
-      // Both arguments must have matching numeric types
-      // Result is a boolean
-      BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-        unify(lhs.ty_mut(), &mut Ty::ClassNum)?;
-        unify(lhs.ty_mut(), rhs.ty_mut())?;
-        Ty::Bool
-      }
-    };
-
-    Ok((ty, lhs, rhs))
   }
 
   fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
