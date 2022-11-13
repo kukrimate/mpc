@@ -225,15 +225,31 @@ PrimExpr: Expr = {
 // Modules
 
 TypeDefinition: () = {
-  "struct" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.push(TyDef::Struct { name, params });
+  "struct" <name:Identifier>
+      <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+    module.ty_defs.push(TyDef::Struct { name, type_params, params });
   },
-  "union" <name:Identifier> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.push(TyDef::Union { name, params });
+  "union" <name:Identifier>
+      <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+    module.ty_defs.push(TyDef::Union { name, type_params, params });
   },
-  "enum" <name:Identifier> "(" <variants:VariantListOpt> ")" => {
-    module.ty_defs.push(TyDef::Enum { name, variants });
+  "enum" <name:Identifier>
+      <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
+    module.ty_defs.push(TyDef::Enum { name, type_params, variants });
   },
+};
+
+TypeParameterListOpt: Vec<RefStr> = {
+                             => vec![],
+  "<" <l:IdentifierList> ">" => l,
+};
+
+IdentifierList: Vec<RefStr> = {
+  Identifier => vec![<>],
+  <mut l: IdentifierList> "," <i:Identifier> => {
+    l.push(i);
+    l
+  }
 };
 
 VariantListOpt: Vec<(RefStr, Variant)> = {
@@ -269,10 +285,10 @@ DataDefinition: () = {
 };
 
 FunctionDefinition: () = {
-  "function" <name:Identifier>
-      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType>
-      <body:Block> => {
-    module.defs.push(Def::Fn { name, params, ret_ty, body });
+  "function" <name:Identifier> <type_params:TypeParameterListOpt>
+      "(" <params:ParameterDefinitionListOpt> ")"
+      <ret_ty:ReturnType> <body:Block> => {
+    module.defs.push(Def::Fn { name, type_params, params, ret_ty, body });
   }
 };
 

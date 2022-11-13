@@ -53,14 +53,17 @@ pub enum Variant {
 pub enum TyDef {
   Struct {
     name: RefStr,
+    type_params: Vec<RefStr>,
     params: Vec<(RefStr, TyRef)>,
   },
   Union {
     name: RefStr,
+    type_params: Vec<RefStr>,
     params: Vec<(RefStr, TyRef)>,
   },
   Enum {
     name: RefStr,
+    type_params: Vec<RefStr>,
     variants: Vec<(RefStr, Variant)>,
   },
 }
@@ -122,6 +125,7 @@ pub enum Def {
   },
   Fn {
     name: RefStr,
+    type_params: Vec<RefStr>,
     params: Vec<(RefStr, IsMut, TyRef)>,
     ret_ty: TyRef,
     body: Expr,
