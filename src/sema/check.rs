@@ -82,7 +82,7 @@ fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
       assert_eq!(name1, name2);
       Ok(())
     }
-    (Fn(par1, ret1), Fn(par2, ret2)) if par1.len() == par2.len() => {
+    (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
       for ((n1, t1), (n2, t2)) in par1.iter_mut().zip(par2.iter_mut()) {
         if n1 != n2 {
           return Err(Box::new(TypeError {}));
@@ -173,11 +173,11 @@ impl CheckCtx {
       Path(path) => {
         self.resolve_ty(path[0])?
       },
-      Fn(params, ret_ty) => {
-        Ty::Fn(self.check_params(params)?, Box::new(self.check_ty(ret_ty)?))
-      },
       Ptr(is_mut, base_ty) => {
         Ty::Ptr(*is_mut, Box::new(self.check_ty(base_ty)?))
+      },
+      Func(params, ret_ty) => {
+        Ty::Func(self.check_params(params)?, Box::new(self.check_ty(ret_ty)?))
       },
       Arr(_, elem_ty) => {
         // FIXME: evaluate elem_cnt constant expression
@@ -349,7 +349,7 @@ impl CheckCtx {
 
     // Find parameter list and return type
     let (params, ret_ty) = match arg.ty() {
-      Ty::Fn(params, ret_ty) => (params, &**ret_ty),
+      Ty::Func(params, ret_ty) => (params, &**ret_ty),
       _ => return Err(Box::new(TypeError {}))
     };
 
@@ -373,21 +373,18 @@ impl CheckCtx {
     Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(arg), args: nargs })
   }
 
-  fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<RValue> {
-    // Infer argument type
-    let mut arg = self.infer_rvalue(arg)?;
-
+  fn infer_un(&mut self, op: UnOp, arg: &mut Ty) -> MRes<Ty> {
     // Check argument type
-    match op {
+    Ok(match op {
       UnOp::UPlus | UnOp::UMinus => {
-        unify(arg.ty_mut(), &mut Ty::ClassNum)?;
+        unify(arg, &mut Ty::ClassNum)?;
+        arg.clone()
       }
       UnOp::Not => {
-        unify(arg.ty_mut(), &mut Ty::ClassInt)?;
+        unify(arg, &mut Ty::ClassInt)?;
+        arg.clone()
       }
-    }
-
-    Ok(RValue::Un { ty: arg.ty().clone(), op, arg: Box::new(arg) })
+    })
   }
 
   fn infer_bin(&mut self, op: BinOp, lhs: &mut Ty, rhs: &mut Ty) -> MRes<Ty> {
@@ -433,7 +430,13 @@ impl CheckCtx {
     Ok(match expr {
       Path(path) => {
         let def = self.resolve_def(path[0])?;
-        LValue::Ref { ty: def.ty.clone(), def }
+        match &def.kind {
+          DefKind::Data(..) | DefKind::ExternData |
+          DefKind::Param(..) | DefKind::Local => {
+            LValue::DataRef { ty: def.ty.clone(), def }
+          }
+          _ => return Err(Box::new(TypeError {}))
+        }
       }
       Str(val) => {
         let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
@@ -459,7 +462,33 @@ impl CheckCtx {
       Null => {
         RValue::Null { ty: Ty::Tuple(vec![]) }
       }
-      Path(..) | Str(..) | Dot(..) | Index(..) | Ind(..) => {
+      Path(path) => {
+        let def = self.resolve_def(path[0])?;
+        match &def.kind {
+          DefKind::Const(..) => {
+            RValue::ConstRef {
+              ty: def.ty.clone(),
+              def: def,
+            }
+          }
+          DefKind::Func(..) | DefKind::ExternFunc => {
+            RValue::FuncRef {
+              ty: def.ty.clone(),
+              def: def
+            }
+          }
+          DefKind::Data(..) | DefKind::ExternData |
+          DefKind::Param(..) | DefKind::Local => {
+            let arg = self.infer_lvalue(expr)?;
+            RValue::Load {
+              ty: arg.ty().clone(),
+              arg: Box::new(arg)
+            }
+          }
+          _ => unreachable!()
+        }
+      }
+      Str(..) | Dot(..) | Index(..) | Ind(..) => {
         let arg = self.infer_lvalue(expr)?;
         RValue::Load {
           ty: arg.ty().clone(),
@@ -489,7 +518,12 @@ impl CheckCtx {
         }
       }
       Un(op, arg) => {
-        self.infer_un(*op, arg)?
+        let mut arg = self.infer_rvalue(arg)?;
+        RValue::Un {
+          ty: self.infer_un(*op, arg.ty_mut())?,
+          op: *op,
+          arg: Box::new(arg)
+        }
       }
       LNot(arg) => {
         let mut arg = self.infer_rvalue(arg)?;
@@ -667,9 +701,9 @@ impl CheckCtx {
     for def in &module.defs {
       match def {
         parse::Def::Const { name, ty, val } => {
-          // Infer
-          let ty = self.check_ty(ty)?;
-          let val = self.infer_rvalue(val)?;
+          let mut ty = self.check_ty(ty)?;
+          let mut val = self.infer_rvalue(val)?;
+          unify(&mut ty, val.ty_mut())?;
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
         }
         parse::Def::Data { name, is_mut, ty, .. } => {
@@ -677,12 +711,12 @@ impl CheckCtx {
           let ptr = self.define(Def::empty(*name, *is_mut, ty));
           queue.push((ptr, def));
         }
-        parse::Def::Fn { name, params, ret_ty, .. } => {
+        parse::Def::Func { name, params, ret_ty, .. } => {
           let mut new_params = vec![];
           for (name, _, ty) in params {
             new_params.push((*name, self.check_ty(ty)?));
           }
-          let ty = Ty::Fn(new_params, Box::new(self.check_ty(ret_ty)?));
+          let ty = Ty::Func(new_params, Box::new(self.check_ty(ret_ty)?));
           let ptr = self.define(Def::empty(*name, IsMut::No, ty));
           queue.push((ptr, def));
         }
@@ -690,8 +724,8 @@ impl CheckCtx {
           let ty = self.check_ty(ty)?;
           self.define(Def::with_kind(*name, *is_mut, ty, DefKind::ExternData));
         }
-        parse::Def::ExternFn { name, params, ret_ty } => {
-          let ty = Ty::Fn(self.check_params(params)?,
+        parse::Def::ExternFunc { name, params, ret_ty } => {
+          let ty = Ty::Func(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::ExternFunc));
         }
@@ -710,7 +744,7 @@ impl CheckCtx {
           // Complete definition
           ptr.kind = DefKind::Data(init);
         }
-        parse::Def::Fn { params, ret_ty, body, .. } => {
+        parse::Def::Func { params, ret_ty, body, .. } => {
           // FIXME: this could be made better by not re-checking ret_ty
           // and re-using the value from the first pass
           self.enter();

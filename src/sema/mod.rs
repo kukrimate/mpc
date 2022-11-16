@@ -33,8 +33,8 @@ enum Ty {
   Float,
   Double,
   Ref(RefStr, Ptr<TyDef>),
-  Fn(Vec<(RefStr, Ty)>, Box<Ty>),
   Ptr(IsMut, Box<Ty>),
+  Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(usize, Box<Ty>),
   Tuple(Vec<(RefStr, Ty)>),
   // Deduction
@@ -124,12 +124,12 @@ impl fmt::Debug for Ty {
       Float => write!(f, "Float"),
       Double => write!(f, "Double"),
       Ref(name, _) => write!(f, "{}", name),
-      Fn(params, ty) => {
+      Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
+      Func(params, ty) => {
         write!(f, "Function")?;
         write_params(f, params)?;
         write!(f, " -> {:?}", ty)
       },
-      Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
       Tuple(params) => write_params(f, params),
       ClassAny => write!(f, "ClassAny"),
@@ -143,7 +143,7 @@ impl fmt::Debug for Ty {
 /// Expressions
 
 enum LValue {
-  Ref       { ty: Ty, def: Ptr<Def> },
+  DataRef   { ty: Ty, def: Ptr<Def> },
   Str       { ty: Ty, val: RefStr },
   Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -152,6 +152,8 @@ enum LValue {
 
 enum RValue {
   Null      { ty: Ty },
+  ConstRef  { ty: Ty, def: Ptr<Def> },
+  FuncRef   { ty: Ty, def: Ptr<Def> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -180,7 +182,7 @@ enum RValue {
 impl LValue {
   fn ty(&self) -> &Ty {
     match self {
-      LValue::Ref       { ty, .. } => ty,
+      LValue::DataRef   { ty, .. } => ty,
       LValue::Str       { ty, .. } => ty,
       LValue::Dot       { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
@@ -190,7 +192,7 @@ impl LValue {
 
   fn ty_mut(&mut self) -> &mut Ty {
     match self {
-      LValue::Ref       { ty, .. } => ty,
+      LValue::DataRef   { ty, .. } => ty,
       LValue::Str       { ty, .. } => ty,
       LValue::Dot       { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
@@ -200,7 +202,7 @@ impl LValue {
 
   fn is_mut(&self) -> IsMut {
     match self {
-      LValue::Ref       { def, .. }     => def.is_mut,
+      LValue::DataRef   { def, .. }     => def.is_mut,
       LValue::Str       { .. }          => IsMut::No,
       LValue::Dot       { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
@@ -213,6 +215,8 @@ impl RValue {
   fn ty(&self) -> &Ty {
     match self {
       RValue::Null      { ty, .. } => ty,
+      RValue::ConstRef  { ty, .. } => ty,
+      RValue::FuncRef   { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
@@ -242,6 +246,8 @@ impl RValue {
   fn ty_mut(&mut self) -> &mut Ty {
     match self {
       RValue::Null      { ty, .. } => ty,
+      RValue::ConstRef  { ty, .. } => ty,
+      RValue::FuncRef   { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
@@ -272,7 +278,7 @@ impl RValue {
 impl fmt::Debug for LValue {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      LValue::Ref { def, .. } => {
+      LValue::DataRef { def, .. } => {
         write!(f, "{}", def.name)
       }
       LValue::Str { val, .. } => {
@@ -296,6 +302,10 @@ impl fmt::Debug for RValue {
     match self {
       RValue::Null { .. } => {
         write!(f, "Null")
+      }
+      RValue::ConstRef { def, .. } |
+      RValue::FuncRef { def, .. } => {
+        write!(f, "{}", def.name)
       }
       RValue::Load { arg, .. } => {
         write!(f, "{:?}", arg)

@@ -28,10 +28,10 @@ TypeName: TyRef = {
   "Float"     => TyRef::Float,
   "Double"    => TyRef::Double,
   <p:Path>    => TyRef::Path(p),
-  "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
-    TyRef::Fn(params, Box::new(ret)),
   "*" <is_mut:IsMut> <ty:TypeName> =>
     TyRef::Ptr(is_mut, Box::new(ty)),
+  "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
+    TyRef::Func(params, Box::new(ret)),
   "[" <l:Expr> "]" <t:TypeName> =>
     TyRef::Arr(Box::new(l), Box::new(t)),
   "(" <params:ParameterListOpt>  ")" =>
@@ -288,7 +288,7 @@ FunctionDefinition: () = {
   "function" <name:Identifier> <type_params:TypeParameterListOpt>
       "(" <params:ParameterDefinitionListOpt> ")"
       <ret_ty:ReturnType> <body:Block> => {
-    module.defs.push(Def::Fn { name, type_params, params, ret_ty, body });
+    module.defs.push(Def::Func { name, type_params, params, ret_ty, body });
   }
 };
 
@@ -315,7 +315,7 @@ ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
-    module.defs.push(Def::ExternFn { name, params, ret_ty });
+    module.defs.push(Def::ExternFunc { name, params, ret_ty });
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
     module.defs.push(Def::ExternData { name, is_mut, ty });

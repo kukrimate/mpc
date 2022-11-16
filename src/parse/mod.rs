@@ -37,8 +37,8 @@ pub enum TyRef {
   Float,
   Double,
   Path(Path),
-  Fn(Vec<(RefStr, TyRef)>, Box<TyRef>),
   Ptr(IsMut, Box<TyRef>),
+  Func(Vec<(RefStr, TyRef)>, Box<TyRef>),
   Arr(Box<Expr>, Box<TyRef>),
   Tuple(Vec<(RefStr, TyRef)>),
 }
@@ -123,7 +123,7 @@ pub enum Def {
     ty: TyRef,
     init: Expr
   },
-  Fn {
+  Func {
     name: RefStr,
     type_params: Vec<RefStr>,
     params: Vec<(RefStr, IsMut, TyRef)>,
@@ -135,7 +135,7 @@ pub enum Def {
     is_mut: IsMut,
     ty: TyRef,
   },
-  ExternFn {
+  ExternFunc {
     name: RefStr,
     params: Vec<(RefStr, TyRef)>,
     ret_ty: TyRef,

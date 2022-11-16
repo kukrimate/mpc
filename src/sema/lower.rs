@@ -14,7 +14,7 @@ type Val = LLVMValueRef;
 
 unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::Ref { def, .. } => {
+    LValue::DataRef { def, .. } => {
       def.l_value
     }
     LValue::Str { val, .. } => {
@@ -39,6 +39,16 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
     RValue::Null { .. } => {
       ctx.build_void()
+    }
+    RValue::ConstRef { def, .. } => {
+      if let DefKind::Const(val) = &def.kind {
+        lower_const_rvalue(val, ctx)
+      } else {
+        unreachable!()
+      }
+    }
+    RValue::FuncRef { def, .. } => {
+      def.l_value
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
@@ -71,10 +81,10 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let l_rhs = lower_const_rvalue(rhs, ctx);
       ctx.build_const_bin(lhs.ty(), *op, l_lhs, l_rhs)
     }
-    RValue::LAnd { lhs, rhs, .. } => {
+    RValue::LAnd { .. } => {
       todo!() // TODO
     }
-    RValue::LOr { lhs, rhs, .. } => {
+    RValue::LOr { .. } => {
       todo!() // TODO
     }
     RValue::If { .. } => {
@@ -90,7 +100,7 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_lvalue(lvalue: &mut LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::Ref { def, .. } => {
+    LValue::DataRef { def, .. } => {
       def.l_value
     }
     LValue::Str { val, .. } => {
@@ -115,6 +125,16 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
     RValue::Null { .. } => {
       ctx.build_void()
+    }
+    RValue::ConstRef { def, .. } => {
+      if let DefKind::Const(val) = &def.kind {
+        lower_const_rvalue(val, ctx)
+      } else {
+        unreachable!()
+      }
+    }
+    RValue::FuncRef { def, .. } => {
+      def.l_value
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -193,10 +213,10 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Continue { .. } => {
       todo!() // TODO
     }
-    RValue::Break { arg, .. } => {
+    RValue::Break { .. } => {
       todo!() // TODO
     }
-    RValue::Return { arg, .. } => {
+    RValue::Return { .. } => {
       todo!() // TODO
     }
     RValue::Let { def, init, .. } => {
@@ -364,15 +384,15 @@ impl LowerCtx {
     LLVMStoreSizeOfType(self.l_layout, l_type) as usize
   }
 
-  unsafe fn params_to_llvm(&mut self, params: &Vec<(RefStr, Ty)>) -> Vec<LLVMTypeRef> {
+  unsafe fn lower_params(&mut self, params: &Vec<(RefStr, Ty)>) -> Vec<LLVMTypeRef> {
     let mut l_params = vec![];
     for (_, ty) in params {
-      l_params.push(self.ty_to_llvm(ty));
+      l_params.push(self.lower_ty(ty));
     }
     l_params
   }
 
-  unsafe fn ty_to_llvm(&mut self, ty: &Ty) -> LLVMTypeRef {
+  unsafe fn lower_ty(&mut self, ty: &Ty) -> LLVMTypeRef {
     use Ty::*;
 
     match ty {
@@ -388,19 +408,19 @@ impl LowerCtx {
       Ref(_, def) => {
         def.l_type
       }
-      Fn(params, ret_ty) => {
-        let mut l_params = self.params_to_llvm(params);
-        LLVMFunctionType(self.ty_to_llvm(ret_ty),
+      Ptr(_, base_ty) => {
+        LLVMPointerType(self.lower_ty(base_ty), 0)
+      }
+      Func(params, ret_ty) => {
+        let mut l_params = self.lower_params(params);
+        LLVMFunctionType(self.lower_ty(ret_ty),
           l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0)
       }
-      Ptr(_, base_ty) => {
-        LLVMPointerType(self.ty_to_llvm(base_ty), 0)
-      }
       Arr(siz, elem_ty) => {
-        LLVMArrayType(self.ty_to_llvm(elem_ty), *siz as u32)
+        LLVMArrayType(self.lower_ty(elem_ty), *siz as u32)
       }
       Tuple(params) => {
-        let mut l_params = self.params_to_llvm(params);
+        let mut l_params = self.lower_params(params);
         LLVMStructTypeInContext(self.l_context,
           l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0)
       }
@@ -449,11 +469,11 @@ impl LowerCtx {
         TyDefKind::ToBeFilled => unreachable!(),
         TyDefKind::Struct(params) => {
           // This is the simplest case, LLVM has native support for structures
-          self.params_to_llvm(params)
+          self.lower_params(params)
         }
         TyDefKind::Union(params) => {
           // The union lowering code is shared with enums thus it's in 'lower_union'
-          let l_params = self.params_to_llvm(params);
+          let l_params = self.lower_params(params);
           self.lower_union(l_params)
         }
         TyDefKind::Enum(variants) => {
@@ -466,7 +486,7 @@ impl LowerCtx {
             match variant {
               Variant::Unit(_) => (),
               Variant::Struct(_, params) => {
-                let mut l_params = self.params_to_llvm(params);
+                let mut l_params = self.lower_params(params);
                 l_variant_types.push(LLVMStructTypeInContext(self.l_context,
                   l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0));
               }
@@ -538,11 +558,11 @@ impl LowerCtx {
   }
 
   unsafe fn build_int(&mut self, ty: &Ty, val: usize) -> LLVMValueRef {
-    LLVMConstInt(self.ty_to_llvm(ty), val as u64, 0)
+    LLVMConstInt(self.lower_ty(ty), val as u64, 0)
   }
 
   unsafe fn build_flt(&mut self, ty: &Ty, val: f64) -> LLVMValueRef {
-    LLVMConstReal(self.ty_to_llvm(ty), val)
+    LLVMConstReal(self.lower_ty(ty), val)
   }
 
   unsafe fn build_const_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
@@ -734,14 +754,14 @@ impl LowerCtx {
       Bool | Uint8 | Int8 | Uint16 |
       Int16 |Uint32 | Int32 | Uint64 |
       Int64 | Uintn | Intn | Float |
-      Double | Ptr(..) => true,
-      Fn(..) | Ref(..) | Arr(..) | Tuple(..) => false,
+      Double | Ptr(..) | Func(..) => true,
+      Ref(..) | Arr(..) | Tuple(..) => false,
       ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
     }
   }
 
   unsafe fn build_alloca(&mut self, name: RefStr, ty: &Ty) -> LLVMValueRef {
-    LLVMBuildAlloca(self.l_builder, self.ty_to_llvm(ty), name.borrow_c())
+    LLVMBuildAlloca(self.l_builder, self.lower_ty(ty), name.borrow_c())
   }
 
   unsafe fn build_load(&mut self, ty: &Ty, l_src: LLVMValueRef) -> LLVMValueRef {
@@ -756,7 +776,7 @@ impl LowerCtx {
     if Self::backend_value_semantics(ty) {
       LLVMBuildStore(self.l_builder, l_src, l_dest);
     } else {
-      let l_type = self.ty_to_llvm(ty);
+      let l_type = self.lower_ty(ty);
       let align = self.align_of(l_type) as u32;
       let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
                                 self.size_of(l_type) as u64, 0);
@@ -955,12 +975,12 @@ impl LowerCtx {
       match &def.kind {
         DefKind::Data(..) | DefKind::ExternData => {
           def.l_value = LLVMAddGlobal(self.l_module,
-                                      self.ty_to_llvm(&def.ty),
+                                      self.lower_ty(&def.ty),
                                       name.borrow_c());
         }
         DefKind::Func(..) | DefKind::ExternFunc => {
           def.l_value = LLVMAddFunction(self.l_module, name.borrow_c(),
-                                        self.ty_to_llvm(&def.ty));
+                                        self.lower_ty(&def.ty));
         }
         _ => ()
       }
