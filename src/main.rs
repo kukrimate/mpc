@@ -1,6 +1,4 @@
-#![feature(coerce_unsized)]
 #![feature(hash_set_entry)]
-#![feature(unsize)]
 
 mod parse;
 mod sema;

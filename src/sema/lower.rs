@@ -10,329 +10,281 @@ use llvm_sys::LLVMRealPredicate::*;
 type BB = LLVMBasicBlockRef;
 type Val = LLVMValueRef;
 
-/// Expressions that have addresses
+/// Constant expressions
 
-pub(super) trait LowerAddr: LValueT {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val;
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val;
-}
-
-impl LowerAddr for ExprRef {
-  unsafe fn lower_const_addr(&self, _: &mut LowerCtx) -> Val {
-    self.def.l_value
-  }
-
-  unsafe fn lower_addr(&mut self, _: &mut LowerCtx) -> Val {
-    self.def.l_value
-  }
-}
-
-impl LowerAddr for ExprStr {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_string_lit(self.val)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_string_lit(self.val)
-  }
-}
-
-impl LowerAddr for ExprDot {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_const_addr(ctx);
-    ctx.build_const_dot(addr, self.idx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_addr(ctx);
-    ctx.build_dot(addr, self.idx)
-  }
-}
-
-impl LowerAddr for ExprIndex {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_const_addr(ctx);
-    let idx = self.idx.lower_const_value(ctx);
-    ctx.build_const_index(addr, idx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_addr(ctx);
-    let idx = self.idx.lower_value(ctx);
-    ctx.build_index(addr, idx)
-  }
-}
-
-impl LowerAddr for ExprInd {
-  unsafe fn lower_const_addr(&self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_const_value(ctx)
-  }
-
-  unsafe fn lower_addr(&mut self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_value(ctx)
-  }
-}
-
-/// Expressions that have values
-
-pub(super) trait LowerExpr: ExprT {
-  unsafe fn lower_const_value(&self, _: &mut LowerCtx) -> Val { unreachable!() }
-
-  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val { unreachable!() }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
-    let cond = self.lower_value(ctx);
-    ctx.exit_block_cond_br(cond, next1, next2);
-  }
-}
-
-impl LowerExpr for ExprNull {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_void()
-  }
-}
-
-impl LowerExpr for ExprLoad {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let addr = self.arg.lower_addr(ctx);
-    ctx.build_load(self.ty(), addr)
-  }
-}
-
-impl LowerExpr for ExprBool {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_bool(self.val)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_bool(self.val)
-  }
-}
-
-impl LowerExpr for ExprInt {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_int(&self.ty, self.val)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_int(&self.ty, self.val)
-  }
-}
-
-impl LowerExpr for ExprFlt {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_flt(&self.ty, self.val)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    ctx.build_flt(&self.ty, self.val)
-  }
-}
-
-impl LowerExpr for ExprChar {}  // TODO
-
-impl LowerExpr for ExprCall {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let func = self.arg.lower_value(ctx);
-    let args = self.args.iter_mut()
-      .map(|(_, arg)| arg.lower_value(ctx))
-      .collect();
-    ctx.build_call(func, args)
-  }
-}
-
-impl LowerExpr for ExprAdr {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_const_addr(ctx)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    self.arg.lower_addr(ctx)
-  }
-}
-
-impl LowerExpr for ExprUn {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    let arg = self.arg.lower_const_value(ctx);
-    ctx.build_const_un(self.ty(), self.op, arg)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let arg = self.arg.lower_value(ctx);
-    ctx.build_un(self.ty(), self.op, arg)
-  }
-}
-
-impl LowerExpr for ExprLNot {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    let arg = self.arg.lower_const_value(ctx);
-    ctx.build_const_lnot(arg)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let arg = self.arg.lower_value(ctx);
-    ctx.build_lnot(arg)
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
-    self.arg.lower_bool(ctx, next2, next1);
-  }
-}
-
-impl LowerExpr for ExprCast {}  // TODO
-
-impl LowerExpr for ExprBin {
-  unsafe fn lower_const_value(&self, ctx: &mut LowerCtx) -> Val {
-    let lhs = self.lhs.lower_const_value(ctx);
-    let rhs = self.rhs.lower_const_value(ctx);
-    ctx.build_const_bin(self.ty(), self.op, lhs, rhs)
-  }
-
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let lhs = self.lhs.lower_value(ctx);
-    let rhs = self.rhs.lower_value(ctx);
-    ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs)
-  }
-}
-
-impl LowerExpr for ExprLAnd {
-  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val {
-    todo!() // TODO
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
-    let mid_block = ctx.new_block();
-    self.lhs.lower_bool(ctx, mid_block, next2);
-    ctx.enter_block(mid_block);
-    self.rhs.lower_bool(ctx, next1, next2);
-  }
-}
-
-impl LowerExpr for ExprLOr {
-  unsafe fn lower_value(&mut self, _: &mut LowerCtx) -> Val {
-    todo!() // TODO
-  }
-
-  unsafe fn lower_bool(&mut self, ctx: &mut LowerCtx, next1: BB, next2: BB) {
-    let mid_block = ctx.new_block();
-    self.lhs.lower_bool(ctx, next1, mid_block);
-    ctx.enter_block(mid_block);
-    self.rhs.lower_bool(ctx, next1, next2);
-  }
-}
-
-impl LowerExpr for ExprBlock {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let mut val = ctx.build_void();
-    for expr in self.body.iter_mut() {
-      val = expr.lower_value(ctx);
+unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
+  match lvalue {
+    LValue::Ref { def, .. } => {
+      def.l_value
     }
-    val
+    LValue::Str { val, .. } => {
+      ctx.build_string_lit(*val)
+    }
+    LValue::Dot { arg, idx, .. } => {
+      let addr = lower_const_lvalue(arg, ctx);
+      ctx.build_const_dot(addr, *idx)
+    }
+    LValue::Index { arg, idx, .. } => {
+      let addr = lower_const_lvalue(arg, ctx);
+      let idx = lower_const_rvalue(idx, ctx);
+      ctx.build_const_index(addr, idx)
+    }
+    LValue::Ind { arg, .. } => {
+      lower_const_rvalue(arg, ctx)
+    }
   }
 }
 
-impl LowerExpr for ExprAs {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let dest = self.lhs.lower_addr(ctx);
-    let src = self.rhs.lower_value(ctx);
-    ctx.build_store(self.lhs.ty(), dest, src);
-    // Void value
-    ctx.build_void()
+unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
+  match rvalue {
+    RValue::Null { .. } => {
+      ctx.build_void()
+    }
+    RValue::Bool { val, .. } => {
+      ctx.build_bool(*val)
+    }
+    RValue::Int { ty, val, .. } => {
+      ctx.build_int(ty, *val)
+    }
+    RValue::Flt { ty, val, .. } => {
+      ctx.build_flt(ty, *val)
+    }
+    RValue::Char { .. } => {
+      todo!() // TODO
+    }
+    RValue::Adr { arg, .. } => {
+      lower_const_lvalue(arg, ctx)
+    }
+    RValue::Un { op, arg, .. } => {
+      let l_arg = lower_const_rvalue(arg, ctx);
+      ctx.build_const_un(arg.ty(), *op, l_arg)
+    }
+    RValue::LNot { arg, .. } => {
+      let arg = lower_const_rvalue(arg, ctx);
+      ctx.build_const_lnot(arg)
+    }
+    RValue::Cast { .. } => {
+      todo!()
+    }
+    RValue::Bin { op, lhs, rhs, .. } => {
+      let l_lhs = lower_const_rvalue(lhs, ctx);
+      let l_rhs = lower_const_rvalue(rhs, ctx);
+      ctx.build_const_bin(lhs.ty(), *op, l_lhs, l_rhs)
+    }
+    RValue::LAnd { lhs, rhs, .. } => {
+      todo!() // TODO
+    }
+    RValue::LOr { lhs, rhs, .. } => {
+      todo!() // TODO
+    }
+    RValue::If { .. } => {
+      todo!() // TODO
+    }
+    _ => {
+      unreachable!()
+    }
   }
 }
 
-impl LowerExpr for ExprRmw {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    // LHS: We need both the address and value
-    let dest = self.lhs.lower_addr(ctx);
-    let lhs = ctx.build_load(self.lhs.ty(), dest);
-    // RHS: We need only the value
-    let rhs = self.rhs.lower_value(ctx);
-    // Then we can perform the computation and do the store
-    let tmp = ctx.build_bin(self.lhs.ty(), self.op, lhs, rhs);
-    ctx.build_store(self.lhs.ty(), dest, tmp);
-    // Void value
-    ctx.build_void()
+/// Runtime expressions
+
+unsafe fn lower_lvalue(lvalue: &mut LValue, ctx: &mut LowerCtx) -> Val {
+  match lvalue {
+    LValue::Ref { def, .. } => {
+      def.l_value
+    }
+    LValue::Str { val, .. } => {
+      ctx.build_string_lit(*val)
+    }
+    LValue::Dot { arg, idx, .. } => {
+      let addr = lower_lvalue(arg, ctx);
+      ctx.build_dot(addr, *idx)
+    }
+    LValue::Index { arg, idx, .. } => {
+      let addr = lower_lvalue(arg, ctx);
+      let idx = lower_rvalue(idx, ctx);
+      ctx.build_index(addr, idx)
+    }
+    LValue::Ind { arg, .. } => {
+      lower_rvalue(arg, ctx)
+    }
   }
 }
 
-impl LowerExpr for ExprContinue {}
-impl LowerExpr for ExprBreak {}
-impl LowerExpr for ExprReturn {}
+unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
+  match rvalue {
+    RValue::Null { .. } => {
+      ctx.build_void()
+    }
+    RValue::Load { ty, arg, .. } => {
+      let addr = lower_lvalue(arg, ctx);
+      ctx.build_load(ty, addr)
+    }
+    RValue::Bool { val, .. } => {
+      ctx.build_bool(*val)
+    }
+    RValue::Int { ty, val, .. } => {
+      ctx.build_int(ty, *val)
+    }
+    RValue::Flt { ty, val, .. } => {
+      ctx.build_flt(ty, *val)
+    }
+    RValue::Char { .. } => {
+      todo!() // TODO
+    }
+    RValue::Call { arg, args, .. } => {
+      let arg = lower_rvalue(arg, ctx);
+      let args = args.iter_mut()
+        .map(|(_, arg)| lower_rvalue(arg, ctx))
+        .collect();
+      ctx.build_call(arg, args)
+    }
+    RValue::Adr { arg, .. } => {
+      lower_lvalue(arg, ctx)
+    }
+    RValue::Un { op, arg, .. } => {
+      let l_arg = lower_rvalue(arg, ctx);
+      ctx.build_un(arg.ty(), *op, l_arg)
+    }
+    RValue::LNot { arg, .. } => {
+      let arg = lower_rvalue(arg, ctx);
+      ctx.build_lnot(arg)
+    }
+    RValue::Cast { .. } => {
+      todo!() // TODO
+    }
+    RValue::Bin { op, lhs, rhs, .. } => {
+      let l_lhs = lower_rvalue(lhs, ctx);
+      let l_rhs = lower_rvalue(rhs, ctx);
+      ctx.build_bin(lhs.ty(), *op, l_lhs, l_rhs)
+    }
+    RValue::LAnd { .. } => {
+      todo!() // TODO
+    }
+    RValue::LOr { .. } => {
+      todo!() // TODO
+    }
+    RValue::Block { body, .. } => {
+      let mut val = ctx.build_void();
+      for expr in body.iter_mut() {
+        val = lower_rvalue(expr, ctx);
+      }
+      val
+    }
+    RValue::As { lhs, rhs, .. } => {
+      let dest = lower_lvalue(lhs, ctx);
+      let src = lower_rvalue(rhs, ctx);
+      ctx.build_store(lhs.ty(), dest, src);
+      // Void value
+      ctx.build_void()
+    }
+    RValue::Rmw { op, lhs, rhs, .. } => {
+      // LHS: We need both the address and value
+      let dest_addr = lower_lvalue(lhs, ctx);
+      let lhs_val = ctx.build_load(lhs.ty(), dest_addr);
+      // RHS: We need only the value
+      let rhs_val = lower_rvalue(rhs, ctx);
+      // Then we can perform the computation and do the store
+      let tmp_val = ctx.build_bin(lhs.ty(), *op, lhs_val, rhs_val);
+      ctx.build_store(lhs.ty(), dest_addr, tmp_val);
+      // Void value
+      ctx.build_void()
+    }
+    RValue::Continue { .. } => {
+      todo!() // TODO
+    }
+    RValue::Break { arg, .. } => {
+      todo!() // TODO
+    }
+    RValue::Return { arg, .. } => {
+      todo!() // TODO
+    }
+    RValue::Let { def, init, .. } => {
+      // Allocate stack slot for local variable
+      def.l_value = ctx.build_alloca(def.name, &def.ty);
+      // Store initializer in stack slot
+      let init = lower_rvalue(init, ctx);
+      ctx.build_store(&def.ty, def.l_value, init);
+      // Void value
+      ctx.build_void()
+    }
+    RValue::If { cond, tbody, ebody, .. } => {
+      let then_block = ctx.new_block();
+      let else_block = ctx.new_block();
+      let end_block = ctx.new_block();
 
-impl LowerExpr for ExprLet {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    // Allocate stack slot for local variable
-    self.def.l_value = ctx.build_alloca(self.def.name, &self.def.ty);
+      lower_bool(cond, ctx, then_block, else_block);
 
-    // Store initializer in stack slot
-    let init = self.init.lower_value(ctx);
-    ctx.build_store(&self.def.ty, self.def.l_value, init);
+      ctx.enter_block(then_block);
+      lower_rvalue(tbody, ctx);
+      ctx.exit_block_br(end_block);
 
-    // Void value
-    ctx.build_void()
+      ctx.enter_block(else_block);
+      lower_rvalue(ebody, ctx);
+      ctx.exit_block_br(end_block);
+
+      ctx.enter_block(end_block);
+      ctx.build_void()
+    }
+    RValue::While { cond, body, .. } => {
+      let test_block = ctx.new_block();
+      let body_block = ctx.new_block();
+      let end_block = ctx.new_block();
+
+      ctx.exit_block_br(test_block);
+
+      // Initial block is the test as a demorgan expr
+      ctx.enter_block(test_block);
+      lower_bool(cond, ctx, body_block, end_block);
+
+      // Next block is the loop body
+      ctx.enter_block(body_block);
+      lower_rvalue(body, ctx);
+      ctx.exit_block_br(test_block);
+
+      // End of the loop
+      ctx.enter_block(end_block);
+
+      // Void value
+      ctx.build_void()
+    }
+    RValue::Loop { body, .. } => {
+      let body_block = ctx.new_block();
+
+      ctx.exit_block_br(body_block);
+
+      // Loop body in one block
+      ctx.enter_block(body_block);
+      lower_rvalue(body, ctx);
+      ctx.exit_block_br(body_block);
+
+      // Void value
+      ctx.build_void()
+    }
   }
 }
 
-impl LowerExpr for ExprIf {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let then_block = ctx.new_block();
-    let else_block = ctx.new_block();
-    let end_block = ctx.new_block();
-
-    self.cond.lower_bool(ctx, then_block, else_block);
-
-    ctx.enter_block(then_block);
-    self.tbody.lower_value(ctx);
-    ctx.exit_block_br(end_block);
-
-    ctx.enter_block(else_block);
-    self.ebody.lower_value(ctx);
-    ctx.exit_block_br(end_block);
-
-    ctx.enter_block(end_block);
-    ctx.build_void()
-  }
-}
-
-impl LowerExpr for ExprWhile {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let test_block = ctx.new_block();
-    let body_block = ctx.new_block();
-    let end_block = ctx.new_block();
-
-    ctx.exit_block_br(test_block);
-
-    // Initial block is the test as a demorgan expr
-    ctx.enter_block(test_block);
-    self.cond.lower_bool(ctx, body_block, end_block);
-
-    // Next block is the loop body
-    ctx.enter_block(body_block);
-    self.body.lower_value(ctx);
-    ctx.exit_block_br(test_block);
-
-    // End of the loop
-    ctx.enter_block(end_block);
-
-    // Void value
-    ctx.build_void()
-  }
-}
-
-impl LowerExpr for ExprLoop {
-  unsafe fn lower_value(&mut self, ctx: &mut LowerCtx) -> Val {
-    let body_block = ctx.new_block();
-
-    ctx.exit_block_br(body_block);
-
-    // Loop body in one block
-    ctx.enter_block(body_block);
-    self.body.lower_value(ctx);
-    ctx.exit_block_br(body_block);
-
-    // Void value
-    ctx.build_void()
+unsafe fn lower_bool(rvalue: &mut RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+  match rvalue {
+    RValue::LNot { arg, .. } => {
+      lower_bool(arg, ctx, next2, next1);
+    }
+    RValue::LAnd { lhs, rhs, .. } => {
+      let mid_block = ctx.new_block();
+      lower_bool(lhs, ctx, mid_block, next2);
+      ctx.enter_block(mid_block);
+      lower_bool(rhs, ctx, next1, next2);
+    }
+    RValue::LOr { lhs, rhs, .. } => {
+      let mid_block = ctx.new_block();
+      lower_bool(lhs, ctx, next1, mid_block);
+      ctx.enter_block(mid_block);
+      lower_bool(rhs, ctx, next1, next2);
+    }
+    _ => {
+      let cond = lower_rvalue(rvalue, ctx);
+      ctx.exit_block_cond_br(cond, next1, next2);
+    }
   }
 }
 
@@ -1018,7 +970,7 @@ impl LowerCtx {
       let def_value = def.l_value;
       match &mut def.kind {
         DefKind::Data(init) => {
-          LLVMSetInitializer(def_value, init.lower_const_value(self));
+          LLVMSetInitializer(def_value, lower_const_rvalue(init, self));
         }
         DefKind::Func(params, body) => {
           // Entry point
@@ -1038,7 +990,7 @@ impl LowerCtx {
           }
 
           // Lower function body
-          LLVMBuildRet(self.l_builder, body.lower_value(self));
+          LLVMBuildRet(self.l_builder, lower_rvalue(body, self));
         }
         _ => ()
       }

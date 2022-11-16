@@ -195,8 +195,6 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Own<T> {
   }
 }
 
-impl<T: ?Sized + std::marker::Unsize<U>, U: ?Sized> std::ops::CoerceUnsized<Own<U>> for Own<T> {}
-
 // Borrowed pointer
 
 pub struct Ptr<T: ?Sized>(*mut T);

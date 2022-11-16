@@ -142,362 +142,240 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 
-type Expr = Own<dyn lower::LowerExpr>;
-
-trait ExprT: fmt::Debug {
-  fn ty<'a>(&'a self) -> &'a Ty;
-  fn ty_mut<'a>(&'a mut self) -> &'a mut Ty;
+enum LValue {
+  Ref       { ty: Ty, def: Ptr<Def> },
+  Str       { ty: Ty, val: RefStr },
+  Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
+  Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
+  Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
 }
 
-type LValueExpr = Own<dyn lower::LowerAddr>;
-
-trait LValueT: fmt::Debug {
-  fn ty(&self) -> &Ty;
-  fn ty_mut(&mut self) -> &mut Ty;
-  fn is_mut(&self) -> IsMut;
+enum RValue {
+  Null      { ty: Ty },
+  Load      { ty: Ty, arg: Box<LValue> },
+  Bool      { ty: Ty, val: bool },
+  Int       { ty: Ty, val: usize },
+  Flt       { ty: Ty, val: f64 },
+  Char      { ty: Ty, val: RefStr },
+  Call      { ty: Ty, arg: Box<RValue>, args: Vec<(RefStr, RValue)> },
+  Adr       { ty: Ty, arg: Box<LValue> },
+  Un        { ty: Ty, op: UnOp, arg: Box<RValue> },
+  LNot      { ty: Ty, arg: Box<RValue> },
+  Cast      { ty: Ty, arg: Box<RValue> },
+  Bin       { ty: Ty, op: BinOp, lhs: Box<RValue>, rhs: Box<RValue> },
+  LAnd      { ty: Ty, lhs: Box<RValue>, rhs: Box<RValue> },
+  LOr       { ty: Ty, lhs: Box<RValue>, rhs: Box<RValue> },
+  Block     { ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<RValue> },
+  As        { ty: Ty, lhs: Box<LValue>, rhs: Box<RValue> },
+  Rmw       { ty: Ty, op: BinOp, lhs: Box<LValue>, rhs: Box<RValue> },
+  Continue  { ty: Ty },
+  Break     { ty: Ty, arg: Box<RValue> },
+  Return    { ty: Ty, arg: Box<RValue> },
+  Let       { ty: Ty, def: Ptr<Def>, init: Box<RValue> },
+  If        { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
+  While     { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
+  Loop      { ty: Ty, body: Box<RValue> },
 }
 
-struct ExprNull { ty: Ty }
-struct ExprLoad { ty: Ty, arg: LValueExpr }
-struct ExprRef { ty: Ty, def: Ptr<Def> }
-struct ExprBool { ty: Ty, val: bool }
-struct ExprInt { ty: Ty, val: usize }
-struct ExprFlt { ty: Ty, val: f64 }
-struct ExprChar { ty: Ty, val: RefStr }
-struct ExprStr { ty: Ty, val: RefStr }
-struct ExprDot { ty: Ty, is_mut: IsMut, arg: LValueExpr, name: RefStr, idx: usize }
-struct ExprCall { ty: Ty, arg: Expr, args: Vec<(RefStr, Expr)> }
-struct ExprIndex { ty: Ty, is_mut: IsMut, arg: LValueExpr, idx: Expr }
-struct ExprAdr { ty: Ty, arg: LValueExpr }
-struct ExprInd { ty: Ty, is_mut: IsMut, arg: Expr }
-struct ExprUn { ty: Ty, op: UnOp, arg: Expr }
-struct ExprLNot { ty: Ty, arg: Expr }
-struct ExprCast { ty: Ty, arg: Expr }
-struct ExprBin { ty: Ty, op: BinOp, lhs: Expr, rhs: Expr }
-struct ExprLAnd { ty: Ty, lhs: Expr, rhs: Expr }
-struct ExprLOr { ty: Ty, lhs: Expr, rhs: Expr }
-struct ExprBlock { ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<Expr> }
-struct ExprAs { ty: Ty, lhs: LValueExpr, rhs: Expr }
-struct ExprRmw { ty: Ty, op: BinOp, lhs: LValueExpr, rhs: Expr }
-struct ExprContinue { ty: Ty }
-struct ExprBreak { ty: Ty, arg: Expr }
-struct ExprReturn { ty: Ty, arg: Expr }
-struct ExprLet { ty: Ty, def: Ptr<Def>, init: Expr }
-struct ExprIf { ty: Ty, cond: Expr, tbody: Expr, ebody: Expr }
-struct ExprWhile { ty: Ty, cond: Expr, body: Expr }
-struct ExprLoop { ty: Ty, body: Expr }
-
-impl ExprNull { fn new(ty: Ty) -> Own<Self> { Own::new(Self { ty }) } }
-impl ExprLoad { fn new(ty: Ty, arg: LValueExpr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprRef { fn new(ty: Ty, def: Ptr<Def>) -> Own<Self> { Own::new(Self { ty, def }) } }
-impl ExprBool { fn new(ty: Ty, val: bool) -> Own<Self> { Own::new(Self { ty, val }) } }
-impl ExprInt { fn new(ty: Ty, val: usize) -> Own<Self> { Own::new(Self { ty, val }) } }
-impl ExprFlt { fn new(ty: Ty, val: f64) -> Own<Self> { Own::new(Self { ty, val }) } }
-impl ExprChar { fn new(ty: Ty, val: RefStr) -> Own<Self> { Own::new(Self { ty, val }) } }
-impl ExprStr { fn new(ty: Ty, val: RefStr) -> Own<Self> { Own::new(Self { ty, val }) } }
-impl ExprDot { fn new(ty: Ty, is_mut: IsMut, arg: LValueExpr, name: RefStr, idx: usize) -> Own<Self> { Own::new(Self { ty, is_mut, arg, name, idx }) } }
-impl ExprCall { fn new(ty: Ty, arg: Expr, args: Vec<(RefStr, Expr)>) -> Own<Self> { Own::new(Self { ty, arg, args }) } }
-impl ExprIndex { fn new(ty: Ty, is_mut: IsMut, arg: LValueExpr, idx: Expr) -> Own<Self> { Own::new(Self { ty, is_mut, arg, idx }) } }
-impl ExprAdr { fn new(ty: Ty, arg: LValueExpr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprInd { fn new(ty: Ty, is_mut: IsMut, arg: Expr) -> Own<Self> { Own::new(Self { ty, is_mut, arg }) } }
-impl ExprUn { fn new(ty: Ty, op: UnOp, arg: Expr) -> Own<Self> { Own::new(Self { ty, op, arg }) } }
-impl ExprLNot { fn new(ty: Ty, arg: Expr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprCast { fn new(ty: Ty, arg: Expr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprBin { fn new(ty: Ty, op: BinOp, lhs: Expr, rhs: Expr) -> Own<Self> { Own::new(Self { ty, op, lhs, rhs }) } }
-impl ExprLAnd { fn new(ty: Ty, lhs: Expr, rhs: Expr) -> Own<Self> { Own::new(Self { ty, lhs, rhs }) } }
-impl ExprLOr { fn new(ty: Ty, lhs: Expr, rhs: Expr) -> Own<Self> { Own::new(Self { ty, lhs, rhs }) } }
-impl ExprBlock { fn new(ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<Expr>) -> Own<Self> { Own::new(Self { ty, scope, body }) } }
-impl ExprAs { fn new(ty: Ty, lhs: LValueExpr, rhs: Expr) -> Own<Self> { Own::new(Self { ty, lhs, rhs }) } }
-impl ExprRmw { fn new(ty: Ty, op: BinOp, lhs: LValueExpr, rhs: Expr) -> Own<Self> { Own::new(Self { ty, op, lhs, rhs }) } }
-impl ExprContinue { fn new(ty: Ty) -> Own<Self> { Own::new(Self { ty }) } }
-impl ExprBreak { fn new(ty: Ty, arg: Expr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprReturn { fn new(ty: Ty, arg: Expr) -> Own<Self> { Own::new(Self { ty, arg }) } }
-impl ExprLet { fn new(ty: Ty, def: Ptr<Def>, init: Expr) -> Own<Self> { Own::new(Self { ty, def, init }) } }
-impl ExprIf { fn new(ty: Ty, cond: Expr, tbody: Expr, ebody: Expr) -> Own<Self> { Own::new(Self { ty, cond, tbody, ebody }) } }
-impl ExprWhile { fn new(ty: Ty, cond: Expr, body: Expr) -> Own<Self> { Own::new(Self { ty, cond, body }) } }
-impl ExprLoop { fn new(ty: Ty, body: Expr) -> Own<Self> { Own::new(Self { ty, body }) } }
-
-impl fmt::Debug for ExprNull {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Null")
-  }
-}
-impl fmt::Debug for ExprLoad {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprRef {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.def.name)
-  }
-}
-impl fmt::Debug for ExprBool {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.val)
-  }
-}
-impl fmt::Debug for ExprInt {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.val)
-  }
-}
-impl fmt::Debug for ExprFlt {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.val)
-  }
-}
-impl fmt::Debug for ExprChar {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "c{:?}", self.val)
-  }
-}
-impl fmt::Debug for ExprStr {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "s{:?}", self.val)
-  }
-}
-impl fmt::Debug for ExprDot {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, ".{} {:?}", self.name, self.arg)
-  }
-}
-impl fmt::Debug for ExprCall {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write_comma_separated(f, self.args.iter(),
-      |f, (name, arg)| write!(f, "{}: {:?}", name, arg))?;
-    write!(f, " {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprIndex {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "[{:?}] {:?}", self.idx, self.arg)
-  }
-}
-impl fmt::Debug for ExprAdr {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Adr {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprInd {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Ind {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprUn {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{:?} {:?}", self.op, self.arg)
-  }
-}
-impl fmt::Debug for ExprLNot {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "LNot {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprCast {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Cast {:?} {:?}", self.arg, self.ty)
-  }
-}
-impl fmt::Debug for ExprBin {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{:?} {:?} {:?}", self.op, self.lhs, self.rhs)
-  }
-}
-impl fmt::Debug for ExprLAnd {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "LAnd {:?} {:?}", self.lhs, self.rhs)
-  }
-}
-impl fmt::Debug for ExprLOr {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "LOr {:?} {:?}", self.lhs, self.rhs)
-  }
-}
-impl fmt::Debug for ExprBlock {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{{\n")?;
-    let mut pf = PadAdapter::wrap(f);
-    for expr in &self.body {
-      write!(&mut pf, "{:?};\n", expr)?;
+impl LValue {
+  fn ty(&self) -> &Ty {
+    match self {
+      LValue::Ref       { ty, .. } => ty,
+      LValue::Str       { ty, .. } => ty,
+      LValue::Dot       { ty, .. } => ty,
+      LValue::Index     { ty, .. } => ty,
+      LValue::Ind       { ty, .. } => ty,
     }
-    write!(f, "}}")
   }
-}
-impl fmt::Debug for ExprAs {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "As {:?} {:?}", self.lhs, self.rhs)
+
+  fn ty_mut(&mut self) -> &mut Ty {
+    match self {
+      LValue::Ref       { ty, .. } => ty,
+      LValue::Str       { ty, .. } => ty,
+      LValue::Dot       { ty, .. } => ty,
+      LValue::Index     { ty, .. } => ty,
+      LValue::Ind       { ty, .. } => ty,
+    }
   }
-}
-impl fmt::Debug for ExprRmw {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{:?}As {:?} {:?}", self.op, self.lhs, self.rhs)
-  }
-}
-impl fmt::Debug for ExprContinue {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "continue")
-  }
-}
-impl fmt::Debug for ExprBreak {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "break {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprReturn {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "return {:?}", self.arg)
-  }
-}
-impl fmt::Debug for ExprLet {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "let {}{}: {:?} = {:?}",
-      self.def.is_mut, self.def.name, self.def.ty, self.init)
-  }
-}
-impl fmt::Debug for ExprIf {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "if {:?} {:?} {:?}", self.cond, self.tbody, self.ebody)
-  }
-}
-impl fmt::Debug for ExprWhile {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "while {:?} {:?}", self.cond, self.body)
-  }
-}
-impl fmt::Debug for ExprLoop {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "loop {:?}", self.body)
+
+  fn is_mut(&self) -> IsMut {
+    match self {
+      LValue::Ref       { def, .. }     => def.is_mut,
+      LValue::Str       { .. }          => IsMut::No,
+      LValue::Dot       { is_mut, .. }  => *is_mut,
+      LValue::Index     { is_mut, .. }  => *is_mut,
+      LValue::Ind       { is_mut, .. }  => *is_mut,
+    }
   }
 }
 
-impl ExprT for ExprNull {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLoad {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl LValueT for ExprRef {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn is_mut(&self) -> IsMut { self.def.is_mut }
-}
-impl ExprT for ExprBool {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprInt {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprFlt {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprChar {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl LValueT for ExprStr {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn is_mut(&self) -> IsMut { IsMut::No }
-}
-impl LValueT for ExprDot {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn is_mut(&self) -> IsMut { self.is_mut }
-}
-impl ExprT for ExprCall {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl LValueT for ExprIndex {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn is_mut(&self) -> IsMut { self.is_mut }
-}
-impl ExprT for ExprAdr {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl LValueT for ExprInd {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-  fn is_mut(&self) -> IsMut { self.is_mut }
-}
-impl ExprT for ExprUn {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLNot {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprCast {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprBin {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLAnd {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLOr {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprBlock {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprAs {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprRmw {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprContinue {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprBreak {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprReturn {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLet {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprIf {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprWhile {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
-}
-impl ExprT for ExprLoop {
-  fn ty(&self) -> &Ty { &self.ty }
-  fn ty_mut(&mut self) -> &mut Ty { &mut self.ty }
+impl RValue {
+  fn ty(&self) -> &Ty {
+    match self {
+      RValue::Null      { ty, .. } => ty,
+      RValue::Load      { ty, .. } => ty,
+      RValue::Bool      { ty, .. } => ty,
+      RValue::Int       { ty, .. } => ty,
+      RValue::Flt       { ty, .. } => ty,
+      RValue::Char      { ty, .. } => ty,
+      RValue::Call      { ty, .. } => ty,
+      RValue::Adr       { ty, .. } => ty,
+      RValue::Un        { ty, .. } => ty,
+      RValue::LNot      { ty, .. } => ty,
+      RValue::Cast      { ty, .. } => ty,
+      RValue::Bin       { ty, .. } => ty,
+      RValue::LAnd      { ty, .. } => ty,
+      RValue::LOr       { ty, .. } => ty,
+      RValue::Block     { ty, .. } => ty,
+      RValue::As        { ty, .. } => ty,
+      RValue::Rmw       { ty, .. } => ty,
+      RValue::Continue  { ty, .. } => ty,
+      RValue::Break     { ty, .. } => ty,
+      RValue::Return    { ty, .. } => ty,
+      RValue::Let       { ty, .. } => ty,
+      RValue::If        { ty, .. } => ty,
+      RValue::While     { ty, .. } => ty,
+      RValue::Loop      { ty, .. } => ty,
+    }
+  }
+
+  fn ty_mut(&mut self) -> &mut Ty {
+    match self {
+      RValue::Null      { ty, .. } => ty,
+      RValue::Load      { ty, .. } => ty,
+      RValue::Bool      { ty, .. } => ty,
+      RValue::Int       { ty, .. } => ty,
+      RValue::Flt       { ty, .. } => ty,
+      RValue::Char      { ty, .. } => ty,
+      RValue::Call      { ty, .. } => ty,
+      RValue::Adr       { ty, .. } => ty,
+      RValue::Un        { ty, .. } => ty,
+      RValue::LNot      { ty, .. } => ty,
+      RValue::Cast      { ty, .. } => ty,
+      RValue::Bin       { ty, .. } => ty,
+      RValue::LAnd      { ty, .. } => ty,
+      RValue::LOr       { ty, .. } => ty,
+      RValue::Block     { ty, .. } => ty,
+      RValue::As        { ty, .. } => ty,
+      RValue::Rmw       { ty, .. } => ty,
+      RValue::Continue  { ty, .. } => ty,
+      RValue::Break     { ty, .. } => ty,
+      RValue::Return    { ty, .. } => ty,
+      RValue::Let       { ty, .. } => ty,
+      RValue::If        { ty, .. } => ty,
+      RValue::While     { ty, .. } => ty,
+      RValue::Loop      { ty, .. } => ty,
+    }
+  }
 }
 
+impl fmt::Debug for LValue {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      LValue::Ref { def, .. } => {
+        write!(f, "{}", def.name)
+      }
+      LValue::Str { val, .. } => {
+        write!(f, "s{:?}", val)
+      }
+      LValue::Dot { arg, name, .. } => {
+        write!(f, ".{} {:?}", name, arg)
+      }
+      LValue::Index { arg, idx, .. } => {
+        write!(f, "[{:?}] {:?}", idx, arg)
+      }
+      LValue::Ind { arg, .. } => {
+        write!(f, "Ind {:?}", arg)
+      }
+    }
+  }
+}
 
-
-
-
-
+impl fmt::Debug for RValue {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      RValue::Null { .. } => {
+        write!(f, "Null")
+      }
+      RValue::Load { arg, .. } => {
+        write!(f, "{:?}", arg)
+      }
+      RValue::Bool { val, .. } => {
+        write!(f, "{}", val)
+      }
+      RValue::Int { val, .. } => {
+        write!(f, "{}", val)
+      }
+      RValue::Flt { val, .. } => {
+        write!(f, "{}", val)
+      }
+      RValue::Char { val, .. } => {
+        write!(f, "c{:?}", val)
+      }
+      RValue::Call { arg, args, .. } => {
+        write_comma_separated(f, args.iter(),
+          |f, (name, arg)| write!(f, "{}: {:?}", name, arg))?;
+        write!(f, " {:?}", arg)
+      }
+      RValue::Adr { arg, .. } => {
+        write!(f, "Adr {:?}", arg)
+      }
+      RValue::Un { op, arg, .. } => {
+        write!(f, "{:?} {:?}", op, arg)
+      }
+      RValue::LNot { arg, .. } => {
+        write!(f, "LNot {:?}", arg)
+      }
+      RValue::Cast { ty, arg } => {
+        write!(f, "Cast {:?} {:?}", arg, ty)
+      }
+      RValue::Bin { op, lhs, rhs, .. } => {
+        write!(f, "{:?} {:?} {:?}", op, lhs, rhs)
+      }
+      RValue::LAnd { lhs, rhs, .. } => {
+        write!(f, "LAnd {:?} {:?}", lhs, rhs)
+      }
+      RValue::LOr { lhs, rhs, .. } => {
+        write!(f, "LOr {:?} {:?}", lhs, rhs)
+      }
+      RValue::Block { body, .. } => {
+        write!(f, "{{\n")?;
+        let mut pf = PadAdapter::wrap(f);
+        for expr in body {
+          write!(&mut pf, "{:?};\n", expr)?;
+        }
+        write!(f, "}}")
+      }
+      RValue::As { lhs, rhs, .. } => {
+        write!(f, "As {:?} {:?}", lhs, rhs)
+      }
+      RValue::Rmw { op, lhs, rhs, .. } => {
+        write!(f, "{:?}As {:?} {:?}", op, lhs, rhs)
+      }
+      RValue::Continue { .. } => {
+        write!(f, "continue")
+      }
+      RValue::Break { arg, .. } => {
+        write!(f, "break {:?}", arg)
+      }
+      RValue::Return { arg, .. } => {
+        write!(f, "return {:?}", arg)
+      }
+      RValue::Let { def, init, .. } => {
+        write!(f, "let {}{}: {:?} = {:?}", def.is_mut, def.name, def.ty, init)
+      }
+      RValue::If { cond, tbody, ebody, .. } => {
+        write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody)
+      }
+      RValue::While { cond, body, .. } => {
+        write!(f, "while {:?} {:?}", cond, body)
+      }
+      RValue::Loop { body, .. } => {
+        write!(f, "loop {:?}", body)
+      }
+    }
+  }
+}
 
 /// Definitions
 
@@ -511,9 +389,9 @@ struct Def {
 
 enum DefKind {
   ToBeFilled,
-  Const(Expr),
-  Func(IndexMap<RefStr, Own<Def>>, Expr),
-  Data(Expr),
+  Const(RValue),
+  Func(IndexMap<RefStr, Own<Def>>, RValue),
+  Data(RValue),
   ExternFunc,
   ExternData,
   Param(usize),
@@ -561,10 +439,10 @@ impl fmt::Debug for Def {
         write!(f, "extern data {}{}: {:?}", self.is_mut, self.name, self.ty)
       }
       DefKind::Param(..) => {
-        todo!()
+        unreachable!()
       }
       DefKind::Local => {
-        todo!()
+        unreachable!()
       }
     }
   }

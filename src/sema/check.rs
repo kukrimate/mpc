@@ -273,9 +273,9 @@ impl CheckCtx {
   // Expressions
   //
 
-  fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValueExpr> {
+  fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValue> {
     // Infer argument type
-    let arg = self.infer_addr(arg)?;
+    let arg = self.infer_lvalue(arg)?;
 
     // Find parameter list
     let params = match arg.ty() {
@@ -293,12 +293,59 @@ impl CheckCtx {
       None => return Err(Box::new(TypeError {}))
     };
 
-    Ok(ExprDot::new(param_ty.clone(), arg.is_mut(), arg, name, idx))
+    Ok(LValue::Dot {
+      ty: param_ty.clone(),
+      is_mut: arg.is_mut(),
+      arg: Box::new(arg),
+      name: name,
+      idx: idx
+    })
   }
 
-  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<Expr> {
+
+  fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValue> {
+    // Infer array type
+    let arg = self.infer_lvalue(arg)?;
+
+    // Find element type
+    let elem_ty = match arg.ty() {
+      Ty::Arr(_, elem_ty) => &**elem_ty,
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    // Check index type
+    let mut idx = self.infer_rvalue(idx)?;
+    unify(idx.ty_mut(), &mut Ty::Uintn)?;
+
+    Ok(LValue::Index {
+      ty: elem_ty.clone(),
+      is_mut: arg.is_mut(),
+      arg: Box::new(arg),
+      idx: Box::new(idx)
+    })
+  }
+
+  fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<LValue> {
+    // Infer pointer type
+    let arg = self.infer_rvalue(arg)?;
+
+    // Find base type
+    let (is_mut, base_ty) = match arg.ty() {
+      Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    Ok(LValue::Ind {
+      ty: base_ty.clone(),
+      is_mut: is_mut,
+      arg: Box::new(arg)
+    })
+  }
+
+
+  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
     // Infer function type
-    let arg = self.infer_expr(arg)?;
+    let arg = self.infer_rvalue(arg)?;
 
     // Find parameter list and return type
     let (params, ret_ty) = match arg.ty() {
@@ -317,48 +364,18 @@ impl CheckCtx {
       if arg_name != param_name {
         return Err(Box::new(TypeError {}))
       }
-      let mut arg_val = self.infer_expr(arg_val)?;
+      let mut arg_val = self.infer_rvalue(arg_val)?;
       let mut param_ty = param_ty.clone();
       unify(arg_val.ty_mut(), &mut param_ty)?;
       nargs.push((*arg_name, arg_val));
     }
 
-    Ok(ExprCall::new(ret_ty.clone(), arg, nargs))
+    Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(arg), args: nargs })
   }
 
-  fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValueExpr> {
-    // Infer array type
-    let arg = self.infer_addr(arg)?;
-
-    // Find element type
-    let elem_ty = match arg.ty() {
-      Ty::Arr(_, elem_ty) => &**elem_ty,
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    // Check index type
-    let mut idx = self.infer_expr(idx)?;
-    unify(idx.ty_mut(), &mut Ty::Uintn)?;
-
-    Ok(ExprIndex::new(elem_ty.clone(), arg.is_mut(), arg, idx))
-  }
-
-  fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<LValueExpr> {
-    // Infer pointer type
-    let arg = self.infer_expr(arg)?;
-
-    // Find base type
-    let (is_mut, base_ty) = match arg.ty() {
-      Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
-      _ => return Err(Box::new(TypeError {}))
-    };
-
-    Ok(ExprInd::new(base_ty.clone(), is_mut, arg))
-  }
-
-  fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<Expr> {
+  fn infer_un(&mut self, op: UnOp, arg: &parse::Expr) -> MRes<RValue> {
     // Infer argument type
-    let mut arg = self.infer_expr(arg)?;
+    let mut arg = self.infer_rvalue(arg)?;
 
     // Check argument type
     match op {
@@ -370,7 +387,7 @@ impl CheckCtx {
       }
     }
 
-    Ok(ExprUn::new(arg.ty().clone(), op, arg))
+    Ok(RValue::Un { ty: arg.ty().clone(), op, arg: Box::new(arg) })
   }
 
   fn infer_bin(&mut self, op: BinOp, lhs: &mut Ty, rhs: &mut Ty) -> MRes<Ty> {
@@ -410,17 +427,17 @@ impl CheckCtx {
     })
   }
 
-  fn infer_addr(&mut self, expr: &parse::Expr) -> MRes<LValueExpr> {
+  fn infer_lvalue(&mut self, expr: &parse::Expr) -> MRes<LValue> {
     use parse::Expr::*;
 
     Ok(match expr {
       Path(path) => {
         let def = self.resolve_def(path[0])?;
-        ExprRef::new(def.ty.clone(), def)
+        LValue::Ref { ty: def.ty.clone(), def }
       }
       Str(val) => {
         let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
-        ExprStr::new(ty, *val)
+        LValue::Str { ty, val: *val }
       }
       Dot(arg, name) => {
         self.infer_dot(arg, *name)?
@@ -435,87 +452,93 @@ impl CheckCtx {
     })
   }
 
-  fn infer_expr(&mut self, expr: &parse::Expr) -> MRes<Expr> {
+  fn infer_rvalue(&mut self, expr: &parse::Expr) -> MRes<RValue> {
     use parse::Expr::*;
 
     Ok(match expr {
       Null => {
-        ExprNull::new(Ty::Tuple(vec![]))
+        RValue::Null { ty: Ty::Tuple(vec![]) }
       }
       Path(..) | Str(..) | Dot(..) | Index(..) | Ind(..) => {
-        let arg = self.infer_addr(expr)?;
-        ExprLoad::new(arg.ty().clone(), arg)
+        let arg = self.infer_lvalue(expr)?;
+        RValue::Load {
+          ty: arg.ty().clone(),
+          arg: Box::new(arg)
+        }
       }
       Bool(val) => {
-        ExprBool::new(Ty::Bool, *val)
+        RValue::Bool { ty: Ty::Bool, val: *val }
       }
       Int(val) => {
-        ExprInt::new(Ty::ClassInt, *val)
+        RValue::Int { ty: Ty::ClassInt, val: *val }
       }
       Flt(val) => {
-        ExprFlt::new(Ty::ClassFlt, *val)
+        RValue::Flt { ty: Ty::ClassFlt, val: *val }
       }
       Char(val) => {
-        ExprChar::new(Ty::ClassInt, *val)
+        RValue::Char { ty: Ty::ClassInt, val: *val }
       }
       Call(arg, args) => {
         self.infer_call(arg, args)?
       }
       Adr(arg) => {
-        let arg = self.infer_addr(arg)?;
-        ExprAdr::new(Ty::Ptr(arg.is_mut(), Box::new(arg.ty().clone())), arg)
+        let arg = self.infer_lvalue(arg)?;
+        RValue::Adr {
+          ty: Ty::Ptr(arg.is_mut(), Box::new(arg.ty().clone())),
+          arg: Box::new(arg)
+        }
       }
       Un(op, arg) => {
         self.infer_un(*op, arg)?
       }
       LNot(arg) => {
-        let mut arg = self.infer_expr(arg)?;
+        let mut arg = self.infer_rvalue(arg)?;
         unify(arg.ty_mut(), &mut Ty::Bool)?;
-        ExprLNot::new(Ty::Bool, arg)
+        RValue::LNot { ty: Ty::Bool, arg: Box::new(arg) }
       }
       Cast(..) => {
         todo!()
       }
       Bin(op, lhs, rhs) => {
-        let mut lhs = self.infer_expr(lhs)?;
-        let mut rhs = self.infer_expr(rhs)?;
+        let mut lhs = self.infer_rvalue(lhs)?;
+        let mut rhs = self.infer_rvalue(rhs)?;
         let ty = self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
-        ExprBin::new(ty, *op, lhs, rhs)
+        RValue::Bin { ty, op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       LAnd(lhs, rhs) => {
-        let mut lhs = self.infer_expr(lhs)?;
-        let mut rhs = self.infer_expr(rhs)?;
+        let mut lhs = self.infer_rvalue(lhs)?;
+        let mut rhs = self.infer_rvalue(rhs)?;
         unify(lhs.ty_mut(), &mut Ty::Bool)?;
         unify(rhs.ty_mut(), &mut Ty::Bool)?;
-        ExprLAnd::new(Ty::Bool, lhs, rhs)
+        RValue::LAnd { ty: Ty::Bool, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       LOr(lhs, rhs) => {
-        let mut lhs = self.infer_expr(lhs)?;
-        let mut rhs = self.infer_expr(rhs)?;
+        let mut lhs = self.infer_rvalue(lhs)?;
+        let mut rhs = self.infer_rvalue(rhs)?;
         unify(lhs.ty_mut(), &mut Ty::Bool)?;
         unify(rhs.ty_mut(), &mut Ty::Bool)?;
-        ExprLOr::new(Ty::Bool, lhs, rhs)
+        RValue::LOr { ty: Ty::Bool, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
-      Block(body) => {
+      Block(parsed_body) => {
         self.enter();
-        let mut nbody = vec![];
-        for expr in body {
-          nbody.push(self.infer_expr(expr)?);
+        let mut body = vec![];
+        for expr in parsed_body {
+          body.push(self.infer_rvalue(expr)?);
         }
         let scope = self.exit();
 
-        let ty = if let Some(last) = nbody.last_mut() {
+        let ty = if let Some(last) = body.last_mut() {
           last.ty().clone()
         } else {
           Ty::Tuple(vec![])
         };
 
-        ExprBlock::new(ty, scope, nbody)
+        RValue::Block { ty, scope, body }
       }
       As(lhs, rhs) => {
         // Infer argument types
-        let mut lhs = self.infer_addr(lhs)?;
-        let mut rhs = self.infer_expr(rhs)?;
+        let mut lhs = self.infer_lvalue(lhs)?;
+        let mut rhs = self.infer_rvalue(rhs)?;
         unify(lhs.ty_mut(), rhs.ty_mut())?;
 
         // Make sure lhs is mutable
@@ -524,12 +547,12 @@ impl CheckCtx {
           _ => return Err(Box::new(TypeError {})),
         };
 
-        ExprAs::new(Ty::Tuple(vec![]), lhs, rhs)
+        RValue::As { ty: Ty::Tuple(vec![]), lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Rmw(op, lhs, rhs) => {
         // Infer and check argument types
-        let mut lhs = self.infer_addr(lhs)?;
-        let mut rhs = self.infer_expr(rhs)?;
+        let mut lhs = self.infer_lvalue(lhs)?;
+        let mut rhs = self.infer_rvalue(rhs)?;
         self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
 
         // Make sure lhs is mutable
@@ -538,13 +561,19 @@ impl CheckCtx {
           _ => return Err(Box::new(TypeError {})),
         };
 
-        ExprRmw::new(Ty::Tuple(vec![]), *op, lhs, rhs)
+        RValue::Rmw { ty: Ty::Tuple(vec![]), op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Continue => {
-        ExprContinue::new(Ty::Tuple(vec![]))
+        // Can only have continue inside a loop
+        match self.loop_ty.last_mut() {
+          Some(..) => (),
+          None => return Err(Box::new(TypeError {})),
+        };
+
+        RValue::Continue { ty: Ty::ClassAny }
       }
       Break(arg) => {
-        let mut arg = self.infer_expr(&*arg)?;
+        let mut arg = self.infer_rvalue(&*arg)?;
 
         // Can only have break inside a loop
         let loop_ty = match self.loop_ty.last_mut() {
@@ -555,10 +584,10 @@ impl CheckCtx {
         // Unify function return type with the returned value's type
         unify(loop_ty, arg.ty_mut())?;
 
-        ExprBreak::new(Ty::Tuple(vec![]), arg)
+        RValue::Break { ty: Ty::ClassAny, arg: Box::new(arg) }
       }
       Return(arg) => {
-        let mut arg = self.infer_expr(&*arg)?;
+        let mut arg = self.infer_rvalue(&*arg)?;
 
         // Can only have return inside a function
         let ret_ty = match self.ret_ty.last_mut() {
@@ -569,11 +598,11 @@ impl CheckCtx {
         // Unify function return type with the returned value's type
         unify(ret_ty, arg.ty_mut())?;
 
-        ExprReturn::new(Ty::Tuple(vec![]), arg)
+        RValue::Return { ty: Ty::ClassAny, arg: Box::new(arg) }
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
-        let mut init = self.infer_expr(init)?;
+        let mut init = self.infer_rvalue(init)?;
 
         // Unify type annotation with initializer type
         let ty = if let Some(ty) = ty {
@@ -588,29 +617,42 @@ impl CheckCtx {
         let def = self.define_local(*name, *is_mut, ty);
 
         // Add let expression
-        ExprLet::new(Ty::Tuple(vec![]), def, init)
+        RValue::Let { ty: Ty::Tuple(vec![]), def, init: Box::new(init) }
       }
       If(cond, tbody, ebody) => {
-        let mut cond = self.infer_expr(cond)?;
+        let mut cond = self.infer_rvalue(cond)?;
         unify(cond.ty_mut(), &mut Ty::Bool)?;
 
-        let mut tbody = self.infer_expr(tbody)?;
-        let mut ebody = self.infer_expr(ebody)?;
+        let mut tbody = self.infer_rvalue(tbody)?;
+        let mut ebody = self.infer_rvalue(ebody)?;
         unify(tbody.ty_mut(), ebody.ty_mut())?;
 
-        ExprIf::new(tbody.ty().clone(), cond, tbody, ebody)
+        RValue::If {
+          ty: tbody.ty().clone(),
+          cond: Box::new(cond),
+          tbody: Box::new(tbody),
+          ebody: Box::new(ebody)
+        }
       }
       While(cond, body) => {
-        let cond = self.infer_expr(cond)?;
+        let cond = self.infer_rvalue(cond)?;
         self.loop_ty.push(Ty::Tuple(vec![]));
-        let body = self.infer_expr(body)?;
+        let body = self.infer_rvalue(body)?;
         self.loop_ty.pop();
-        ExprWhile::new(Ty::Tuple(vec![]), cond, body)
+
+        RValue::While {
+          ty: Ty::Tuple(vec![]),
+          cond: Box::new(cond),
+          body: Box::new(body)
+        }
       }
       Loop(body) => {
         self.loop_ty.push(Ty::ClassAny);
-        let body = self.infer_expr(body)?;
-        ExprLoop::new(self.loop_ty.pop().unwrap(), body)
+        let body = self.infer_rvalue(body)?;
+        RValue::Loop {
+          ty: self.loop_ty.pop().unwrap(),
+          body: Box::new(body)
+        }
       }
     })
   }
@@ -627,7 +669,7 @@ impl CheckCtx {
         parse::Def::Const { name, ty, val } => {
           // Infer
           let ty = self.check_ty(ty)?;
-          let val = self.infer_expr(val)?;
+          let val = self.infer_rvalue(val)?;
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
         }
         parse::Def::Data { name, is_mut, ty, .. } => {
@@ -662,7 +704,7 @@ impl CheckCtx {
       match def {
         parse::Def::Data { init, .. } => {
           // Check initializer type
-          let mut init = self.infer_expr(init)?;
+          let mut init = self.infer_rvalue(init)?;
           unify(init.ty_mut(), &mut ptr.ty)?;
 
           // Complete definition
@@ -680,7 +722,7 @@ impl CheckCtx {
           }
 
           // Typecheck body
-          let mut body = self.infer_expr(body)?;
+          let mut body = self.infer_rvalue(body)?;
           let mut ret_ty = self.check_ty(ret_ty)?;
           unify(body.ty_mut(), &mut ret_ty)?;
 
