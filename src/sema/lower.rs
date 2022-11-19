@@ -2,10 +2,11 @@
 
 use super::*;
 use llvm_sys::core::*;
-use llvm_sys::target::*;
-use llvm_sys::target_machine::*;
 use llvm_sys::LLVMIntPredicate::*;
 use llvm_sys::LLVMRealPredicate::*;
+use llvm_sys::prelude::*;
+use llvm_sys::target::*;
+use llvm_sys::target_machine::*;
 
 type BB = LLVMBasicBlockRef;
 type Val = LLVMValueRef;
@@ -15,7 +16,7 @@ type Val = LLVMValueRef;
 unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
     LValue::DataRef { def, .. } => {
-      def.l_value
+      *ctx.values.get(def).unwrap()
     }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
@@ -41,14 +42,10 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_void()
     }
     RValue::ConstRef { def, .. } => {
-      if let DefKind::Const(val) = &def.kind {
-        lower_const_rvalue(val, ctx)
-      } else {
-        unreachable!()
-      }
+      *ctx.values.get(def).unwrap()
     }
     RValue::FuncRef { def, .. } => {
-      def.l_value
+      *ctx.values.get(def).unwrap()
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
@@ -98,10 +95,10 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 
 /// Runtime expressions
 
-unsafe fn lower_lvalue(lvalue: &mut LValue, ctx: &mut LowerCtx) -> Val {
+unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
     LValue::DataRef { def, .. } => {
-      def.l_value
+      *ctx.values.get(def).unwrap()
     }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
@@ -121,20 +118,16 @@ unsafe fn lower_lvalue(lvalue: &mut LValue, ctx: &mut LowerCtx) -> Val {
   }
 }
 
-unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
+unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
     RValue::Null { .. } => {
       ctx.build_void()
     }
     RValue::ConstRef { def, .. } => {
-      if let DefKind::Const(val) = &def.kind {
-        lower_const_rvalue(val, ctx)
-      } else {
-        unreachable!()
-      }
+      *ctx.values.get(def).unwrap()
     }
     RValue::FuncRef { def, .. } => {
-      def.l_value
+      *ctx.values.get(def).unwrap()
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -154,7 +147,7 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Call { arg, args, .. } => {
       let arg = lower_rvalue(arg, ctx);
-      let args = args.iter_mut()
+      let args = args.iter()
         .map(|(_, arg)| lower_rvalue(arg, ctx))
         .collect();
       ctx.build_call(arg, args)
@@ -186,7 +179,7 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Block { body, .. } => {
       let mut val = ctx.build_void();
-      for expr in body.iter_mut() {
+      for expr in body.iter() {
         val = lower_rvalue(expr, ctx);
       }
       val
@@ -221,10 +214,11 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Let { def, init, .. } => {
       // Allocate stack slot for local variable
-      def.l_value = ctx.build_alloca(def.name, &def.ty);
+      let l_alloca = ctx.build_alloca(def.name, &def.ty);
+      ctx.values.insert(*def, l_alloca);
       // Store initializer in stack slot
       let init = lower_rvalue(init, ctx);
-      ctx.build_store(&def.ty, def.l_value, init);
+      ctx.build_store(&def.ty, l_alloca, init);
       // Void value
       ctx.build_void()
     }
@@ -284,7 +278,7 @@ unsafe fn lower_rvalue(rvalue: &mut RValue, ctx: &mut LowerCtx) -> Val {
   }
 }
 
-unsafe fn lower_bool(rvalue: &mut RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) {
+unsafe fn lower_bool(rvalue: &RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) {
   match rvalue {
     RValue::LNot { arg, .. } => {
       lower_bool(arg, ctx, next2, next1);
@@ -319,6 +313,11 @@ pub(super) struct LowerCtx {
   l_module: LLVMModuleRef,
   l_func: LLVMValueRef,
 
+  // Types
+  types: IndexMap<Ptr<TyDef>, LLVMTypeRef>,
+
+  // Values
+  values: IndexMap<Ptr<Def>, LLVMValueRef>,
 
   // String literals
   string_lits: IndexMap<RefStr, LLVMValueRef>,
@@ -372,6 +371,9 @@ impl LowerCtx {
       l_builder,
       l_module,
       l_func: std::ptr::null_mut(),
+
+      types: IndexMap::new(),
+      values: IndexMap::new(),
       string_lits: IndexMap::new()
     }
   }
@@ -406,7 +408,7 @@ impl LowerCtx {
       Float => LLVMFloatTypeInContext(self.l_context),
       Double => LLVMDoubleTypeInContext(self.l_context),
       Ref(_, def) => {
-        def.l_type
+        *self.types.get(def).unwrap()
       }
       Ptr(_, base_ty) => {
         LLVMPointerType(self.lower_ty(base_ty), 0)
@@ -458,13 +460,14 @@ impl LowerCtx {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, ty_defs: &mut IndexMap<RefStr, Own<TyDef>>) {
+  unsafe fn lower_ty_defs(&mut self, ty_defs: &IndexMap<RefStr, Own<TyDef>>) {
     // Pass 1: Create named LLVM structure for each type definition
-    for (name, ty_def) in ty_defs.iter_mut() {
-      ty_def.l_type = LLVMStructCreateNamed(self.l_context, name.borrow_c());
+    for (name, ty_def) in ty_defs.iter() {
+      self.types.insert(ty_def.ptr(),
+        LLVMStructCreateNamed(self.l_context, name.borrow_c()));
     }
     // Pass 2: Resolve bodies
-    for (_, ty_def) in ty_defs.iter_mut() {
+    for (_, ty_def) in ty_defs.iter() {
       let mut l_params = match &ty_def.kind {
         TyDefKind::ToBeFilled => unreachable!(),
         TyDefKind::Struct(params) => {
@@ -500,7 +503,7 @@ impl LowerCtx {
         }
       };
       // Resolve body
-      LLVMStructSetBody(ty_def.l_type,
+      LLVMStructSetBody(*self.types.get(&ty_def.ptr()).unwrap(),
         l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0);
     }
   }
@@ -969,44 +972,50 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_defs(&mut self, defs: &mut IndexMap<RefStr, Own<Def>>) {
+  unsafe fn lower_defs(&mut self, defs: &IndexMap<RefStr, Own<Def>>) {
     // Pass 1: Create LLVM values for each definition
-    for (name, def) in defs.iter_mut() {
-      match &def.kind {
+    for (name, def) in defs.iter() {
+      let l_value = match &def.kind {
+        DefKind::Const(val) => {
+          lower_const_rvalue(val, self)
+        }
         DefKind::Data(..) | DefKind::ExternData => {
-          def.l_value = LLVMAddGlobal(self.l_module,
-                                      self.lower_ty(&def.ty),
-                                      name.borrow_c());
+          LLVMAddGlobal(self.l_module, self.lower_ty(&def.ty),
+                                      name.borrow_c())
         }
         DefKind::Func(..) | DefKind::ExternFunc => {
-          def.l_value = LLVMAddFunction(self.l_module, name.borrow_c(),
-                                        self.lower_ty(&def.ty));
+          LLVMAddFunction(self.l_module, name.borrow_c(),
+                                        self.lower_ty(&def.ty))
         }
-        _ => ()
-      }
+        _ => continue
+      };
+
+      self.values.insert(def.ptr(), l_value);
     }
     // Pass 2: Lower initializers and function bodies
-    for (_, def) in defs.iter_mut() {
-      let def_value = def.l_value;
-      match &mut def.kind {
+    for (_, def) in defs.iter() {
+      let l_value = *self.values.get(&def.ptr()).unwrap();
+
+      match &def.kind {
         DefKind::Data(init) => {
-          LLVMSetInitializer(def_value, lower_const_rvalue(init, self));
+          LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
         DefKind::Func(params, body) => {
           // Entry point
-          self.l_func = def_value;
+          self.l_func = l_value;
           let entry_block = self.new_block();
           self.enter_block(entry_block);
 
           // Spill parameters
-          for (_, param_def) in params.iter_mut() {
-            let index = match &param_def.kind {
+          for (_, def) in params.iter() {
+            let index = match &def.kind {
               DefKind::Param(index) => *index,
               _ => unreachable!(),
             };
 
-            param_def.l_value = self.build_alloca(param_def.name, &param_def.ty);
-            LLVMBuildStore(self.l_builder, LLVMGetParam(def_value, index as u32), param_def.l_value);
+            let l_alloca = self.build_alloca(def.name, &def.ty);
+            self.values.insert(def.ptr(), l_alloca);
+            LLVMBuildStore(self.l_builder, LLVMGetParam(l_value, index as u32), l_alloca);
           }
 
           // Lower function body
@@ -1017,9 +1026,9 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_module(&mut self, module: &mut Module) {
-    self.lower_ty_defs(&mut module.ty_defs);
-    self.lower_defs(&mut module.defs[0]);
+  unsafe fn lower_module(&mut self, module: &Module) {
+    self.lower_ty_defs(&module.ty_defs);
+    self.lower_defs(&module.defs[0]);
   }
 
   unsafe fn dump(&self) {

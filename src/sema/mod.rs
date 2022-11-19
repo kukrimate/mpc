@@ -11,7 +11,6 @@ use crate::parse::{self,IsMut,UnOp,BinOp};
 use crate::util::*;
 use std::fmt::{self,Write};
 use indexmap::IndexMap;
-use llvm_sys::prelude::*;
 
 
 /// Types
@@ -52,7 +51,6 @@ enum Variant {
 struct TyDef {
   name: RefStr,
   kind: TyDefKind,
-  l_type: LLVMTypeRef,
 }
 
 enum TyDefKind {
@@ -66,8 +64,7 @@ impl TyDef {
   fn new(name: RefStr) -> Self {
     TyDef {
       name,
-      kind: TyDefKind::ToBeFilled,
-      l_type: std::ptr::null_mut()
+      kind: TyDefKind::ToBeFilled
     }
   }
 }
@@ -394,7 +391,6 @@ struct Def {
   is_mut: IsMut,
   ty: Ty,
   kind: DefKind,
-  l_value: LLVMValueRef,
 }
 
 enum DefKind {
@@ -410,11 +406,11 @@ enum DefKind {
 
 impl Def {
   fn empty(name: RefStr, is_mut: IsMut, ty: Ty) -> Self {
-    Def { name, is_mut, ty, kind: DefKind::ToBeFilled, l_value: std::ptr::null_mut() }
+    Def { name, is_mut, ty, kind: DefKind::ToBeFilled }
   }
 
   fn with_kind(name: RefStr, is_mut: IsMut, ty: Ty, kind: DefKind) -> Self {
-    Def { name, is_mut, ty, kind, l_value: std::ptr::null_mut() }
+    Def { name, is_mut, ty, kind }
   }
 }
 
