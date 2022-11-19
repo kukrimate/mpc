@@ -433,14 +433,14 @@ impl CheckCtx {
         match &def.kind {
           DefKind::Data(..) | DefKind::ExternData |
           DefKind::Param(..) | DefKind::Local => {
-            LValue::DataRef { ty: def.ty.clone(), def }
+            LValue::DataRef { ty: def.ty.clone(), is_mut: def.is_mut, def }
           }
           _ => return Err(Box::new(TypeError {}))
         }
       }
       Str(val) => {
         let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
-        LValue::Str { ty, val: *val }
+        LValue::Str { ty, is_mut: IsMut::No, val: *val }
       }
       Dot(arg, name) => {
         self.infer_dot(arg, *name)?

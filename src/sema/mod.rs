@@ -140,8 +140,8 @@ impl fmt::Debug for Ty {
 /// Expressions
 
 enum LValue {
-  DataRef   { ty: Ty, def: Ptr<Def> },
-  Str       { ty: Ty, val: RefStr },
+  DataRef   { ty: Ty, is_mut: IsMut, def: Ptr<Def> },
+  Str       { ty: Ty, is_mut: IsMut, val: RefStr },
   Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
   Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
@@ -199,8 +199,8 @@ impl LValue {
 
   fn is_mut(&self) -> IsMut {
     match self {
-      LValue::DataRef   { def, .. }     => def.is_mut,
-      LValue::Str       { .. }          => IsMut::No,
+      LValue::DataRef   { is_mut, .. }  => *is_mut,
+      LValue::Str       { is_mut, .. }  => *is_mut,
       LValue::Dot       { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
       LValue::Ind       { is_mut, .. }  => *is_mut,
