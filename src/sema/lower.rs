@@ -1009,7 +1009,7 @@ impl LowerCtx {
           let l_value = *self.values.get(&def.ptr()).unwrap();
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
-        Def::Func { params: Some(params), body: Some(body), .. } => {
+        Def::Func { params, body: Some(body), .. } => {
           // Entry point
           self.l_func = *self.values.get(&def.ptr()).unwrap();
           let entry_block = self.new_block();

@@ -150,14 +150,6 @@ impl CheckCtx {
     ptr
   }
 
-  fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
-    self.define(name, Def::Param { name, ty, is_mut, index })
-  }
-
-  fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
-    self.define(name, Def::Local { name, ty, is_mut })
-  }
-
   fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
     for scope in self.module.defs.iter().rev() {
       if let Some(def) = scope.get(&name) {
@@ -626,7 +618,8 @@ impl CheckCtx {
         };
 
         // Define symbol
-        let def = self.define_local(*name, *is_mut, ty);
+        let def = self.define(*name,
+          Def::Local { name: *name, is_mut: *is_mut, ty });
 
         // Add let expression
         RValue::Let { ty: Ty::Tuple(vec![]), def, init: Box::new(init) }
@@ -744,13 +737,19 @@ impl CheckCtx {
           queue.push((def, ptr));
         }
         Func { name, params, ret_ty, .. } => {
-          let mut new_params = vec![];
-          for (name, _, ty) in params {
-            new_params.push((*name, self.check_ty(ty)?));
+          let mut param_tys = vec![];
+          self.enter();
+          for (index, (name, is_mut, ty)) in params.iter().enumerate() {
+            let ty = self.check_ty(ty)?;
+            param_tys.push((*name, ty.clone()));
+            self.define(*name,
+              Def::Param { name: *name, is_mut: *is_mut, ty, index });
           }
-          let ty = Ty::Func(new_params, Box::new(self.check_ty(ret_ty)?));
+          let param_defs = self.exit();
+
+          let ty = Ty::Func(param_tys, Box::new(self.check_ty(ret_ty)?));
           let ptr = self.define(*name,
-            Def::Func { name: *name, ty, params: None, body: None });
+            Def::Func { name: *name, ty, params: param_defs, body: None });
           queue.push((def, ptr));
         }
         ExternData { name, is_mut, ty } => {
@@ -778,27 +777,20 @@ impl CheckCtx {
           // Complete definition
           *dest = Some(init);
         }
-        (Func { params, ret_ty, body, .. }, Def::Func { params: dparams, body: dbody, .. }) => {
-          // FIXME: this could be made better by not re-checking ret_ty
-          // and re-using the value from the first pass
-          self.enter();
-
-          // Create parameter symbols
-          for (index, (name, is_mut, ty)) in params.iter().enumerate() {
-            let ty = self.check_ty(ty)?;
-            self.define_param(*name, *is_mut, ty, index);
-          }
+        (Func { ret_ty, body, .. }, Def::Func { params, body: dest, .. }) => {
+          // Re-enter paremeter scope
+          self.module.defs.push(std::mem::take(params));
 
           // Typecheck body
           let mut body = self.infer_rvalue(body)?;
           let mut ret_ty = self.check_ty(ret_ty)?;
           unify(body.ty_mut(), &mut ret_ty)?;
 
-          // Exit param scope
-          *dparams = Some(self.exit());
+          // Exit paraemeter scope
+          *params = self.exit();
 
           // Complete definition
-          *dbody = Some(body);
+          *dest = Some(body);
         }
         _ => ()
       }

@@ -35,7 +35,7 @@ enum Def {
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
   Const       { name: RefStr, ty: Ty, val: RValue },
-  Func        { name: RefStr, ty: Ty, params: Option<IndexMap<RefStr, Own<Def>>>, body: Option<RValue> },
+  Func        { name: RefStr, ty: Ty, params: IndexMap<RefStr, Own<Def>>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
@@ -76,7 +76,7 @@ impl fmt::Debug for Def {
       Def::Const { name, ty, val } => {
         write!(f, "const {}: {:?} = {:#?}", name, ty, val)
       }
-      Def::Func { name, params: Some(params), body: Some(body), .. } => {
+      Def::Func { name, params, body: Some(body), .. } => {
         write!(f, "fn {}", name)?;
         write_comma_separated(f, params.iter(), |f, (_, param)| {
           if let Def::Param { name, ty, is_mut, .. } = &***param {
