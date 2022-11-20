@@ -318,7 +318,7 @@ pub(super) struct LowerCtx {
   l_func: LLVMValueRef,
 
   // Types
-  types: IndexMap<Ptr<TyDef>, LLVMTypeRef>,
+  types: IndexMap<Ptr<Def>, LLVMTypeRef>,
 
   // Values
   values: IndexMap<Ptr<Def>, LLVMValueRef>,
@@ -464,25 +464,32 @@ impl LowerCtx {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, ty_defs: &IndexMap<RefStr, Own<TyDef>>) {
+  unsafe fn lower_ty_defs(&mut self, defs: &IndexMap<RefStr, Own<Def>>) {
     // Pass 1: Create named LLVM structure for each type definition
-    for (name, ty_def) in ty_defs.iter() {
-      self.types.insert(ty_def.ptr(),
-        LLVMStructCreateNamed(self.l_context, name.borrow_c()));
+    for (_, def) in defs.iter() {
+      match &**def {
+        Def::Struct { name, .. } |
+        Def::Union { name, .. } |
+        Def::Enum { name, .. } => {
+          self.types.insert(def.ptr(),
+            LLVMStructCreateNamed(self.l_context, name.borrow_c()));
+        }
+        _ => ()
+      }
     }
     // Pass 2: Resolve bodies
-    for (_, ty_def) in ty_defs.iter() {
-      let mut l_params = match &**ty_def {
-        TyDef::Struct(_, Some(params)) => {
+    for (_, def) in defs.iter() {
+      let mut l_params = match &**def {
+        Def::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
           self.lower_params(params)
         }
-        TyDef::Union(_, Some(params)) => {
+        Def::Union { params: Some(params), .. } => {
           // The union lowering code is shared with enums thus it's in 'lower_union'
           let l_params = self.lower_params(params);
           self.lower_union(l_params)
         }
-        TyDef::Enum(_, Some(variants)) => {
+        Def::Enum { variants: Some(variants), .. } => {
           // Enum lowering is done by adding a discriminant (always a dword for now)
           // Followed by the variants lowered as if they were parameters of a union
 
@@ -504,10 +511,10 @@ impl LowerCtx {
           l_params.extend(self.lower_union(l_variant_types));
           l_params
         }
-        _ => unreachable!()
+        _ => continue,
       };
       // Resolve body
-      LLVMStructSetBody(*self.types.get(&ty_def.ptr()).unwrap(),
+      LLVMStructSetBody(*self.types.get(&def.ptr()).unwrap(),
         l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0);
     }
   }
@@ -993,20 +1000,18 @@ impl LowerCtx {
         }
         _ => continue
       };
-
       self.values.insert(def.ptr(), l_value);
     }
     // Pass 2: Lower initializers and function bodies
     for (_, def) in defs.iter() {
-      let l_value = *self.values.get(&def.ptr()).unwrap();
-
       match &**def {
         Def::Data { init: Some(init), .. }  => {
+          let l_value = *self.values.get(&def.ptr()).unwrap();
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
         Def::Func { params: Some(params), body: Some(body), .. } => {
           // Entry point
-          self.l_func = l_value;
+          self.l_func = *self.values.get(&def.ptr()).unwrap();
           let entry_block = self.new_block();
           self.enter_block(entry_block);
 
@@ -1016,13 +1021,12 @@ impl LowerCtx {
               let l_alloca = self.build_alloca(*name, ty);
               self.values.insert(def.ptr(), l_alloca);
               LLVMBuildStore(self.l_builder,
-                LLVMGetParam(l_value, *index as u32), l_alloca);
+                LLVMGetParam(self.l_func, *index as u32), l_alloca);
             } else {
               unreachable!()
             }
           }
 
-          // Lower function body
           LLVMBuildRet(self.l_builder, lower_rvalue(body, self));
         }
         _ => ()
@@ -1031,7 +1035,7 @@ impl LowerCtx {
   }
 
   unsafe fn lower_module(&mut self, module: &Module) {
-    self.lower_ty_defs(&module.ty_defs);
+    self.lower_ty_defs(&module.defs[0]);
     self.lower_defs(&module.defs[0]);
   }
 

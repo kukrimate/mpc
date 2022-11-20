@@ -12,6 +12,98 @@ use crate::util::*;
 use std::fmt::{self,Write};
 use indexmap::IndexMap;
 
+/// Module
+
+#[derive(Debug)]
+pub struct Module {
+  // Definitions
+  defs: Vec<IndexMap<RefStr, Own<Def>>>,
+}
+
+impl Module {
+  fn new() -> Module {
+    Module {
+      defs: vec![ IndexMap::new() ]
+    }
+  }
+}
+
+/// Definitions
+
+enum Def {
+  Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
+  Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
+  Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
+  Const       { name: RefStr, ty: Ty, val: RValue },
+  Func        { name: RefStr, ty: Ty, params: Option<IndexMap<RefStr, Own<Def>>>, body: Option<RValue> },
+  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
+  ExternFunc  { name: RefStr, ty: Ty },
+  ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
+  Param       { name: RefStr, ty: Ty, is_mut: IsMut, index: usize },
+  Local       { name: RefStr, ty: Ty, is_mut: IsMut }
+}
+
+enum Variant {
+  Unit(RefStr),
+  Struct(RefStr, Vec<(RefStr, Ty)>),
+}
+
+impl fmt::Debug for Def {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Def::Struct { name, params: Some(params) } => {
+        write!(f, "struct {} ", name)?;
+        write_params(f, params)
+      },
+      Def::Union { name, params: Some(params) } => {
+        write!(f, "union {} ", name)?;
+        write_params(f, params)
+      },
+      Def::Enum { name, variants: Some(variants) } => {
+        write!(f, "enum {} ", name)?;
+        write_comma_separated(f, variants.iter(), |f, (_, variant)| {
+          match variant {
+            Variant::Unit(name) => {
+              write!(f, "{}", name)
+            },
+            Variant::Struct(name, params) => {
+              write!(f, "{} ", name)?;
+              write_params(f, params)
+            },
+          }
+        })
+      },
+      Def::Const { name, ty, val } => {
+        write!(f, "const {}: {:?} = {:#?}", name, ty, val)
+      }
+      Def::Func { name, params: Some(params), body: Some(body), .. } => {
+        write!(f, "fn {}", name)?;
+        write_comma_separated(f, params.iter(), |f, (_, param)| {
+          if let Def::Param { name, ty, is_mut, .. } = &***param {
+            write!(f, "{}{}: {:?}", is_mut, name, ty)
+          } else {
+            unreachable!()
+          }
+        })?;
+        write!(f, " -> {:?} {:#?}", body.ty(), body)
+      }
+      Def::Data { name, ty, is_mut, init: Some(init) } => {
+        write!(f, "data {}{}: {:?} = {:#?}", is_mut, name, ty, init)
+      }
+      Def::ExternFunc { name, ty } => {
+        write!(f, "extern fn {}: {:?}", name, ty)
+      }
+      Def::ExternData { name, ty, is_mut } => {
+        write!(f, "extern data {}{}: {:?}", is_mut, name, ty)
+      }
+      _ => unreachable!()
+    }
+  }
+}
+
+fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
+  write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
+}
 
 /// Types
 
@@ -31,7 +123,7 @@ enum Ty {
   Intn,
   Float,
   Double,
-  Ref(RefStr, Ptr<TyDef>),
+  Ref(RefStr, Ptr<Def>),
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(usize, Box<Ty>),
@@ -41,62 +133,6 @@ enum Ty {
   ClassNum,
   ClassInt,
   ClassFlt,
-}
-
-
-enum TyDef {
-  Struct(RefStr, Option<Vec<(RefStr, Ty)>>),
-  Union(RefStr, Option<Vec<(RefStr, Ty)>>),
-  Enum(RefStr, Option<Vec<(RefStr, Variant)>>),
-}
-
-enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, Ty)>),
-}
-
-impl TyDef {
-  fn name(&self) -> RefStr {
-    match self {
-      TyDef::Struct(name, ..)  => *name,
-      TyDef::Union(name, ..)   => *name,
-      TyDef::Enum(name, ..)    => *name,
-    }
-  }
-}
-
-fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
-  write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
-}
-
-impl fmt::Debug for TyDef {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      TyDef::Struct(name, Some(params)) => {
-        write!(f, "struct {} ", name)?;
-        write_params(f, params)
-      },
-      TyDef::Union(name, Some(params)) => {
-        write!(f, "union {} ", name)?;
-        write_params(f, params)
-      },
-      TyDef::Enum(name, Some(variants)) => {
-        write!(f, "enum {} ", name)?;
-        write_comma_separated(f, variants.iter(), |f, (_, variant)| {
-          match variant {
-            Variant::Unit(name) => {
-              write!(f, "{}", name)
-            },
-            Variant::Struct(name, params) => {
-              write!(f, "{} ", name)?;
-              write_params(f, params)
-            },
-          }
-        })
-      },
-      _ => unreachable!(),
-    }
-  }
 }
 
 impl fmt::Debug for Ty {
@@ -383,69 +419,6 @@ impl fmt::Debug for RValue {
         write!(f, "loop {:?}", body)
       }
     }
-  }
-}
-
-/// Definitions
-
-
-enum Def {
-  Const       { name: RefStr, ty: Ty, val: RValue },
-  Func        { name: RefStr, ty: Ty, params: Option<IndexMap<RefStr, Own<Def>>>, body: Option<RValue> },
-  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
-  ExternFunc  { name: RefStr, ty: Ty },
-  ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
-  Param       { name: RefStr, ty: Ty, is_mut: IsMut, index: usize },
-  Local       { name: RefStr, ty: Ty, is_mut: IsMut }
-}
-
-impl fmt::Debug for Def {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Def::Const { name, ty, val } => {
-        write!(f, "const {}: {:?} = {:#?}", name, ty, val)
-      }
-      Def::Func { name, params: Some(params), body: Some(body), .. } => {
-        write!(f, "fn {}", name)?;
-        write_comma_separated(f, params.iter(), |f, (_, param)| {
-          if let Def::Param { name, ty, is_mut, .. } = &***param {
-            write!(f, "{}{}: {:?}", is_mut, name, ty)
-          } else {
-            unreachable!()
-          }
-        })?;
-        write!(f, " -> {:?} {:#?}", body.ty(), body)
-      }
-      Def::Data { name, ty, is_mut, init: Some(init) } => {
-        write!(f, "data {}{}: {:?} = {:#?}", is_mut, name, ty, init)
-      }
-      Def::ExternFunc { name, ty } => {
-        write!(f, "extern fn {}: {:?}", name, ty)
-      }
-      Def::ExternData { name, ty, is_mut } => {
-        write!(f, "extern data {}{}: {:?}", is_mut, name, ty)
-      }
-      _ => unreachable!()
-    }
-  }
-}
-
-/// Module
-
-#[derive(Debug)]
-pub struct Module {
-  // Type definitions
-  ty_defs: IndexMap<RefStr, Own<TyDef>>,
-  // Definitions
-  defs: Vec<IndexMap<RefStr, Own<Def>>>,
-}
-
-impl Module {
-  fn ty_def(&mut self, ty_def: TyDef) -> Ptr<TyDef> {
-    let own = Own::new(ty_def);
-    let ptr = own.ptr();
-    self.ty_defs.insert(own.name(), own);
-    ptr
   }
 }
 

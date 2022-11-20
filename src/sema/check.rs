@@ -125,13 +125,46 @@ struct CheckCtx {
 impl CheckCtx {
   fn new() -> Self {
     CheckCtx {
-      module: Module {
-        ty_defs: IndexMap::new(),
-        defs: vec![ IndexMap::new() ],
-      },
+      module: Module::new(),
       loop_ty: vec![],
       ret_ty: vec![]
     }
+  }
+
+  //
+  // Definitions
+  //
+
+  fn enter(&mut self) {
+    self.module.defs.push(IndexMap::new());
+  }
+
+  fn exit(&mut self) -> IndexMap<RefStr, Own<Def>> {
+    self.module.defs.pop().unwrap()
+  }
+
+  fn define(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
+    let def = Own::new(def);
+    let ptr = def.ptr();
+    self.module.defs.last_mut().unwrap().insert(name, def);
+    ptr
+  }
+
+  fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
+    self.define(name, Def::Param { name, ty, is_mut, index })
+  }
+
+  fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
+    self.define(name, Def::Local { name, ty, is_mut })
+  }
+
+  fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
+    for scope in self.module.defs.iter().rev() {
+      if let Some(def) = scope.get(&name) {
+        return Ok(def.ptr());
+      }
+    }
+    Err(Box::new(UnresolvedIdentError { name }))
   }
 
   //
@@ -139,10 +172,16 @@ impl CheckCtx {
   //
 
   fn resolve_ty(&mut self, name: RefStr) -> MRes<Ty> {
-    if let Some(ty_def) = self.module.ty_defs.get(&name) {
-      Ok(Ty::Ref(name, ty_def.ptr()))
-    } else {
-      Err(Box::new(UnresolvedIdentError { name }))
+    let def = self.resolve_def(name)?;
+    match &*def {
+      Def::Struct {..} |
+      Def::Union {..} |
+      Def::Enum {..} => {
+        Ok(Ty::Ref(name, def))
+      }
+      _ => {
+        Err(Box::new(UnresolvedIdentError { name }))
+      }
     }
   }
 
@@ -190,42 +229,6 @@ impl CheckCtx {
   }
 
   //
-  // Definitions
-  //
-
-  fn enter(&mut self) {
-    self.module.defs.push(IndexMap::new());
-  }
-
-  fn exit(&mut self) -> IndexMap<RefStr, Own<Def>> {
-    self.module.defs.pop().unwrap()
-  }
-
-  fn define(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
-    let def = Own::new(def);
-    let ptr = def.ptr();
-    self.module.defs.last_mut().unwrap().insert(name, def);
-    ptr
-  }
-
-  fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
-    self.define(name, Def::Param { name, ty, is_mut, index })
-  }
-
-  fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
-    self.define(name, Def::Local { name, ty, is_mut })
-  }
-
-  fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
-    for scope in self.module.defs.iter().rev() {
-      if let Some(def) = scope.get(&name) {
-        return Ok(def.ptr());
-      }
-    }
-    Err(Box::new(UnresolvedIdentError { name }))
-  }
-
-  //
   // Expressions
   //
 
@@ -235,9 +238,9 @@ impl CheckCtx {
 
     // Find parameter list
     let params = match arg.ty() {
-      Ty::Ref(_, ty_def) => match &**ty_def {
-        TyDef::Struct(_, Some(params))  => params,
-        TyDef::Union(_, Some(params))   => params,
+      Ty::Ref(_, def) => match &**def {
+        Def::Struct { params: Some(params), .. } => params,
+        Def::Union { params: Some(params), .. } => params,
         _ => return Err(Box::new(TypeError {})),
       },
       Ty::Tuple(params) => params,
@@ -460,6 +463,7 @@ impl CheckCtx {
               arg: Box::new(data_ref)
             }
           }
+          _ => return Err(Box::new(TypeError {}))
         }
       }
       Str(..) | Dot(..) | Index(..) | Ind(..) => {
@@ -674,14 +678,16 @@ impl CheckCtx {
     for def in defs.iter() {
       match def {
         Struct { name, .. } =>  {
-          queue.push((def, self.module.ty_def(TyDef::Struct(*name, None))));
+          queue.push((def,
+            self.define(*name, Def::Struct { name: *name, params: None })));
         }
         Union { name, .. } => {
-
-          queue.push((def, self.module.ty_def(TyDef::Union(*name, None))));
+          queue.push((def,
+            self.define(*name, Def::Union { name: *name, params: None })));
         }
         Enum { name, .. } => {
-          queue.push((def, self.module.ty_def(TyDef::Enum(*name, None))));
+          queue.push((def,
+            self.define(*name, Def::Enum { name: *name, variants: None })));
         }
         _ => ()
       }
@@ -690,13 +696,13 @@ impl CheckCtx {
     // Pass 2: Fill bodies
     for (def, mut ptr) in queue {
       match (def, &mut *ptr) {
-        (Struct { params, .. }, TyDef::Struct(_, dest)) => {
+        (Struct { params, .. }, Def::Struct { params: dest, .. }) => {
           *dest = Some(self.check_params(params)?);
         }
-        (Union { params, .. }, TyDef::Union(_, dest)) => {
+        (Union { params, .. }, Def::Union { params: dest, .. }) => {
           *dest = Some(self.check_params(params)?);
         }
-        (Enum { variants, .. }, TyDef::Enum(_, dest)) => {
+        (Enum { variants, .. }, Def::Enum { variants: dest, .. }) => {
           let mut result = vec![];
           for (name, variant) in variants {
             result.push((*name, match variant {
