@@ -213,14 +213,18 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       todo!() // TODO
     }
     RValue::Let { def, init, .. } => {
-      // Allocate stack slot for local variable
-      let l_alloca = ctx.build_alloca(def.name, &def.ty);
-      ctx.values.insert(*def, l_alloca);
-      // Store initializer in stack slot
-      let init = lower_rvalue(init, ctx);
-      ctx.build_store(&def.ty, l_alloca, init);
-      // Void value
-      ctx.build_void()
+      if let Def::Local { name, ty, .. } = &**def {
+        // Allocate stack slot for local variable
+        let l_alloca = ctx.build_alloca(*name, ty);
+        ctx.values.insert(*def, l_alloca);
+        // Store initializer in stack slot
+        let init = lower_rvalue(init, ctx);
+        ctx.build_store(ty, l_alloca, init);
+        // Void value
+        ctx.build_void()
+      } else {
+        unreachable!()
+      }
     }
     RValue::If { cond, tbody, ebody, .. } => {
       let then_block = ctx.new_block();
@@ -468,18 +472,17 @@ impl LowerCtx {
     }
     // Pass 2: Resolve bodies
     for (_, ty_def) in ty_defs.iter() {
-      let mut l_params = match &ty_def.kind {
-        TyDefKind::ToBeFilled => unreachable!(),
-        TyDefKind::Struct(params) => {
+      let mut l_params = match &**ty_def {
+        TyDef::Struct(_, Some(params)) => {
           // This is the simplest case, LLVM has native support for structures
           self.lower_params(params)
         }
-        TyDefKind::Union(params) => {
+        TyDef::Union(_, Some(params)) => {
           // The union lowering code is shared with enums thus it's in 'lower_union'
           let l_params = self.lower_params(params);
           self.lower_union(l_params)
         }
-        TyDefKind::Enum(variants) => {
+        TyDef::Enum(_, Some(variants)) => {
           // Enum lowering is done by adding a discriminant (always a dword for now)
           // Followed by the variants lowered as if they were parameters of a union
 
@@ -501,6 +504,7 @@ impl LowerCtx {
           l_params.extend(self.lower_union(l_variant_types));
           l_params
         }
+        _ => unreachable!()
       };
       // Resolve body
       LLVMStructSetBody(*self.types.get(&ty_def.ptr()).unwrap(),
@@ -974,18 +978,18 @@ impl LowerCtx {
 
   unsafe fn lower_defs(&mut self, defs: &IndexMap<RefStr, Own<Def>>) {
     // Pass 1: Create LLVM values for each definition
-    for (name, def) in defs.iter() {
-      let l_value = match &def.kind {
-        DefKind::Const(val) => {
+    for (_, def) in defs.iter() {
+      let l_value = match &**def {
+        Def::Const { val, .. } => {
           lower_const_rvalue(val, self)
         }
-        DefKind::Data(..) | DefKind::ExternData => {
-          LLVMAddGlobal(self.l_module, self.lower_ty(&def.ty),
-                                      name.borrow_c())
+        Def::Data { name, ty, .. } |
+        Def::ExternData { name, ty, .. } => {
+          LLVMAddGlobal(self.l_module, self.lower_ty(ty), name.borrow_c())
         }
-        DefKind::Func(..) | DefKind::ExternFunc => {
-          LLVMAddFunction(self.l_module, name.borrow_c(),
-                                        self.lower_ty(&def.ty))
+        Def::Func { name, ty, .. } |
+        Def::ExternFunc { name, ty, .. } => {
+          LLVMAddFunction(self.l_module, name.borrow_c(), self.lower_ty(ty))
         }
         _ => continue
       };
@@ -996,11 +1000,11 @@ impl LowerCtx {
     for (_, def) in defs.iter() {
       let l_value = *self.values.get(&def.ptr()).unwrap();
 
-      match &def.kind {
-        DefKind::Data(init) => {
+      match &**def {
+        Def::Data { init: Some(init), .. }  => {
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
-        DefKind::Func(params, body) => {
+        Def::Func { params: Some(params), body: Some(body), .. } => {
           // Entry point
           self.l_func = l_value;
           let entry_block = self.new_block();
@@ -1008,14 +1012,14 @@ impl LowerCtx {
 
           // Spill parameters
           for (_, def) in params.iter() {
-            let index = match &def.kind {
-              DefKind::Param(index) => *index,
-              _ => unreachable!(),
-            };
-
-            let l_alloca = self.build_alloca(def.name, &def.ty);
-            self.values.insert(def.ptr(), l_alloca);
-            LLVMBuildStore(self.l_builder, LLVMGetParam(l_value, index as u32), l_alloca);
+            if let Def::Param { name, ty, index, .. } = &**def {
+              let l_alloca = self.build_alloca(*name, ty);
+              self.values.insert(def.ptr(), l_alloca);
+              LLVMBuildStore(self.l_builder,
+                LLVMGetParam(l_value, *index as u32), l_alloca);
+            } else {
+              unreachable!()
+            }
           }
 
           // Lower function body

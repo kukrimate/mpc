@@ -201,19 +201,19 @@ impl CheckCtx {
     self.module.defs.pop().unwrap()
   }
 
-  fn define(&mut self, def: Def) -> Ptr<Def> {
+  fn define(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
     let def = Own::new(def);
     let ptr = def.ptr();
-    self.module.defs.last_mut().unwrap().insert(def.name, def);
+    self.module.defs.last_mut().unwrap().insert(name, def);
     ptr
   }
 
   fn define_param(&mut self, name: RefStr, is_mut: IsMut, ty: Ty, index: usize) -> Ptr<Def> {
-    self.define(Def::with_kind(name, is_mut, ty, DefKind::Param(index)))
+    self.define(name, Def::Param { name, ty, is_mut, index })
   }
 
   fn define_local(&mut self, name: RefStr, is_mut: IsMut, ty: Ty) -> Ptr<Def> {
-    self.define(Def::with_kind(name, is_mut, ty, DefKind::Local))
+    self.define(name, Def::Local { name, ty, is_mut })
   }
 
   fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
@@ -235,8 +235,9 @@ impl CheckCtx {
 
     // Find parameter list
     let params = match arg.ty() {
-      Ty::Ref(_, ty_def) => match &ty_def.kind {
-        TyDefKind::Struct(params) | TyDefKind::Union(params) => params,
+      Ty::Ref(_, ty_def) => match &**ty_def {
+        TyDef::Struct(_, Some(params))  => params,
+        TyDef::Union(_, Some(params))   => params,
         _ => return Err(Box::new(TypeError {})),
       },
       Ty::Tuple(params) => params,
@@ -386,10 +387,17 @@ impl CheckCtx {
     Ok(match expr {
       Path(path) => {
         let def = self.resolve_def(path[0])?;
-        match &def.kind {
-          DefKind::Data(..) | DefKind::ExternData |
-          DefKind::Param(..) | DefKind::Local => {
-            LValue::DataRef { ty: def.ty.clone(), is_mut: def.is_mut, def }
+        match &*def {
+          Def::Data       { name, ty, is_mut, .. } |
+          Def::ExternData { name, ty, is_mut, .. } |
+          Def::Param      { name, ty, is_mut, .. } |
+          Def::Local      { name, ty, is_mut, .. } => {
+            LValue::DataRef {
+              ty: ty.clone(),
+              is_mut: *is_mut,
+              name: *name,
+              def: def
+            }
           }
           _ => return Err(Box::new(TypeError {}))
         }
@@ -420,28 +428,38 @@ impl CheckCtx {
       }
       Path(path) => {
         let def = self.resolve_def(path[0])?;
-        match &def.kind {
-          DefKind::Const(..) => {
+        match &*def {
+          Def::Const { name, ty, .. } => {
             RValue::ConstRef {
-              ty: def.ty.clone(),
-              def: def,
-            }
-          }
-          DefKind::Func(..) | DefKind::ExternFunc => {
-            RValue::FuncRef {
-              ty: def.ty.clone(),
+              ty: ty.clone(),
+              name: *name,
               def: def
             }
           }
-          DefKind::Data(..) | DefKind::ExternData |
-          DefKind::Param(..) | DefKind::Local => {
-            let arg = self.infer_lvalue(expr)?;
-            RValue::Load {
-              ty: arg.ty().clone(),
-              arg: Box::new(arg)
+          Def::Func { name, ty, .. } |
+          Def::ExternFunc { name, ty, .. } => {
+            RValue::FuncRef {
+              ty: ty.clone(),
+              name: *name,
+              def: def
             }
           }
-          _ => unreachable!()
+          Def::Data       { name, ty, is_mut, .. } |
+          Def::ExternData { name, ty, is_mut, .. } |
+          Def::Param      { name, ty, is_mut, .. } |
+          Def::Local      { name, ty, is_mut, .. } => {
+            let data_ref = LValue::DataRef {
+              ty: ty.clone(),
+              is_mut: *is_mut,
+              name: *name,
+              def: def
+            };
+
+            RValue::Load {
+              ty: ty.clone(),
+              arg: Box::new(data_ref)
+            }
+          }
         }
       }
       Str(..) | Dot(..) | Index(..) | Ind(..) => {
@@ -655,27 +673,30 @@ impl CheckCtx {
     // Pass 1: Create definitions
     for def in defs.iter() {
       match def {
-        Struct { name, .. } |
-        Union { name, .. } |
+        Struct { name, .. } =>  {
+          queue.push((def, self.module.ty_def(TyDef::Struct(*name, None))));
+        }
+        Union { name, .. } => {
+
+          queue.push((def, self.module.ty_def(TyDef::Union(*name, None))));
+        }
         Enum { name, .. } => {
-          let dummy = Own::new(TyDef::new(*name));
-          queue.push((def, dummy.ptr()));
-          self.module.ty_defs.insert(*name, dummy);
+          queue.push((def, self.module.ty_def(TyDef::Enum(*name, None))));
         }
         _ => ()
       }
     }
 
     // Pass 2: Fill bodies
-    for (def, mut dest) in queue {
-      match def {
-        Struct { params, .. } => {
-          dest.kind = TyDefKind::Struct(self.check_params(params)?);
+    for (def, mut ptr) in queue {
+      match (def, &mut *ptr) {
+        (Struct { params, .. }, TyDef::Struct(_, dest)) => {
+          *dest = Some(self.check_params(params)?);
         }
-        Union { params, .. } => {
-          dest.kind = TyDefKind::Union(self.check_params(params)?);
+        (Union { params, .. }, TyDef::Union(_, dest)) => {
+          *dest = Some(self.check_params(params)?);
         }
-        Enum { variants, .. } => {
+        (Enum { variants, .. }, TyDef::Enum(_, dest)) => {
           let mut result = vec![];
           for (name, variant) in variants {
             result.push((*name, match variant {
@@ -687,7 +708,7 @@ impl CheckCtx {
               }
             }));
           }
-          dest.kind = TyDefKind::Enum(result);
+          *dest = Some(result);
         }
         _ => ()
       }
@@ -708,11 +729,12 @@ impl CheckCtx {
           let mut ty = self.check_ty(ty)?;
           let mut val = self.infer_rvalue(val)?;
           unify(&mut ty, val.ty_mut())?;
-          self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
+          self.define(*name, Def::Const { name: *name, ty, val });
         }
         Data { name, is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
-          let ptr = self.define(Def::empty(*name, *is_mut, ty));
+          let ptr = self.define(*name,
+            Def::Data { name: *name, ty, is_mut: *is_mut, init: None });
           queue.push((def, ptr));
         }
         Func { name, params, ret_ty, .. } => {
@@ -721,34 +743,36 @@ impl CheckCtx {
             new_params.push((*name, self.check_ty(ty)?));
           }
           let ty = Ty::Func(new_params, Box::new(self.check_ty(ret_ty)?));
-          let ptr = self.define(Def::empty(*name, IsMut::No, ty));
+          let ptr = self.define(*name,
+            Def::Func { name: *name, ty, params: None, body: None });
           queue.push((def, ptr));
         }
         ExternData { name, is_mut, ty } => {
           let ty = self.check_ty(ty)?;
-          self.define(Def::with_kind(*name, *is_mut, ty, DefKind::ExternData));
+          self.define(*name,
+            Def::ExternData { name: *name, ty, is_mut: *is_mut });
         }
         ExternFunc { name, params, ret_ty } => {
           let ty = Ty::Func(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
-          self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::ExternFunc));
+          self.define(*name, Def::ExternFunc { name: *name, ty });
         }
         _ => ()
       }
     }
 
     // Pass 2: Fill bodies
-    for (def, mut dest) in queue {
-      match def {
-        Data { init, .. } => {
+    for (def, mut ptr) in queue {
+      match (def, &mut *ptr) {
+        (Data { init, .. }, Def::Data { ty, init: dest, .. }) => {
           // Check initializer type
           let mut init = self.infer_rvalue(init)?;
-          unify(init.ty_mut(), &mut dest.ty)?;
+          unify(init.ty_mut(), ty)?;
 
           // Complete definition
-          dest.kind = DefKind::Data(init);
+          *dest = Some(init);
         }
-        Func { params, ret_ty, body, .. } => {
+        (Func { params, ret_ty, body, .. }, Def::Func { params: dparams, body: dbody, .. }) => {
           // FIXME: this could be made better by not re-checking ret_ty
           // and re-using the value from the first pass
           self.enter();
@@ -765,10 +789,10 @@ impl CheckCtx {
           unify(body.ty_mut(), &mut ret_ty)?;
 
           // Exit param scope
-          let params = self.exit();
+          *dparams = Some(self.exit());
 
           // Complete definition
-          dest.kind = DefKind::Func(params, body);
+          *dbody = Some(body);
         }
         _ => ()
       }
