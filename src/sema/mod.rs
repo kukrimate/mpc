@@ -9,21 +9,21 @@
 
 use crate::parse::{self,IsMut,UnOp,BinOp};
 use crate::util::*;
+use std::collections::HashMap;
 use std::fmt::{self,Write};
-use indexmap::IndexMap;
 
 /// Module
 
 #[derive(Debug)]
 pub struct Module {
   // Definitions
-  defs: Vec<IndexMap<RefStr, Own<Def>>>,
+  defs: Vec<Own<Def>>
 }
 
 impl Module {
   fn new() -> Module {
     Module {
-      defs: vec![ IndexMap::new() ]
+      defs: vec![]
     }
   }
 }
@@ -35,7 +35,7 @@ enum Def {
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
   Const       { name: RefStr, ty: Ty, val: RValue },
-  Func        { name: RefStr, ty: Ty, params: IndexMap<RefStr, Own<Def>>, body: Option<RValue> },
+  Func        { name: RefStr, ty: Ty, params: Vec<Own<Def>>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
@@ -78,7 +78,7 @@ impl fmt::Debug for Def {
       }
       Def::Func { name, params, body: Some(body), .. } => {
         write!(f, "fn {}", name)?;
-        write_comma_separated(f, params.iter(), |f, (_, param)| {
+        write_comma_separated(f, params.iter(), |f, param| {
           if let Def::Param { name, ty, is_mut, .. } = &***param {
             write!(f, "{}{}: {:?}", is_mut, name, ty)
           } else {
@@ -201,13 +201,13 @@ enum RValue {
   Bin       { ty: Ty, op: BinOp, lhs: Box<RValue>, rhs: Box<RValue> },
   LAnd      { ty: Ty, lhs: Box<RValue>, rhs: Box<RValue> },
   LOr       { ty: Ty, lhs: Box<RValue>, rhs: Box<RValue> },
-  Block     { ty: Ty, scope: IndexMap<RefStr, Own<Def>>, body: Vec<RValue> },
+  Block     { ty: Ty, body: Vec<RValue> },
   As        { ty: Ty, lhs: Box<LValue>, rhs: Box<RValue> },
   Rmw       { ty: Ty, op: BinOp, lhs: Box<LValue>, rhs: Box<RValue> },
   Continue  { ty: Ty },
   Break     { ty: Ty, arg: Box<RValue> },
   Return    { ty: Ty, arg: Box<RValue> },
-  Let       { ty: Ty, def: Ptr<Def>, init: Box<RValue> },
+  Let       { ty: Ty, def: Own<Def>, init: Box<RValue> },
   If        { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While     { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop      { ty: Ty, body: Box<RValue> },

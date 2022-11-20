@@ -72,7 +72,6 @@ name = "bootstrap"
 version = "0.1.0"
 dependencies = [
  "clap",
- "indexmap",
  "lalrpop",
  "lalrpop-util",
  "llvm-sys",

@@ -335,6 +335,8 @@ impl TVarCtx {
 struct CheckCtx {
   // Module being currenly checked
   module: Module,
+  // Symbol table
+  scopes: Vec<HashMap<RefStr, Ptr<Def>>>,
   // Type variable context
   tctx: TVarCtx,
   // Contexts for break/continue, and return
@@ -346,38 +348,44 @@ impl CheckCtx {
   fn new() -> Self {
     Self {
       module: Module::new(),
+      scopes: vec![ HashMap::new() ],
       tctx: TVarCtx::new(),
       loop_ty: vec![],
       ret_ty: vec![]
     }
   }
 
-  //
-  // Definitions
-  //
+  /// Symbol table
 
   fn enter(&mut self) {
-    self.module.defs.push(IndexMap::new());
+    self.scopes.push(HashMap::new());
   }
 
-  fn exit(&mut self) -> IndexMap<RefStr, Own<Def>> {
-    self.module.defs.pop().unwrap()
+  fn exit(&mut self) {
+    self.scopes.pop().unwrap();
   }
 
-  fn define(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
-    let def = Own::new(def);
-    let ptr = def.ptr();
-    self.module.defs.last_mut().unwrap().insert(name, def);
-    ptr
+  fn define(&mut self, name: RefStr, def: Ptr<Def>) {
+    self.scopes.last_mut().unwrap().insert(name, def);
   }
 
   fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
-    for scope in self.module.defs.iter().rev() {
+    for scope in self.scopes.iter().rev() {
       if let Some(def) = scope.get(&name) {
-        return Ok(def.ptr());
+        return Ok(*def);
       }
     }
     Err(Box::new(UnresolvedIdentError { name }))
+  }
+
+  /// Create global definition
+
+  fn global_def(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
+    let own = Own::new(def);
+    let ptr = own.ptr();
+    self.module.defs.push(own);
+    self.define(name, ptr);
+    ptr
   }
 
   //
@@ -745,7 +753,7 @@ impl CheckCtx {
         for expr in parsed_body {
           body.push(self.infer_rvalue(expr)?);
         }
-        let scope = self.exit();
+        self.exit();
 
         let ty = if let Some(last) = body.last() {
           last.ty().clone()
@@ -753,7 +761,7 @@ impl CheckCtx {
           Ty::Tuple(vec![])
         };
 
-        RValue::Block { ty, scope, body }
+        RValue::Block { ty, body }
       }
       As(lhs, rhs) => {
         // Infer argument types
@@ -833,9 +841,10 @@ impl CheckCtx {
           init.ty().clone()
         };
 
-        // Define symbol
-        let def = self.define(*name,
-          Def::Local { name: *name, is_mut: *is_mut, ty });
+        // Create definition
+        let def = Own::new(Def::Local { name: *name, is_mut: *is_mut, ty });
+        // Add to symbol table
+        self.define(*name, def.ptr());
 
         // Add let expression
         RValue::Let { ty: Ty::Tuple(vec![]), def, init: Box::new(init) }
@@ -889,15 +898,15 @@ impl CheckCtx {
       match def {
         Struct { name, .. } =>  {
           queue.push((def,
-            self.define(*name, Def::Struct { name: *name, params: None })));
+            self.global_def(*name, Def::Struct { name: *name, params: None })));
         }
         Union { name, .. } => {
           queue.push((def,
-            self.define(*name, Def::Union { name: *name, params: None })));
+            self.global_def(*name, Def::Union { name: *name, params: None })));
         }
         Enum { name, .. } => {
           queue.push((def,
-            self.define(*name, Def::Enum { name: *name, variants: None })));
+            self.global_def(*name, Def::Enum { name: *name, variants: None })));
         }
         _ => ()
       }
@@ -947,39 +956,39 @@ impl CheckCtx {
           let mut val = self.infer_rvalue(val)?;
           self.tctx.unify_tys(&ty, val.ty())?;
           self.tctx.fixup_rvalue(&mut val);
-          self.define(*name, Def::Const { name: *name, ty, val });
+          self.global_def(*name, Def::Const { name: *name, ty, val });
         }
         Data { name, is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
-          let ptr = self.define(*name,
+          let ptr = self.global_def(*name,
             Def::Data { name: *name, ty, is_mut: *is_mut, init: None });
           queue.push((def, ptr));
         }
         Func { name, params, ret_ty, .. } => {
           let mut param_tys = vec![];
-          self.enter();
+          let mut param_defs = vec![];
+
           for (index, (name, is_mut, ty)) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
             param_tys.push((*name, ty.clone()));
-            self.define(*name,
-              Def::Param { name: *name, is_mut: *is_mut, ty, index });
+            param_defs.push(Own::new(
+              Def::Param { name: *name, is_mut: *is_mut, ty, index }));
           }
-          let param_defs = self.exit();
 
           let ty = Ty::Func(param_tys, Box::new(self.check_ty(ret_ty)?));
-          let ptr = self.define(*name,
+          let ptr = self.global_def(*name,
             Def::Func { name: *name, ty, params: param_defs, body: None });
           queue.push((def, ptr));
         }
         ExternData { name, is_mut, ty } => {
           let ty = self.check_ty(ty)?;
-          self.define(*name,
+          self.global_def(*name,
             Def::ExternData { name: *name, ty, is_mut: *is_mut });
         }
         ExternFunc { name, params, ret_ty } => {
           let ty = Ty::Func(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
-          self.define(*name, Def::ExternFunc { name: *name, ty });
+          self.global_def(*name, Def::ExternFunc { name: *name, ty });
         }
         _ => ()
       }
@@ -999,8 +1008,15 @@ impl CheckCtx {
           *dest = Some(init);
         }
         (Func { ret_ty, body, .. }, Def::Func { params, body: dest, .. }) => {
-          // Re-enter paremeter scope
-          self.module.defs.push(std::mem::take(params));
+          // Create parameter scope
+          self.enter();
+          for def in params {
+            if let Def::Param { name, .. } = &**def {
+              self.define(*name, def.ptr());
+            } else {
+              unreachable!()
+            }
+          }
 
           // Typecheck body
           self.tctx.clear();
@@ -1010,7 +1026,7 @@ impl CheckCtx {
           self.tctx.fixup_rvalue(&mut body);
 
           // Exit paraemeter scope
-          *params = self.exit();
+          self.exit();
 
           // Complete definition
           *dest = Some(body);

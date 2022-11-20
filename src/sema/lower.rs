@@ -216,7 +216,7 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       if let Def::Local { name, ty, .. } = &**def {
         // Allocate stack slot for local variable
         let l_alloca = ctx.build_alloca(*name, ty);
-        ctx.values.insert(*def, l_alloca);
+        ctx.values.insert(def.ptr(), l_alloca);
         // Store initializer in stack slot
         let init = lower_rvalue(init, ctx);
         ctx.build_store(ty, l_alloca, init);
@@ -318,13 +318,13 @@ pub(super) struct LowerCtx {
   l_func: LLVMValueRef,
 
   // Types
-  types: IndexMap<Ptr<Def>, LLVMTypeRef>,
+  types: HashMap<Ptr<Def>, LLVMTypeRef>,
 
   // Values
-  values: IndexMap<Ptr<Def>, LLVMValueRef>,
+  values: HashMap<Ptr<Def>, LLVMValueRef>,
 
   // String literals
-  string_lits: IndexMap<RefStr, LLVMValueRef>,
+  string_lits: HashMap<RefStr, LLVMValueRef>,
 }
 
 impl LowerCtx {
@@ -376,9 +376,9 @@ impl LowerCtx {
       l_module,
       l_func: std::ptr::null_mut(),
 
-      types: IndexMap::new(),
-      values: IndexMap::new(),
-      string_lits: IndexMap::new()
+      types: HashMap::new(),
+      values: HashMap::new(),
+      string_lits: HashMap::new()
     }
   }
 
@@ -461,9 +461,9 @@ impl LowerCtx {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, defs: &IndexMap<RefStr, Own<Def>>) {
+  unsafe fn lower_ty_defs(&mut self, defs: &Vec<Own<Def>>) {
     // Pass 1: Create named LLVM structure for each type definition
-    for (_, def) in defs.iter() {
+    for def in defs.iter() {
       match &**def {
         Def::Struct { name, .. } |
         Def::Union { name, .. } |
@@ -475,7 +475,7 @@ impl LowerCtx {
       }
     }
     // Pass 2: Resolve bodies
-    for (_, def) in defs.iter() {
+    for def in defs.iter() {
       let mut l_params = match &**def {
         Def::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
@@ -980,9 +980,9 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_defs(&mut self, defs: &IndexMap<RefStr, Own<Def>>) {
+  unsafe fn lower_defs(&mut self, defs: &Vec<Own<Def>>) {
     // Pass 1: Create LLVM values for each definition
-    for (_, def) in defs.iter() {
+    for def in defs.iter() {
       let l_value = match &**def {
         Def::Const { val, .. } => {
           lower_const_rvalue(val, self)
@@ -1000,7 +1000,7 @@ impl LowerCtx {
       self.values.insert(def.ptr(), l_value);
     }
     // Pass 2: Lower initializers and function bodies
-    for (_, def) in defs.iter() {
+    for def in defs.iter() {
       match &**def {
         Def::Data { init: Some(init), .. }  => {
           let l_value = *self.values.get(&def.ptr()).unwrap();
@@ -1013,7 +1013,7 @@ impl LowerCtx {
           self.enter_block(entry_block);
 
           // Spill parameters
-          for (_, def) in params.iter() {
+          for def in params.iter() {
             if let Def::Param { name, ty, index, .. } = &**def {
               let l_alloca = self.build_alloca(*name, ty);
               self.values.insert(def.ptr(), l_alloca);
@@ -1032,8 +1032,8 @@ impl LowerCtx {
   }
 
   unsafe fn lower_module(&mut self, module: &Module) {
-    self.lower_ty_defs(&module.defs[0]);
-    self.lower_defs(&module.defs[0]);
+    self.lower_ty_defs(&module.defs);
+    self.lower_defs(&module.defs);
   }
 
   unsafe fn dump(&self) {
