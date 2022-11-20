@@ -128,11 +128,19 @@ enum Ty {
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(usize, Box<Ty>),
   Tuple(Vec<(RefStr, Ty)>),
-  // Deduction
-  ClassAny,
-  ClassNum,
-  ClassInt,
-  ClassFlt,
+  // Type variables
+  TVar(usize),
+}
+
+/// Type variable constraints
+
+#[derive(Clone, Debug)]
+enum TyBound {
+  Is(Ty),
+  Any,
+  Num,
+  Int,
+  Flt,
 }
 
 impl fmt::Debug for Ty {
@@ -161,10 +169,7 @@ impl fmt::Debug for Ty {
       },
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
       Tuple(params) => write_params(f, params),
-      ClassAny => write!(f, "ClassAny"),
-      ClassNum => write!(f, "ClassNum"),
-      ClassInt => write!(f, "ClassInt"),
-      ClassFlt => write!(f, "ClassFlt"),
+      TVar(idx) => write!(f, "'{}", idx)
     }
   }
 }
@@ -219,16 +224,6 @@ impl LValue {
     }
   }
 
-  fn ty_mut(&mut self) -> &mut Ty {
-    match self {
-      LValue::DataRef   { ty, .. } => ty,
-      LValue::Str       { ty, .. } => ty,
-      LValue::Dot       { ty, .. } => ty,
-      LValue::Index     { ty, .. } => ty,
-      LValue::Ind       { ty, .. } => ty,
-    }
-  }
-
   fn is_mut(&self) -> IsMut {
     match self {
       LValue::DataRef   { is_mut, .. }  => *is_mut,
@@ -242,37 +237,6 @@ impl LValue {
 
 impl RValue {
   fn ty(&self) -> &Ty {
-    match self {
-      RValue::Null      { ty, .. } => ty,
-      RValue::ConstRef  { ty, .. } => ty,
-      RValue::FuncRef   { ty, .. } => ty,
-      RValue::Load      { ty, .. } => ty,
-      RValue::Bool      { ty, .. } => ty,
-      RValue::Int       { ty, .. } => ty,
-      RValue::Flt       { ty, .. } => ty,
-      RValue::Char      { ty, .. } => ty,
-      RValue::Call      { ty, .. } => ty,
-      RValue::Adr       { ty, .. } => ty,
-      RValue::Un        { ty, .. } => ty,
-      RValue::LNot      { ty, .. } => ty,
-      RValue::Cast      { ty, .. } => ty,
-      RValue::Bin       { ty, .. } => ty,
-      RValue::LAnd      { ty, .. } => ty,
-      RValue::LOr       { ty, .. } => ty,
-      RValue::Block     { ty, .. } => ty,
-      RValue::As        { ty, .. } => ty,
-      RValue::Rmw       { ty, .. } => ty,
-      RValue::Continue  { ty, .. } => ty,
-      RValue::Break     { ty, .. } => ty,
-      RValue::Return    { ty, .. } => ty,
-      RValue::Let       { ty, .. } => ty,
-      RValue::If        { ty, .. } => ty,
-      RValue::While     { ty, .. } => ty,
-      RValue::Loop      { ty, .. } => ty,
-    }
-  }
-
-  fn ty_mut(&mut self) -> &mut Ty {
     match self {
       RValue::Null      { ty, .. } => ty,
       RValue::ConstRef  { ty, .. } => ty,

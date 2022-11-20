@@ -430,10 +430,7 @@ impl LowerCtx {
         LLVMStructTypeInContext(self.l_context,
           l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0)
       }
-      ClassAny | ClassNum | ClassInt | ClassFlt => {
-        // FIXME: make sure this never happens
-        panic!("Error: non-deduced type reached lowering")
-      }
+      _ => unreachable!()
     }
   }
 
@@ -770,7 +767,7 @@ impl LowerCtx {
       Int64 | Uintn | Intn | Float |
       Double | Ptr(..) | Func(..) => true,
       Ref(..) | Arr(..) | Tuple(..) => false,
-      ClassAny | ClassNum | ClassInt | ClassFlt => unreachable!()
+      _ => unreachable!()
     }
   }
 

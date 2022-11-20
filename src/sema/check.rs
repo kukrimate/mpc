@@ -40,74 +40,292 @@ impl fmt::Display for UnresolvedIdentError {
 
 impl error::Error for UnresolvedIdentError {}
 
-/// Type unification
+/// Type inferencer
 
-fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
-  use Ty::*;
-  match (ty1, ty2) {
-    (ty1 @ ClassAny, ty2) |
-    (ty1 @ ClassNum, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-                            Uintn|Intn|Float|Double|ClassInt|ClassFlt|ClassNum)) |
-    (ty1 @ ClassInt, ty2 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-                            Uintn|Intn|ClassInt)) |
-    (ty1 @ ClassFlt, ty2 @ (Float|Double|ClassFlt)) => {
-      *ty1 = ty2.clone();
-      Ok(())
-    },
-    (ty1, ty2 @ ClassAny) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-            Uintn|Intn|Float|Double|ClassInt|ClassFlt), ty2 @ ClassNum) |
-    (ty1 @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-            Uintn|Intn), ty2 @ ClassInt) |
-    (ty1 @ (Float|Double), ty2 @ ClassFlt) => {
-      *ty2 = ty1.clone();
-      Ok(())
-    },
-    (Bool, Bool) |
-    (Uint8, Uint8) |
-    (Int8, Int8) |
-    (Uint16, Uint16) |
-    (Int16, Int16) |
-    (Uint32, Uint32) |
-    (Int32, Int32) |
-    (Uint64, Uint64) |
-    (Int64, Int64) |
-    (Uintn, Uintn) |
-    (Intn, Intn) |
-    (Float, Float) |
-    (Double, Double) => {
-      Ok(())
+struct TVarCtx {
+  // Bounds for each type variables
+  tvars: Vec<TyBound>
+}
+
+impl TVarCtx {
+  fn new() -> Self {
+    Self {
+      tvars: vec![],
     }
-    (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
-      assert_eq!(name1, name2);
-      Ok(())
-    }
-    (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
-      for ((n1, t1), (n2, t2)) in par1.iter_mut().zip(par2.iter_mut()) {
-        if n1 != n2 {
-          return Err(Box::new(TypeError {}));
-        }
-        unify(t1, t2)?;
+  }
+
+  fn clear(&mut self) {
+    self.tvars.clear()
+  }
+
+  fn tvar(&mut self, bound: TyBound) -> Ty {
+    let ty = Ty::TVar(self.tvars.len());
+    self.tvars.push(bound);
+    ty
+  }
+
+  fn unify_tys(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
+    use Ty::*;
+    match (ty1, ty2) {
+      (Bool, Bool) |
+      (Uint8, Uint8) |
+      (Int8, Int8) |
+      (Uint16, Uint16) |
+      (Int16, Int16) |
+      (Uint32, Uint32) |
+      (Int32, Int32) |
+      (Uint64, Uint64) |
+      (Int64, Int64) |
+      (Uintn, Uintn) |
+      (Intn, Intn) |
+      (Float, Float) |
+      (Double, Double) => {
+        Ok(ty1.clone())
       }
-      unify(&mut *ret1, &mut *ret2)
-    }
-    (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
-      unify(&mut *base1, &mut *base2)
-    }
-    (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
-      unify(&mut *elem1, &mut *elem2)
-    }
-    (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
-      for ((n1, t1), (n2, t2)) in par1.iter_mut().zip(par2.iter_mut()) {
-        if n1 != n2 {
-          return Err(Box::new(TypeError {}));
-        }
-        unify(t1, t2)?;
+      (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
+        assert_eq!(name1, name2);
+        Ok(ty1.clone())
       }
-      Ok(())
+      (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
+        let mut par = Vec::new();
+        for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
+          if n1 != n2 {
+            return Err(Box::new(TypeError {}));
+          }
+          par.push((*n1, self.unify_tys(t1, t2)?));
+        }
+        Ok(Ty::Func(par, Box::new(self.unify_tys(ret1, ret2)?)))
+      }
+      (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
+        Ok(Ty::Ptr(*is_mut1, Box::new(self.unify_tys(base1, base2)?)))
+      }
+      (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
+        Ok(Ty::Arr(*siz1, Box::new(self.unify_tys(elem1, elem2)?)))
+      }
+      (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
+        let mut par = Vec::new();
+        for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
+          if n1 != n2 {
+            return Err(Box::new(TypeError {}));
+          }
+          par.push((*n1, self.unify_tys(t1, t2)?));
+        }
+        Ok(Ty::Tuple(par))
+      }
+      (var @ TVar(idx), ty) | (ty, var @ TVar(idx)) => {
+        self.bound_var(*idx, &TyBound::Is(ty.clone()))?;
+        Ok(var.clone())
+      }
+      (ty1, ty2) => {
+        Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
+      }
     }
-    (ty1, ty2) => {
-      Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
+  }
+
+  fn bound_var(&mut self, mut idx: usize, new: &TyBound) -> MRes<()> {
+    // Skip to the end of the chain
+    while let TyBound::Is(Ty::TVar(next)) = &self.tvars[idx] {
+      idx = *next;
+    }
+
+    // Unify new and previous bounds
+    let unified = match (self.tvars[idx].clone(), new) {
+      (prev, TyBound::Is(ty)) => {
+        TyBound::Is(self.bound_ty(&prev, &ty)?)
+      }
+      (TyBound::Int, TyBound::Any|TyBound::Num|TyBound::Int) => {
+        TyBound::Int
+      }
+      (TyBound::Flt, TyBound::Any|TyBound::Num|TyBound::Flt) => {
+        TyBound::Flt
+      }
+      (TyBound::Num, TyBound::Any|TyBound::Num) => {
+        TyBound::Num
+      }
+      (TyBound::Any, new @ (TyBound::Any|TyBound::Num|
+                            TyBound::Int|TyBound::Flt)) => {
+        new.clone()
+      }
+      // Unification cannot be done
+      _ => return Err(Box::new(TypeError {}))
+    };
+
+    // Update variable bound if it doesn't create a cycle
+    match unified {
+      TyBound::Is(Ty::TVar(nidx)) if idx == nidx => (),
+      _ => self.tvars[idx] = unified,
+    }
+
+    Ok(())
+  }
+
+  fn bound_ty(&mut self, bound: &TyBound, ty: &Ty) -> MRes<Ty> {
+    use Ty::*;
+    match (bound, ty) {
+      // Add bound to type variable
+      (bound, TVar(idx)) => {
+        self.bound_var(*idx, bound)?;
+        Ok(ty.clone())
+      }
+      // Any type
+      (TyBound::Any, _) |
+      // Integer or floating point types
+      (TyBound::Num, Uint8|Int8|Uint16|Int16|Uint32|Int32|
+                      Uint64|Int64|Uintn|Intn|Float|Double) |
+      // Integer types
+      (TyBound::Int, Uint8|Int8|Uint16|Int16|Uint32|Int32|
+                      Uint64|Int64|Uintn|Intn) |
+      // Floating point types
+      (TyBound::Flt, Float|Double) => Ok(ty.clone()),
+      // Type doesn't satisfy bound
+      _ => return Err(Box::new(TypeError {}))
+    }
+  }
+
+
+  /// Pre LLVM pass to clean up type variable references in the IR
+
+  fn fixup_ty(&mut self, ty: &mut Ty) {
+    use Ty::*;
+    match ty {
+      Bool|Uint8|Int8|Uint16|Int16|Uint32|
+      Int32|Uint64|Int64|Uintn|Intn|Float|Double => (),
+      Ref(..) => (),
+      Ptr(_, ty) => {
+        self.fixup_ty(ty);
+      },
+      Func(params, ty) => {
+        for (_, ty) in params {
+          self.fixup_ty(ty);
+        }
+        self.fixup_ty(ty);
+      },
+      Arr(_, ty) => {
+        self.fixup_ty(ty);
+      },
+      Tuple(params) => {
+        for (_, ty) in params {
+          self.fixup_ty(ty);
+        }
+      }
+      TVar(mut idx) => {
+        // Skip to end of chain
+        while let TyBound::Is(Ty::TVar(next)) = &self.tvars[idx] {
+          idx = *next;
+        }
+        // Convert bound to type
+        *ty = match self.tvars[idx].clone() {
+          TyBound::Is(mut ty) => {
+            self.fixup_ty(&mut ty);
+            ty
+          }
+          // Any type fitting the bound is valid here
+          TyBound::Any => Ty::Tuple(vec![]),
+          TyBound::Num |
+          TyBound::Int => Ty::Int32,
+          TyBound::Flt => Ty::Float,
+        };
+      }
+    }
+  }
+
+  fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
+    match lvalue {
+      LValue::DataRef { ty, .. } |
+      LValue::Str { ty, .. } => {
+        self.fixup_ty(ty);
+      }
+      LValue::Dot { ty, arg, .. } => {
+        self.fixup_ty(ty);
+        self.fixup_lvalue(arg);
+      }
+      LValue::Index { ty, arg, idx, .. } => {
+        self.fixup_ty(ty);
+        self.fixup_lvalue(arg);
+        self.fixup_rvalue(idx);
+      }
+      LValue::Ind { ty, arg, .. } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(arg);
+      }
+    }
+  }
+
+  fn fixup_rvalue(&mut self, rvalue: &mut RValue) {
+    match rvalue {
+      RValue::Null { ty } |
+      RValue::Bool { ty, .. } |
+      RValue::Int { ty, .. } |
+      RValue::Flt { ty, .. } |
+      RValue::Char { ty, .. } |
+      RValue::ConstRef { ty, .. } |
+      RValue::FuncRef { ty, .. } |
+      RValue::Continue { ty } => {
+        self.fixup_ty(ty);
+      }
+      RValue::Load { ty, arg } |
+      RValue::Adr { ty, arg } => {
+        self.fixup_ty(ty);
+        self.fixup_lvalue(arg);
+      }
+      RValue::Call { ty, arg, args } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(arg);
+        for (_, arg) in args.iter_mut() {
+          self.fixup_rvalue(arg);
+        }
+      }
+      RValue::Un { ty, arg, .. } |
+      RValue::Break { ty, arg } |
+      RValue::Return { ty, arg } |
+      RValue::LNot { ty, arg } |
+      RValue::Cast { ty, arg } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(arg);
+      }
+      RValue::Bin { ty, lhs, rhs, .. } |
+      RValue::LAnd { ty, lhs, rhs } |
+      RValue::LOr  { ty, lhs, rhs } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(lhs);
+        self.fixup_rvalue(rhs);
+      }
+      RValue::As { ty, lhs, rhs } |
+      RValue::Rmw { ty, lhs, rhs, .. } => {
+        self.fixup_ty(ty);
+        self.fixup_lvalue(lhs);
+        self.fixup_rvalue(rhs);
+      }
+      RValue::Block { ty, body, .. } => {
+        self.fixup_ty(ty);
+        for expr in body.iter_mut() {
+          self.fixup_rvalue(expr);
+        }
+      }
+      RValue::Let { ty, def, init, .. } => {
+        self.fixup_ty(ty);
+        if let Def::Local { ty, .. } = &mut **def {
+          self.fixup_ty(ty);
+        } else {
+          unreachable!()
+        }
+        self.fixup_rvalue(init);
+      }
+      RValue::If { ty, cond, tbody, ebody } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(cond);
+        self.fixup_rvalue(tbody);
+        self.fixup_rvalue(ebody);
+      }
+      RValue::While { ty, cond, body } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(cond);
+        self.fixup_rvalue(body);
+      }
+      RValue::Loop { ty, body } => {
+        self.fixup_ty(ty);
+        self.fixup_rvalue(body);
+      }
     }
   }
 }
@@ -117,15 +335,18 @@ fn unify(ty1: &mut Ty, ty2: &mut Ty) -> MRes<()> {
 struct CheckCtx {
   // Module being currenly checked
   module: Module,
+  // Type variable context
+  tctx: TVarCtx,
   // Contexts for break/continue, and return
   loop_ty: Vec<Ty>,
-  ret_ty: Vec<Ty>,
+  ret_ty: Vec<Ty>
 }
 
 impl CheckCtx {
   fn new() -> Self {
-    CheckCtx {
+    Self {
       module: Module::new(),
+      tctx: TVarCtx::new(),
       loop_ty: vec![],
       ret_ty: vec![]
     }
@@ -224,6 +445,7 @@ impl CheckCtx {
   // Expressions
   //
 
+
   fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValue> {
     // Infer argument type
     let arg = self.infer_lvalue(arg)?;
@@ -254,7 +476,6 @@ impl CheckCtx {
     })
   }
 
-
   fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValue> {
     // Infer array type
     let arg = self.infer_lvalue(arg)?;
@@ -266,8 +487,8 @@ impl CheckCtx {
     };
 
     // Check index type
-    let mut idx = self.infer_rvalue(idx)?;
-    unify(idx.ty_mut(), &mut Ty::Uintn)?;
+    let idx = self.infer_rvalue(idx)?;
+    self.tctx.unify_tys(&Ty::Uintn, idx.ty())?;
 
     Ok(LValue::Index {
       ty: elem_ty.clone(),
@@ -316,64 +537,58 @@ impl CheckCtx {
       if arg_name != param_name {
         return Err(Box::new(TypeError {}))
       }
-      let mut arg_val = self.infer_rvalue(arg_val)?;
-      let mut param_ty = param_ty.clone();
-      unify(arg_val.ty_mut(), &mut param_ty)?;
+      let arg_val = self.infer_rvalue(arg_val)?;
+      self.tctx.unify_tys(arg_val.ty(), param_ty)?;
       nargs.push((*arg_name, arg_val));
     }
 
     Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(arg), args: nargs })
   }
 
-  fn infer_un(&mut self, op: UnOp, arg: &mut Ty) -> MRes<Ty> {
+  fn infer_un(&mut self, op: UnOp, arg: &Ty) -> MRes<Ty> {
     // Check argument type
-    Ok(match op {
+    match op {
       UnOp::UPlus | UnOp::UMinus => {
-        unify(arg, &mut Ty::ClassNum)?;
-        arg.clone()
+        self.tctx.bound_ty(&TyBound::Num, arg)
       }
       UnOp::Not => {
-        unify(arg, &mut Ty::ClassInt)?;
-        arg.clone()
+        self.tctx.bound_ty(&TyBound::Int, arg)
       }
-    })
+    }
   }
 
-  fn infer_bin(&mut self, op: BinOp, lhs: &mut Ty, rhs: &mut Ty) -> MRes<Ty> {
+  fn infer_bin(&mut self, op: BinOp, lhs: &Ty, rhs: &Ty) -> MRes<Ty> {
     // Check argument types and infer result type
-    Ok(match op {
+    match op {
       // Both arguments must have matching numeric types
       // Result has the same type as the arguments
       BinOp::Mul | BinOp::Div | BinOp::Add | BinOp::Sub => {
-        unify(lhs, &mut Ty::ClassNum)?;
-        unify(lhs, rhs)?;
-        lhs.clone()
+        self.tctx.bound_ty(&TyBound::Num, lhs)?;
+        self.tctx.unify_tys(lhs, rhs)
       }
 
       // Both arguments must have matching integer types
       // Result has the same type as the arguments
       BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
-        unify(lhs, &mut Ty::ClassInt)?;
-        unify(lhs, rhs)?;
-        lhs.clone()
+        self.tctx.bound_ty(&TyBound::Int, lhs)?;
+        self.tctx.unify_tys(lhs, rhs)
       }
 
       // Both arguments must have integer types
       // Result has the left argument's type
       BinOp::Lsh | BinOp::Rsh => {
-        unify(lhs, &mut Ty::ClassInt)?;
-        unify(rhs, &mut Ty::ClassInt)?;
-        lhs.clone()
+        self.tctx.bound_ty(&TyBound::Int, rhs)?;
+        self.tctx.bound_ty(&TyBound::Int, lhs)
       }
 
       // Both arguments must have matching numeric types
       // Result is a boolean
       BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-        unify(lhs, &mut Ty::ClassNum)?;
-        unify(lhs, rhs)?;
-        Ty::Bool
+        self.tctx.bound_ty(&TyBound::Num, lhs)?;
+        self.tctx.unify_tys(lhs, rhs)?;
+        Ok(Ty::Bool)
       }
-    })
+    }
   }
 
   fn infer_lvalue(&mut self, expr: &parse::Expr) -> MRes<LValue> {
@@ -398,7 +613,8 @@ impl CheckCtx {
         }
       }
       Str(val) => {
-        let ty = Ty::Arr(val.borrow_rs().len(), Box::new(Ty::ClassInt));
+        let ty = Ty::Arr(val.borrow_rs().len(),
+                          Box::new(self.tctx.tvar(TyBound::Int)));
         LValue::Str { ty, is_mut: IsMut::No, val: *val }
       }
       Dot(arg, name) => {
@@ -469,13 +685,13 @@ impl CheckCtx {
         RValue::Bool { ty: Ty::Bool, val: *val }
       }
       Int(val) => {
-        RValue::Int { ty: Ty::ClassInt, val: *val }
+        RValue::Int { ty: self.tctx.tvar(TyBound::Int), val: *val }
       }
       Flt(val) => {
-        RValue::Flt { ty: Ty::ClassFlt, val: *val }
+        RValue::Flt { ty: self.tctx.tvar(TyBound::Flt), val: *val }
       }
       Char(val) => {
-        RValue::Char { ty: Ty::ClassInt, val: *val }
+        RValue::Char { ty: self.tctx.tvar(TyBound::Int), val: *val }
       }
       Call(arg, args) => {
         self.infer_call(arg, args)?
@@ -488,39 +704,39 @@ impl CheckCtx {
         }
       }
       Un(op, arg) => {
-        let mut arg = self.infer_rvalue(arg)?;
+        let arg = self.infer_rvalue(arg)?;
         RValue::Un {
-          ty: self.infer_un(*op, arg.ty_mut())?,
+          ty: self.infer_un(*op, arg.ty())?,
           op: *op,
           arg: Box::new(arg)
         }
       }
       LNot(arg) => {
-        let mut arg = self.infer_rvalue(arg)?;
-        unify(arg.ty_mut(), &mut Ty::Bool)?;
+        let arg = self.infer_rvalue(arg)?;
+        self.tctx.unify_tys(&Ty::Bool, arg.ty())?;
         RValue::LNot { ty: Ty::Bool, arg: Box::new(arg) }
       }
       Cast(..) => {
         todo!()
       }
       Bin(op, lhs, rhs) => {
-        let mut lhs = self.infer_rvalue(lhs)?;
-        let mut rhs = self.infer_rvalue(rhs)?;
-        let ty = self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
+        let lhs = self.infer_rvalue(lhs)?;
+        let rhs = self.infer_rvalue(rhs)?;
+        let ty = self.infer_bin(*op, lhs.ty(), rhs.ty())?;
         RValue::Bin { ty, op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       LAnd(lhs, rhs) => {
-        let mut lhs = self.infer_rvalue(lhs)?;
-        let mut rhs = self.infer_rvalue(rhs)?;
-        unify(lhs.ty_mut(), &mut Ty::Bool)?;
-        unify(rhs.ty_mut(), &mut Ty::Bool)?;
+        let lhs = self.infer_rvalue(lhs)?;
+        let rhs = self.infer_rvalue(rhs)?;
+        self.tctx.unify_tys(&Ty::Bool, lhs.ty())?;
+        self.tctx.unify_tys(&Ty::Bool, rhs.ty())?;
         RValue::LAnd { ty: Ty::Bool, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       LOr(lhs, rhs) => {
-        let mut lhs = self.infer_rvalue(lhs)?;
-        let mut rhs = self.infer_rvalue(rhs)?;
-        unify(lhs.ty_mut(), &mut Ty::Bool)?;
-        unify(rhs.ty_mut(), &mut Ty::Bool)?;
+        let lhs = self.infer_rvalue(lhs)?;
+        let rhs = self.infer_rvalue(rhs)?;
+        self.tctx.unify_tys(&Ty::Bool, lhs.ty())?;
+        self.tctx.unify_tys(&Ty::Bool, rhs.ty())?;
         RValue::LOr { ty: Ty::Bool, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Block(parsed_body) => {
@@ -531,7 +747,7 @@ impl CheckCtx {
         }
         let scope = self.exit();
 
-        let ty = if let Some(last) = body.last_mut() {
+        let ty = if let Some(last) = body.last() {
           last.ty().clone()
         } else {
           Ty::Tuple(vec![])
@@ -541,9 +757,9 @@ impl CheckCtx {
       }
       As(lhs, rhs) => {
         // Infer argument types
-        let mut lhs = self.infer_lvalue(lhs)?;
-        let mut rhs = self.infer_rvalue(rhs)?;
-        unify(lhs.ty_mut(), rhs.ty_mut())?;
+        let lhs = self.infer_lvalue(lhs)?;
+        let rhs = self.infer_rvalue(rhs)?;
+        self.tctx.unify_tys(lhs.ty(), rhs.ty())?;
 
         // Make sure lhs is mutable
         match lhs.is_mut() {
@@ -555,9 +771,9 @@ impl CheckCtx {
       }
       Rmw(op, lhs, rhs) => {
         // Infer and check argument types
-        let mut lhs = self.infer_lvalue(lhs)?;
-        let mut rhs = self.infer_rvalue(rhs)?;
-        self.infer_bin(*op, lhs.ty_mut(), rhs.ty_mut())?;
+        let lhs = self.infer_lvalue(lhs)?;
+        let rhs = self.infer_rvalue(rhs)?;
+        self.infer_bin(*op, lhs.ty(), rhs.ty())?;
 
         // Make sure lhs is mutable
         match lhs.is_mut() {
@@ -569,49 +785,49 @@ impl CheckCtx {
       }
       Continue => {
         // Can only have continue inside a loop
-        match self.loop_ty.last_mut() {
+        match self.loop_ty.last() {
           Some(..) => (),
           None => return Err(Box::new(TypeError {})),
         };
 
-        RValue::Continue { ty: Ty::ClassAny }
+        RValue::Continue { ty: self.tctx.tvar(TyBound::Any) }
       }
       Break(arg) => {
-        let mut arg = self.infer_rvalue(&*arg)?;
+        let arg = self.infer_rvalue(&*arg)?;
 
         // Can only have break inside a loop
-        let loop_ty = match self.loop_ty.last_mut() {
-          Some(loop_ty) => loop_ty,
+        let loop_ty = match self.loop_ty.last() {
+          Some(loop_ty) => loop_ty.clone(),
           None => return Err(Box::new(TypeError {})),
         };
 
         // Unify function return type with the returned value's type
-        unify(loop_ty, arg.ty_mut())?;
+        self.tctx.unify_tys(&loop_ty, arg.ty())?;
 
-        RValue::Break { ty: Ty::ClassAny, arg: Box::new(arg) }
+        RValue::Break { ty: self.tctx.tvar(TyBound::Any), arg: Box::new(arg) }
       }
       Return(arg) => {
-        let mut arg = self.infer_rvalue(&*arg)?;
+        let arg = self.infer_rvalue(&*arg)?;
 
         // Can only have return inside a function
-        let ret_ty = match self.ret_ty.last_mut() {
-          Some(ret_ty) => ret_ty,
+        let ret_ty = match self.ret_ty.last() {
+          Some(ret_ty) => ret_ty.clone(),
           None => return Err(Box::new(TypeError {})),
         };
 
         // Unify function return type with the returned value's type
-        unify(ret_ty, arg.ty_mut())?;
+        self.tctx.unify_tys(&ret_ty, arg.ty())?;
 
-        RValue::Return { ty: Ty::ClassAny, arg: Box::new(arg) }
+        RValue::Return { ty: self.tctx.tvar(TyBound::Any), arg: Box::new(arg) }
       }
       Let(name, is_mut, ty, init) => {
         // Check initializer
-        let mut init = self.infer_rvalue(init)?;
+        let init = self.infer_rvalue(init)?;
 
         // Unify type annotation with initializer type
         let ty = if let Some(ty) = ty {
-          let mut ty = self.check_ty(ty)?;
-          unify(&mut ty, init.ty_mut())?;
+          let ty = self.check_ty(ty)?;
+          self.tctx.unify_tys(&ty, init.ty())?;
           ty
         } else {
           init.ty().clone()
@@ -625,12 +841,12 @@ impl CheckCtx {
         RValue::Let { ty: Ty::Tuple(vec![]), def, init: Box::new(init) }
       }
       If(cond, tbody, ebody) => {
-        let mut cond = self.infer_rvalue(cond)?;
-        unify(cond.ty_mut(), &mut Ty::Bool)?;
+        let cond = self.infer_rvalue(cond)?;
+        self.tctx.unify_tys(&Ty::Bool, cond.ty())?;
 
-        let mut tbody = self.infer_rvalue(tbody)?;
-        let mut ebody = self.infer_rvalue(ebody)?;
-        unify(tbody.ty_mut(), ebody.ty_mut())?;
+        let tbody = self.infer_rvalue(tbody)?;
+        let ebody = self.infer_rvalue(ebody)?;
+        self.tctx.unify_tys(tbody.ty(), ebody.ty())?;
 
         RValue::If {
           ty: tbody.ty().clone(),
@@ -652,7 +868,8 @@ impl CheckCtx {
         }
       }
       Loop(body) => {
-        self.loop_ty.push(Ty::ClassAny);
+        let ty = self.tctx.tvar(TyBound::Any);
+        self.loop_ty.push(ty);
         let body = self.infer_rvalue(body)?;
         RValue::Loop {
           ty: self.loop_ty.pop().unwrap(),
@@ -725,9 +942,11 @@ impl CheckCtx {
     for def in defs {
       match def {
         Const { name, ty, val } => {
-          let mut ty = self.check_ty(ty)?;
+          self.tctx.clear();
+          let ty = self.check_ty(ty)?;
           let mut val = self.infer_rvalue(val)?;
-          unify(&mut ty, val.ty_mut())?;
+          self.tctx.unify_tys(&ty, val.ty())?;
+          self.tctx.fixup_rvalue(&mut val);
           self.define(*name, Def::Const { name: *name, ty, val });
         }
         Data { name, is_mut, ty, .. } => {
@@ -771,8 +990,10 @@ impl CheckCtx {
       match (def, &mut *ptr) {
         (Data { init, .. }, Def::Data { ty, init: dest, .. }) => {
           // Check initializer type
+          self.tctx.clear();
           let mut init = self.infer_rvalue(init)?;
-          unify(init.ty_mut(), ty)?;
+          self.tctx.unify_tys(ty, init.ty())?;
+          self.tctx.fixup_rvalue(&mut init);
 
           // Complete definition
           *dest = Some(init);
@@ -782,9 +1003,11 @@ impl CheckCtx {
           self.module.defs.push(std::mem::take(params));
 
           // Typecheck body
+          self.tctx.clear();
+          let ret_ty = self.check_ty(ret_ty)?;
           let mut body = self.infer_rvalue(body)?;
-          let mut ret_ty = self.check_ty(ret_ty)?;
-          unify(body.ty_mut(), &mut ret_ty)?;
+          self.tctx.unify_tys(&ret_ty, body.ty())?;
+          self.tctx.fixup_rvalue(&mut body);
 
           // Exit paraemeter scope
           *params = self.exit();
@@ -802,6 +1025,7 @@ impl CheckCtx {
   fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
     self.check_ty_defs(&module.defs)?;
     self.check_defs(&module.defs)?;
+    println!("{:?}", self.tctx.tvars);
     Ok(())
   }
 }
