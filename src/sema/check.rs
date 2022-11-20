@@ -146,7 +146,7 @@ impl CheckCtx {
     }
   }
 
-  fn check_params(&mut self, params: &Vec<(RefStr, parse::TyRef)>) -> MRes<Vec<(RefStr, Ty)>> {
+  fn check_params(&mut self, params: &Vec<(RefStr, parse::Ty)>) -> MRes<Vec<(RefStr, Ty)>> {
     let mut result = vec![];
     for (name, ty) in params {
       result.push((*name, self.check_ty(ty)?));
@@ -154,8 +154,8 @@ impl CheckCtx {
     Ok(result)
   }
 
-  fn check_ty(&mut self, ty: &parse::TyRef) -> MRes<Ty> {
-    use parse::TyRef::*;
+  fn check_ty(&mut self, ty: &parse::Ty) -> MRes<Ty> {
+    use parse::Ty::*;
     Ok(match ty {
       Bool => Ty::Bool,
       Uint8 => Ty::Uint8,
@@ -187,50 +187,6 @@ impl CheckCtx {
         Ty::Tuple(self.check_params(params)?)
       }
     })
-  }
-
-  fn check_variants(&mut self, variants: &Vec<(RefStr, parse::Variant)>) -> MRes<Vec<(RefStr, Variant)>> {
-    use parse::Variant::*;
-
-    let mut result = vec![];
-    for (name, variant) in variants {
-      result.push((*name, match variant {
-        Unit => Variant::Unit(*name),
-        Struct(params) => Variant::Struct(*name, self.check_params(params)?),
-      }));
-    }
-
-    Ok(result)
-  }
-
-  fn check_ty_defs(&mut self, ty_defs: &Vec<parse::TyDef>) -> MRes<()>  {
-    use parse::TyDef::*;
-
-    let mut queue = vec![];
-
-    // Pass 1: Create objects
-    for ty_def in ty_defs {
-      match ty_def {
-        parse::TyDef::Struct { name, .. } |
-        parse::TyDef::Union { name, .. } |
-        parse::TyDef::Enum { name, .. } => {
-          let dummy = Own::new(TyDef::new(*name));
-          queue.push((ty_def, dummy.ptr()));
-          self.module.ty_defs.insert(*name, dummy);
-        }
-      }
-    }
-
-    // Pass 2: Resolve names
-    for (ty_def, mut dest) in queue {
-      dest.kind = match ty_def {
-        Struct { params, .. } => TyDefKind::Struct(self.check_params(params)?),
-        Union { params, .. } => TyDefKind::Union(self.check_params(params)?),
-        Enum { variants, .. } => TyDefKind::Enum(self.check_variants(variants)?),
-      };
-    }
-
-    Ok(())
   }
 
   //
@@ -691,60 +647,108 @@ impl CheckCtx {
     })
   }
 
-  fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
-    // Populate type definitions
-    self.check_ty_defs(&module.ty_defs)?;
+  fn check_ty_defs(&mut self, defs: &Vec<parse::Def>) -> MRes<()>  {
+    use parse::Def::*;
 
     let mut queue = vec![];
 
-    // Create symbols for objects
-    for def in &module.defs {
+    // Pass 1: Create definitions
+    for def in defs.iter() {
       match def {
-        parse::Def::Const { name, ty, val } => {
+        Struct { name, .. } |
+        Union { name, .. } |
+        Enum { name, .. } => {
+          let dummy = Own::new(TyDef::new(*name));
+          queue.push((def, dummy.ptr()));
+          self.module.ty_defs.insert(*name, dummy);
+        }
+        _ => ()
+      }
+    }
+
+    // Pass 2: Fill bodies
+    for (def, mut dest) in queue {
+      match def {
+        Struct { params, .. } => {
+          dest.kind = TyDefKind::Struct(self.check_params(params)?);
+        }
+        Union { params, .. } => {
+          dest.kind = TyDefKind::Union(self.check_params(params)?);
+        }
+        Enum { variants, .. } => {
+          let mut result = vec![];
+          for (name, variant) in variants {
+            result.push((*name, match variant {
+              parse::Variant::Unit => {
+                Variant::Unit(*name)
+              }
+              parse::Variant::Struct(params) => {
+                Variant::Struct(*name, self.check_params(params)?)
+              }
+            }));
+          }
+          dest.kind = TyDefKind::Enum(result);
+        }
+        _ => ()
+      }
+    }
+
+    Ok(())
+  }
+
+  fn check_defs(&mut self, defs: &Vec<parse::Def>) -> MRes<()> {
+    use parse::Def::*;
+
+    let mut queue = vec![];
+
+    // Pass 1: Create definitions
+    for def in defs {
+      match def {
+        Const { name, ty, val } => {
           let mut ty = self.check_ty(ty)?;
           let mut val = self.infer_rvalue(val)?;
           unify(&mut ty, val.ty_mut())?;
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::Const(val)));
         }
-        parse::Def::Data { name, is_mut, ty, .. } => {
+        Data { name, is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
           let ptr = self.define(Def::empty(*name, *is_mut, ty));
-          queue.push((ptr, def));
+          queue.push((def, ptr));
         }
-        parse::Def::Func { name, params, ret_ty, .. } => {
+        Func { name, params, ret_ty, .. } => {
           let mut new_params = vec![];
           for (name, _, ty) in params {
             new_params.push((*name, self.check_ty(ty)?));
           }
           let ty = Ty::Func(new_params, Box::new(self.check_ty(ret_ty)?));
           let ptr = self.define(Def::empty(*name, IsMut::No, ty));
-          queue.push((ptr, def));
+          queue.push((def, ptr));
         }
-        parse::Def::ExternData { name, is_mut, ty } => {
+        ExternData { name, is_mut, ty } => {
           let ty = self.check_ty(ty)?;
           self.define(Def::with_kind(*name, *is_mut, ty, DefKind::ExternData));
         }
-        parse::Def::ExternFunc { name, params, ret_ty } => {
+        ExternFunc { name, params, ret_ty } => {
           let ty = Ty::Func(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
           self.define(Def::with_kind(*name, IsMut::No, ty, DefKind::ExternFunc));
         }
-      };
+        _ => ()
+      }
     }
 
-    // Type check object bodies
-    for (mut ptr, def) in queue {
-      // Generate object bodies
+    // Pass 2: Fill bodies
+    for (def, mut dest) in queue {
       match def {
-        parse::Def::Data { init, .. } => {
+        Data { init, .. } => {
           // Check initializer type
           let mut init = self.infer_rvalue(init)?;
-          unify(init.ty_mut(), &mut ptr.ty)?;
+          unify(init.ty_mut(), &mut dest.ty)?;
 
           // Complete definition
-          ptr.kind = DefKind::Data(init);
+          dest.kind = DefKind::Data(init);
         }
-        parse::Def::Func { params, ret_ty, body, .. } => {
+        Func { params, ret_ty, body, .. } => {
           // FIXME: this could be made better by not re-checking ret_ty
           // and re-using the value from the first pass
           self.enter();
@@ -764,12 +768,18 @@ impl CheckCtx {
           let params = self.exit();
 
           // Complete definition
-          ptr.kind = DefKind::Func(params, body);
+          dest.kind = DefKind::Func(params, body);
         }
         _ => ()
       }
     }
 
+    Ok(())
+  }
+
+  fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
+    self.check_ty_defs(&module.defs)?;
+    self.check_defs(&module.defs)?;
     Ok(())
   }
 }

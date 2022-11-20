@@ -13,37 +13,37 @@ Path: Path = {
 
 // Types
 
-TypeName: TyRef = {
-  "Bool"      => TyRef::Bool,
-  "Uint8"     => TyRef::Uint8,
-  "Int8"      => TyRef::Int8,
-  "Uint16"    => TyRef::Uint16,
-  "Int16"     => TyRef::Int16,
-  "Uint32"    => TyRef::Uint32,
-  "Int32"     => TyRef::Int32,
-  "Uint64"    => TyRef::Uint64,
-  "Int64"     => TyRef::Int64,
-  "Uintn"     => TyRef::Uintn,
-  "Intn"      => TyRef::Intn,
-  "Float"     => TyRef::Float,
-  "Double"    => TyRef::Double,
-  <p:Path>    => TyRef::Path(p),
+TypeName: Ty = {
+  "Bool"      => Ty::Bool,
+  "Uint8"     => Ty::Uint8,
+  "Int8"      => Ty::Int8,
+  "Uint16"    => Ty::Uint16,
+  "Int16"     => Ty::Int16,
+  "Uint32"    => Ty::Uint32,
+  "Int32"     => Ty::Int32,
+  "Uint64"    => Ty::Uint64,
+  "Int64"     => Ty::Int64,
+  "Uintn"     => Ty::Uintn,
+  "Intn"      => Ty::Intn,
+  "Float"     => Ty::Float,
+  "Double"    => Ty::Double,
+  <p:Path>    => Ty::Path(p),
   "*" <is_mut:IsMut> <ty:TypeName> =>
-    TyRef::Ptr(is_mut, Box::new(ty)),
+    Ty::Ptr(is_mut, Box::new(ty)),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
-    TyRef::Func(params, Box::new(ret)),
+    Ty::Func(params, Box::new(ret)),
   "[" <l:Expr> "]" <t:TypeName> =>
-    TyRef::Arr(Box::new(l), Box::new(t)),
+    Ty::Arr(Box::new(l), Box::new(t)),
   "(" <params:ParameterListOpt>  ")" =>
-    TyRef::Tuple(params)
+    Ty::Tuple(params)
 };
 
-ParameterListOpt: Vec<(RefStr, TyRef)> = {
+ParameterListOpt: Vec<(RefStr, Ty)> = {
   ParameterList,
   => vec![],
 };
 
-ParameterList: Vec<(RefStr, TyRef)> = {
+ParameterList: Vec<(RefStr, Ty)> = {
   <name:Identifier> ":" <ty:TypeName> => vec![ (name, ty) ],
   <mut l:ParameterList> "," <name:Identifier> ":" <ty:TypeName> => {
     l.push((name, ty));
@@ -51,9 +51,9 @@ ParameterList: Vec<(RefStr, TyRef)> = {
   },
 };
 
-ReturnType: TyRef = {
+ReturnType: Ty = {
   "->" <t:TypeName> => t,
-  => TyRef::Tuple(vec![])
+  => Ty::Tuple(vec![])
 };
 
 IsMut: IsMut = {
@@ -108,7 +108,7 @@ ExprOpt: Expr = {
             => Expr::Null
 };
 
-LetType: Option<TyRef> = {
+LetType: Option<Ty> = {
   ":" <ty:TypeName> => Some(ty),
                     => None,
 };
@@ -227,15 +227,15 @@ PrimExpr: Expr = {
 TypeDefinition: () = {
   "struct" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.push(TyDef::Struct { name, type_params, params });
+    module.defs.push(Def::Struct { name, type_params, params });
   },
   "union" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.ty_defs.push(TyDef::Union { name, type_params, params });
+    module.defs.push(Def::Union { name, type_params, params });
   },
   "enum" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
-    module.ty_defs.push(TyDef::Enum { name, type_params, variants });
+    module.defs.push(Def::Enum { name, type_params, variants });
   },
 };
 
@@ -292,12 +292,12 @@ FunctionDefinition: () = {
   }
 };
 
-ParameterDefinitionListOpt: Vec<(RefStr, IsMut, TyRef)> = {
+ParameterDefinitionListOpt: Vec<(RefStr, IsMut, Ty)> = {
   ParameterDefinitionList,
   => vec![]
 };
 
-ParameterDefinitionList: Vec<(RefStr, IsMut, TyRef)> = {
+ParameterDefinitionList: Vec<(RefStr, IsMut, Ty)> = {
   <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
     vec![ (name, is_mut, ty) ]
   },

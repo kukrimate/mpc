@@ -22,7 +22,7 @@ impl fmt::Display for IsMut {
 pub type Path = Vec<RefStr>;
 
 #[derive(Debug)]
-pub enum TyRef {
+pub enum Ty {
   Bool,
   Uint8,
   Int8,
@@ -37,35 +37,10 @@ pub enum TyRef {
   Float,
   Double,
   Path(Path),
-  Ptr(IsMut, Box<TyRef>),
-  Func(Vec<(RefStr, TyRef)>, Box<TyRef>),
-  Arr(Box<Expr>, Box<TyRef>),
-  Tuple(Vec<(RefStr, TyRef)>),
-}
-
-#[derive(Debug)]
-pub enum Variant {
-  Unit,
-  Struct(Vec<(RefStr, TyRef)>),
-}
-
-#[derive(Debug)]
-pub enum TyDef {
-  Struct {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    params: Vec<(RefStr, TyRef)>,
-  },
-  Union {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    params: Vec<(RefStr, TyRef)>,
-  },
-  Enum {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    variants: Vec<(RefStr, Variant)>,
-  },
+  Ptr(IsMut, Box<Ty>),
+  Func(Vec<(RefStr, Ty)>, Box<Ty>),
+  Arr(Box<Expr>, Box<Ty>),
+  Tuple(Vec<(RefStr, Ty)>),
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -94,7 +69,7 @@ pub enum Expr {
   Ind(Box<Expr>),
   Un(UnOp, Box<Expr>),
   LNot(Box<Expr>),
-  Cast(Box<Expr>, TyRef),
+  Cast(Box<Expr>, Ty),
   Bin(BinOp, Box<Expr>, Box<Expr>),
   LAnd(Box<Expr>, Box<Expr>),
   LOr(Box<Expr>, Box<Expr>),
@@ -104,7 +79,7 @@ pub enum Expr {
   Continue,
   Break(Box<Expr>),
   Return(Box<Expr>),
-  Let(RefStr, IsMut, Option<TyRef>, Box<Expr>),
+  Let(RefStr, IsMut, Option<Ty>, Box<Expr>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -112,41 +87,61 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub enum Def {
+  Struct {
+    name: RefStr,
+    type_params: Vec<RefStr>,
+    params: Vec<(RefStr, Ty)>,
+  },
+  Union {
+    name: RefStr,
+    type_params: Vec<RefStr>,
+    params: Vec<(RefStr, Ty)>,
+  },
+  Enum {
+    name: RefStr,
+    type_params: Vec<RefStr>,
+    variants: Vec<(RefStr, Variant)>,
+  },
   Const {
     name: RefStr,
-    ty: TyRef,
+    ty: Ty,
     val: Expr
   },
   Data {
     name: RefStr,
     is_mut: IsMut,
-    ty: TyRef,
+    ty: Ty,
     init: Expr
   },
   Func {
     name: RefStr,
     type_params: Vec<RefStr>,
-    params: Vec<(RefStr, IsMut, TyRef)>,
-    ret_ty: TyRef,
+    params: Vec<(RefStr, IsMut, Ty)>,
+    ret_ty: Ty,
     body: Expr,
   },
   ExternData {
     name: RefStr,
     is_mut: IsMut,
-    ty: TyRef,
+    ty: Ty,
   },
   ExternFunc {
     name: RefStr,
-    params: Vec<(RefStr, TyRef)>,
-    ret_ty: TyRef,
+    params: Vec<(RefStr, Ty)>,
+    ret_ty: Ty,
   },
+}
+
+#[derive(Debug)]
+pub enum Variant {
+  Unit,
+  Struct(Vec<(RefStr, Ty)>),
 }
 
 #[derive(Debug)]
 pub struct Module {
   pub deps: HashSet<RefStr>,
   pub defs: Vec<Def>,
-  pub ty_defs: Vec<TyDef>,
 }
 
 impl Module {
@@ -154,7 +149,6 @@ impl Module {
     Module {
       deps: HashSet::new(),
       defs: Vec::new(),
-      ty_defs: Vec::new(),
     }
   }
 }
