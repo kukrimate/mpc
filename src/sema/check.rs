@@ -232,6 +232,8 @@ impl TVarCtx {
   fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
     match lvalue {
       LValue::DataRef { ty, .. } |
+      LValue::ParamRef { ty, .. } |
+      LValue::LocalRef { ty, .. } |
       LValue::Str { ty, .. } => {
         self.fixup_ty(ty);
       }
@@ -304,11 +306,7 @@ impl TVarCtx {
       }
       RValue::Let { ty, def, init, .. } => {
         self.fixup_ty(ty);
-        if let Def::Local { ty, .. } = &mut **def {
-          self.fixup_ty(ty);
-        } else {
-          unreachable!()
-        }
+        self.fixup_ty(&mut def.ty);
         self.fixup_rvalue(init);
       }
       RValue::If { ty, cond, tbody, ebody } => {
@@ -336,12 +334,25 @@ struct CheckCtx {
   // Module being currenly checked
   module: Module,
   // Symbol table
-  scopes: Vec<HashMap<RefStr, Ptr<Def>>>,
+  scopes: Vec<HashMap<RefStr, Sym>>,
+
   // Type variable context
   tctx: TVarCtx,
-  // Contexts for break/continue, and return
+
+  // Function return types
+  ret_ty: Option<Ty>,
+  // Function local variables
+  locals: usize,
+
+  // Loop types
   loop_ty: Vec<Ty>,
-  ret_ty: Vec<Ty>
+}
+
+#[derive(Clone)]
+enum Sym {
+  Def(Ptr<Def>),
+  Param(Ty, IsMut, usize),
+  Local(Ty, IsMut, usize),
 }
 
 impl CheckCtx {
@@ -350,8 +361,10 @@ impl CheckCtx {
       module: Module::new(),
       scopes: vec![ HashMap::new() ],
       tctx: TVarCtx::new(),
+
+      ret_ty: None,
+      locals: 0,
       loop_ty: vec![],
-      ret_ty: vec![]
     }
   }
 
@@ -365,14 +378,14 @@ impl CheckCtx {
     self.scopes.pop().unwrap();
   }
 
-  fn define(&mut self, name: RefStr, def: Ptr<Def>) {
-    self.scopes.last_mut().unwrap().insert(name, def);
+  fn define(&mut self, name: RefStr, sym: Sym) {
+    self.scopes.last_mut().unwrap().insert(name, sym);
   }
 
-  fn resolve_def(&mut self, name: RefStr) -> MRes<Ptr<Def>> {
+  fn resolve_def(&self, name: RefStr) -> MRes<Sym> {
     for scope in self.scopes.iter().rev() {
-      if let Some(def) = scope.get(&name) {
-        return Ok(*def);
+      if let Some(sym) = scope.get(&name) {
+        return Ok(sym.clone());
       }
     }
     Err(Box::new(UnresolvedIdentError { name }))
@@ -384,8 +397,16 @@ impl CheckCtx {
     let own = Own::new(def);
     let ptr = own.ptr();
     self.module.defs.push(own);
-    self.define(name, ptr);
+    self.define(name, Sym::Def(ptr));
     ptr
+  }
+
+  /// Create local variable
+
+  fn local_def(&mut self) -> usize {
+    let index = self.locals;
+    self.locals += 1;
+    index
   }
 
   //
@@ -393,16 +414,19 @@ impl CheckCtx {
   //
 
   fn resolve_ty(&mut self, name: RefStr) -> MRes<Ty> {
-    let def = self.resolve_def(name)?;
-    match &*def {
-      Def::Struct {..} |
-      Def::Union {..} |
-      Def::Enum {..} => {
-        Ok(Ty::Ref(name, def))
+    if let Sym::Def(def) = self.resolve_def(name)? {
+      match &*def {
+        Def::Struct {..} |
+        Def::Union {..} |
+        Def::Enum {..} => {
+          Ok(Ty::Ref(name, def))
+        }
+        _ => {
+          Err(Box::new(UnresolvedIdentError { name }))
+        }
       }
-      _ => {
-        Err(Box::new(UnresolvedIdentError { name }))
-      }
+    } else {
+      Err(Box::new(UnresolvedIdentError { name }))
     }
   }
 
@@ -599,26 +623,50 @@ impl CheckCtx {
     }
   }
 
+  fn resolve_lvalue(&self, path: &parse::Path) -> MRes<LValue> {
+    match self.resolve_def(path[0])? {
+      Sym::Def(def) => {
+        match &*def {
+          // Global data defintions
+          Def::Data { ty, is_mut, .. } |
+          Def::ExternData { ty, is_mut, .. } => {
+            Ok(LValue::DataRef {
+              ty: ty.clone(),
+              is_mut: is_mut.clone(),
+              name: path[0],
+              def: def
+            })
+          }
+          _ => Err(Box::new(TypeError {}))
+        }
+      }
+      // Function parameters
+      Sym::Param(ty, is_mut, index) => {
+        Ok(LValue::ParamRef {
+          ty: ty.clone(),
+          is_mut: is_mut.clone(),
+          name: path[0],
+          index: index
+        })
+      }
+      // Local variables
+      Sym::Local(ty, is_mut, index) => {
+        Ok(LValue::LocalRef {
+          ty: ty.clone(),
+          is_mut: is_mut.clone(),
+          name: path[0],
+          index: index
+        })
+      }
+    }
+  }
+
   fn infer_lvalue(&mut self, expr: &parse::Expr) -> MRes<LValue> {
     use parse::Expr::*;
 
     Ok(match expr {
       Path(path) => {
-        let def = self.resolve_def(path[0])?;
-        match &*def {
-          Def::Data       { name, ty, is_mut, .. } |
-          Def::ExternData { name, ty, is_mut, .. } |
-          Def::Param      { name, ty, is_mut, .. } |
-          Def::Local      { name, ty, is_mut, .. } => {
-            LValue::DataRef {
-              ty: ty.clone(),
-              is_mut: *is_mut,
-              name: *name,
-              def: def
-            }
-          }
-          _ => return Err(Box::new(TypeError {}))
-        }
+        self.resolve_lvalue(path)?
       }
       Str(val) => {
         let ty = Ty::Arr(val.borrow_rs().len(),
@@ -638,6 +686,40 @@ impl CheckCtx {
     })
   }
 
+  fn resolve_rvalue(&self, path: &parse::Path) -> MRes<RValue> {
+    // Const and function references resolve to rvalues directly
+    match self.resolve_def(path[0])? {
+      Sym::Def(def) => {
+        match &*def {
+          Def::Const { name, ty, .. } => {
+            return Ok(RValue::ConstRef {
+              ty: ty.clone(),
+              name: *name,
+              def: def
+            });
+          }
+          Def::Func { name, ty, .. } |
+          Def::ExternFunc { name, ty, .. } => {
+            return Ok(RValue::FuncRef {
+              ty: ty.clone(),
+              name: *name,
+              def: def
+            });
+          }
+          _ => ()
+        }
+      }
+      _ => ()
+    }
+
+    // Otherwise try resolving as an lvalue and loading
+    let arg = self.resolve_lvalue(path)?;
+    Ok(RValue::Load {
+      ty: arg.ty().clone(),
+      arg: Box::new(arg)
+    })
+  }
+
   fn infer_rvalue(&mut self, expr: &parse::Expr) -> MRes<RValue> {
     use parse::Expr::*;
 
@@ -646,41 +728,7 @@ impl CheckCtx {
         RValue::Null { ty: Ty::Tuple(vec![]) }
       }
       Path(path) => {
-        let def = self.resolve_def(path[0])?;
-        match &*def {
-          Def::Const { name, ty, .. } => {
-            RValue::ConstRef {
-              ty: ty.clone(),
-              name: *name,
-              def: def
-            }
-          }
-          Def::Func { name, ty, .. } |
-          Def::ExternFunc { name, ty, .. } => {
-            RValue::FuncRef {
-              ty: ty.clone(),
-              name: *name,
-              def: def
-            }
-          }
-          Def::Data       { name, ty, is_mut, .. } |
-          Def::ExternData { name, ty, is_mut, .. } |
-          Def::Param      { name, ty, is_mut, .. } |
-          Def::Local      { name, ty, is_mut, .. } => {
-            let data_ref = LValue::DataRef {
-              ty: ty.clone(),
-              is_mut: *is_mut,
-              name: *name,
-              def: def
-            };
-
-            RValue::Load {
-              ty: ty.clone(),
-              arg: Box::new(data_ref)
-            }
-          }
-          _ => return Err(Box::new(TypeError {}))
-        }
+        self.resolve_rvalue(path)?
       }
       Str(..) | Dot(..) | Index(..) | Ind(..) => {
         let arg = self.infer_lvalue(expr)?;
@@ -818,7 +866,7 @@ impl CheckCtx {
         let arg = self.infer_rvalue(&*arg)?;
 
         // Can only have return inside a function
-        let ret_ty = match self.ret_ty.last() {
+        let ret_ty = match &self.ret_ty {
           Some(ret_ty) => ret_ty.clone(),
           None => return Err(Box::new(TypeError {})),
         };
@@ -841,13 +889,16 @@ impl CheckCtx {
           init.ty().clone()
         };
 
-        // Create definition
-        let def = Own::new(Def::Local { name: *name, is_mut: *is_mut, ty });
         // Add to symbol table
-        self.define(*name, def.ptr());
+        let index = self.local_def();
+        self.define(*name, Sym::Local(ty.clone(), *is_mut, index));
 
         // Add let expression
-        RValue::Let { ty: Ty::Tuple(vec![]), def, init: Box::new(init) }
+        RValue::Let {
+          ty: Ty::Tuple(vec![]),
+          def: LocalDef { name: *name, is_mut: *is_mut, ty, index },
+          init: Box::new(init)
+        }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;
@@ -971,8 +1022,7 @@ impl CheckCtx {
           for (index, (name, is_mut, ty)) in params.iter().enumerate() {
             let ty = self.check_ty(ty)?;
             param_tys.push((*name, ty.clone()));
-            param_defs.push(Own::new(
-              Def::Param { name: *name, is_mut: *is_mut, ty, index }));
+            param_defs.push(ParamDef { name: *name, is_mut: *is_mut, ty, index });
           }
 
           let ty = Ty::Func(param_tys, Box::new(self.check_ty(ret_ty)?));
@@ -1010,17 +1060,20 @@ impl CheckCtx {
         (Func { ret_ty, body, .. }, Def::Func { params, body: dest, .. }) => {
           // Create parameter scope
           self.enter();
-          for def in params {
-            if let Def::Param { name, .. } = &**def {
-              self.define(*name, def.ptr());
-            } else {
-              unreachable!()
-            }
+          for param in params {
+            self.define(param.name,
+              Sym::Param(param.ty.clone(), param.is_mut, param.index));
           }
+
+          // Clear locals
+          self.locals = 0;
+
+          // Add return type
+          let ret_ty = self.check_ty(ret_ty)?;
+          self.ret_ty = Some(ret_ty.clone());
 
           // Typecheck body
           self.tctx.clear();
-          let ret_ty = self.check_ty(ret_ty)?;
           let mut body = self.infer_rvalue(body)?;
           self.tctx.unify_tys(&ret_ty, body.ty())?;
           self.tctx.fixup_rvalue(&mut body);

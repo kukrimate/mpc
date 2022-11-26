@@ -35,13 +35,13 @@ enum Def {
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
   Const       { name: RefStr, ty: Ty, val: RValue },
-  Func        { name: RefStr, ty: Ty, params: Vec<Own<Def>>, body: Option<RValue> },
+  Func        { name: RefStr, ty: Ty, params: Vec<ParamDef>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
-  Param       { name: RefStr, ty: Ty, is_mut: IsMut, index: usize },
-  Local       { name: RefStr, ty: Ty, is_mut: IsMut }
 }
+
+struct ParamDef { name: RefStr, ty: Ty, is_mut: IsMut, index: usize }
 
 enum Variant {
   Unit(RefStr),
@@ -79,11 +79,8 @@ impl fmt::Debug for Def {
       Def::Func { name, params, body: Some(body), .. } => {
         write!(f, "fn {}", name)?;
         write_comma_separated(f, params.iter(), |f, param| {
-          if let Def::Param { name, ty, is_mut, .. } = &***param {
-            write!(f, "{}{}: {:?}", is_mut, name, ty)
-          } else {
-            unreachable!()
-          }
+          let ParamDef { is_mut, name, ty, .. } = param;
+          write!(f, "{}{}: {:?}", is_mut, name, ty)
         })?;
         write!(f, " -> {:?} {:#?}", body.ty(), body)
       }
@@ -178,6 +175,8 @@ impl fmt::Debug for Ty {
 
 enum LValue {
   DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, def: Ptr<Def> },
+  ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
+  LocalRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
   Str       { ty: Ty, is_mut: IsMut, val: RefStr },
   Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -207,16 +206,25 @@ enum RValue {
   Continue  { ty: Ty },
   Break     { ty: Ty, arg: Box<RValue> },
   Return    { ty: Ty, arg: Box<RValue> },
-  Let       { ty: Ty, def: Own<Def>, init: Box<RValue> },
+  Let       { ty: Ty, def: LocalDef, init: Box<RValue> },
   If        { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While     { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop      { ty: Ty, body: Box<RValue> },
+}
+
+struct LocalDef {
+  name: RefStr,
+  ty: Ty,
+  is_mut: IsMut,
+  index: usize
 }
 
 impl LValue {
   fn ty(&self) -> &Ty {
     match self {
       LValue::DataRef   { ty, .. } => ty,
+      LValue::ParamRef  { ty, .. } => ty,
+      LValue::LocalRef  { ty, .. } => ty,
       LValue::Str       { ty, .. } => ty,
       LValue::Dot       { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
@@ -227,6 +235,8 @@ impl LValue {
   fn is_mut(&self) -> IsMut {
     match self {
       LValue::DataRef   { is_mut, .. }  => *is_mut,
+      LValue::ParamRef  { is_mut, .. }  => *is_mut,
+      LValue::LocalRef  { is_mut, .. }  => *is_mut,
       LValue::Str       { is_mut, .. }  => *is_mut,
       LValue::Dot       { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
@@ -271,7 +281,9 @@ impl RValue {
 impl fmt::Debug for LValue {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      LValue::DataRef { name, .. } => {
+      LValue::DataRef { name, .. } |
+      LValue::ParamRef { name, .. } |
+      LValue::LocalRef { name, .. } => {
         write!(f, "{}", name)
       }
       LValue::Str { val, .. } => {
@@ -366,12 +378,8 @@ impl fmt::Debug for RValue {
       RValue::Return { arg, .. } => {
         write!(f, "return {:?}", arg)
       }
-      RValue::Let { def, init, .. } => {
-        if let Def::Local { name, ty, is_mut } = &**def {
-          write!(f, "let {}{}: {:?} = {:?}", is_mut, name, ty, init)
-        } else {
-          unreachable!()
-        }
+      RValue::Let { def: LocalDef { name, ty, is_mut, .. }, init, .. } => {
+        write!(f, "let {}{}: {:?} = {:?}", is_mut, name, ty, init)
       }
       RValue::If { cond, tbody, ebody, .. } => {
         write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody)

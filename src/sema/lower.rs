@@ -18,6 +18,12 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::DataRef { def, .. } => {
       *ctx.values.get(def).unwrap()
     }
+    LValue::ParamRef { index, .. } => {
+      *ctx.params.get(index).unwrap()
+    }
+    LValue::LocalRef { index, .. } => {
+      *ctx.locals.get(index).unwrap()
+    }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
     }
@@ -99,6 +105,12 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
     LValue::DataRef { def, .. } => {
       *ctx.values.get(def).unwrap()
+    }
+    LValue::ParamRef { index, .. } => {
+      *ctx.params.get(index).unwrap()
+    }
+    LValue::LocalRef { index, .. } => {
+      *ctx.locals.get(index).unwrap()
     }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
@@ -212,19 +224,15 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Return { .. } => {
       todo!() // TODO
     }
-    RValue::Let { def, init, .. } => {
-      if let Def::Local { name, ty, .. } = &**def {
-        // Allocate stack slot for local variable
-        let l_alloca = ctx.build_alloca(*name, ty);
-        ctx.values.insert(def.ptr(), l_alloca);
-        // Store initializer in stack slot
-        let init = lower_rvalue(init, ctx);
-        ctx.build_store(ty, l_alloca, init);
-        // Void value
-        ctx.build_void()
-      } else {
-        unreachable!()
-      }
+    RValue::Let { def: LocalDef { name, ty, index, .. }, init, .. } => {
+      // Allocate stack slot for local variable
+      let l_alloca = ctx.build_alloca(*name, ty);
+      ctx.locals.insert(*index, l_alloca);
+      // Store initializer in stack slot
+      let init = lower_rvalue(init, ctx);
+      ctx.build_store(ty, l_alloca, init);
+      // Void value
+      ctx.build_void()
     }
     RValue::If { cond, tbody, ebody, .. } => {
       let then_block = ctx.new_block();
@@ -306,7 +314,7 @@ unsafe fn lower_bool(rvalue: &RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) 
   }
 }
 
-pub(super) struct LowerCtx {
+struct LowerCtx {
   // Target machine
   l_machine: LLVMTargetMachineRef,
   l_layout: LLVMTargetDataRef,
@@ -322,6 +330,8 @@ pub(super) struct LowerCtx {
 
   // Values
   values: HashMap<Ptr<Def>, LLVMValueRef>,
+  params: HashMap<usize, LLVMValueRef>,
+  locals: HashMap<usize, LLVMValueRef>,
 
   // String literals
   string_lits: HashMap<RefStr, LLVMValueRef>,
@@ -378,6 +388,8 @@ impl LowerCtx {
 
       types: HashMap::new(),
       values: HashMap::new(),
+      params: HashMap::new(),
+      locals: HashMap::new(),
       string_lits: HashMap::new()
     }
   }
@@ -1013,15 +1025,16 @@ impl LowerCtx {
           self.enter_block(entry_block);
 
           // Spill parameters
-          for def in params.iter() {
-            if let Def::Param { name, ty, index, .. } = &**def {
-              let l_alloca = self.build_alloca(*name, ty);
-              self.values.insert(def.ptr(), l_alloca);
-              LLVMBuildStore(self.l_builder,
-                LLVMGetParam(self.l_func, *index as u32), l_alloca);
-            } else {
-              unreachable!()
-            }
+          self.params.clear();
+          self.locals.clear();
+
+          for ParamDef { name, ty, index, .. } in params.iter() {
+            // Build allocation and spill parameter
+            let l_alloca = self.build_alloca(*name, ty);
+            LLVMBuildStore(self.l_builder,
+              LLVMGetParam(self.l_func, *index as u32), l_alloca);
+            // Save value for later resolution
+            self.params.insert(*index, l_alloca);
           }
 
           LLVMBuildRet(self.l_builder, lower_rvalue(body, self));
