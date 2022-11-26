@@ -127,17 +127,11 @@ enum Ty {
   Tuple(Vec<(RefStr, Ty)>),
   // Type variables
   TVar(usize),
-}
-
-/// Type variable constraints
-
-#[derive(Clone, Debug)]
-enum TyBound {
-  Is(Ty),
-  Any,
-  Num,
-  Int,
-  Flt,
+  // Type bounds
+  BoundAny,
+  BoundNum,
+  BoundInt,
+  BoundFlt,
 }
 
 impl fmt::Debug for Ty {
@@ -166,7 +160,13 @@ impl fmt::Debug for Ty {
       },
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
       Tuple(params) => write_params(f, params),
-      TVar(idx) => write!(f, "'{}", idx)
+
+      TVar(idx) => write!(f, "'{}", idx),
+
+      BoundAny => write!(f, "Any"),
+      BoundNum => write!(f, "Num"),
+      BoundInt => write!(f, "Int"),
+      BoundFlt => write!(f, "Flt"),
     }
   }
 }
