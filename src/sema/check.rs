@@ -1033,13 +1033,13 @@ impl CheckCtx {
     })
   }
 
-  fn check_ty_defs(&mut self, defs: &Vec<parse::Def>) -> MRes<()>  {
+  fn check_ty_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()>  {
     use parse::Def::*;
 
     let mut queue = vec![];
 
     // Pass 1: Create definitions
-    for def in defs.iter() {
+    for (_, def) in defs.iter() {
       match def {
         Struct { name, .. } =>  {
           queue.push((def,
@@ -1111,13 +1111,13 @@ impl CheckCtx {
     })
   }
 
-  fn check_defs(&mut self, defs: &Vec<parse::Def>) -> MRes<()> {
+  fn check_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()> {
     use parse::Def::*;
 
     let mut queue = vec![];
 
     // Pass 1: Create definitions
-    for def in defs {
+    for (_, def) in defs {
       match def {
         Const { name, ty, val } => {
           let ty = self.check_ty(ty)?;

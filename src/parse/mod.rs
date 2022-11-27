@@ -1,6 +1,6 @@
 use crate::util::*;
 use lalrpop_util::{self,lalrpop_mod};
-use std::collections::HashSet;
+use std::collections::{HashMap,HashSet};
 use std::{error,fs,fmt};
 
 lalrpop_mod!(maple, "/parse/maple.rs");
@@ -85,6 +85,9 @@ pub enum Expr {
   Loop(Box<Expr>),
 }
 
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct DefId(usize);
+
 #[derive(Debug)]
 pub enum Def {
   Struct {
@@ -132,6 +135,21 @@ pub enum Def {
   },
 }
 
+impl Def {
+  pub fn name(&self) -> RefStr {
+    match self {
+      Def::Struct { name, .. } => *name,
+      Def::Union { name, .. } => *name,
+      Def::Enum { name, .. } => *name,
+      Def::Const { name, .. } => *name,
+      Def::Data { name, .. } => *name,
+      Def::Func { name, .. } => *name,
+      Def::ExternData { name, .. } => *name,
+      Def::ExternFunc { name, .. } => *name,
+    }
+  }
+}
+
 #[derive(Debug)]
 pub enum Variant {
   Unit,
@@ -141,15 +159,20 @@ pub enum Variant {
 #[derive(Debug)]
 pub struct Module {
   pub deps: HashSet<RefStr>,
-  pub defs: Vec<Def>,
+  pub defs: HashMap<DefId, Def>,
 }
 
 impl Module {
   pub fn new() -> Module {
     Module {
       deps: HashSet::new(),
-      defs: Vec::new(),
+      defs: HashMap::new(),
     }
+  }
+
+  fn def(&mut self, def: Def) {
+    let id = DefId(self.defs.len());
+    self.defs.insert(id, def);
   }
 }
 

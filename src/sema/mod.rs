@@ -7,7 +7,7 @@
 // operate on the same intermediate representation.
 //
 
-use crate::parse::{self,IsMut,UnOp,BinOp};
+use crate::parse::{self,IsMut,UnOp,BinOp,DefId};
 use crate::util::*;
 use std::collections::HashMap;
 use std::fmt::{self,Write};
