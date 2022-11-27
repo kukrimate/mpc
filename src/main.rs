@@ -13,7 +13,6 @@ fn compile(input_path: &str, output_path: &str, compile_to: CompileTo) -> MRes<(
   let parsed_module = parse::parse_module(input_path)?;
   // Typecheck
   let mut checked_module = sema::check::check_module(&parsed_module)?;
-  println!("{:#?}", checked_module);
   // Lower
   sema::lower::lower_module(&mut checked_module, output_path, compile_to)?;
   Ok(())

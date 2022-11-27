@@ -174,7 +174,7 @@ impl TVarCtx {
 
   /// Pre LLVM pass to clean up type variable references in the IR
 
-  fn fixup_ty(&mut self, ty: &mut Ty) {
+  pub(super) fn fixup_ty(&mut self, ty: &mut Ty) {
     use Ty::*;
     match ty {
       Bool|Uint8|Int8|Uint16|Int16|Uint32|
@@ -214,11 +214,11 @@ impl TVarCtx {
     }
   }
 
-  fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
+  pub(super) fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
     match lvalue {
       LValue::DataRef { ty, .. } |
       LValue::ParamRef { ty, .. } |
-      LValue::LocalRef { ty, .. } |
+      LValue::LetRef { ty, .. } |
       LValue::Str { ty, .. } => {
         self.fixup_ty(ty);
       }
@@ -289,9 +289,8 @@ impl TVarCtx {
           self.fixup_rvalue(expr);
         }
       }
-      RValue::Let { ty, def, init, .. } => {
+      RValue::Let { ty, init, .. } => {
         self.fixup_ty(ty);
-        self.fixup_ty(&mut def.ty);
         self.fixup_rvalue(init);
       }
       RValue::If { ty, cond, tbody, ebody } => {

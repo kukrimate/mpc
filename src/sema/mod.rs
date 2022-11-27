@@ -18,23 +18,17 @@ use tctx::*;
 
 /// Module
 
-#[derive(Debug)]
 pub struct Module {
   // Definitions
   defs: HashMap<DefId, Def>
 }
 
 impl Module {
-  fn new() -> Module {
-    Module {
-      defs: HashMap::new()
-    }
-  }
-
-  fn def(&self, id: DefId) -> &Def {
-    self.defs.get(&id).unwrap()
+  fn new(defs: HashMap<DefId, Def>) -> Module {
+    Module { defs }
   }
 }
+
 
 /// Definitions
 
@@ -43,19 +37,18 @@ enum Def {
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
   Const       { name: RefStr, ty: Ty, val: RValue },
-  Func        { name: RefStr, ty: Ty, params: Vec<ParamDef>, body: Option<RValue> },
+  Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
 }
-
-struct ParamDef { name: RefStr, ty: Ty, is_mut: IsMut, index: usize }
 
 enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
+/*
 impl fmt::Debug for Def {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
@@ -84,7 +77,7 @@ impl fmt::Debug for Def {
       Def::Const { name, ty, val } => {
         write!(f, "const {}: {:?} = {:#?}", name, ty, val)
       }
-      Def::Func { name, params, body: Some(body), .. } => {
+      Def::Func { name, params: Some(params), body: Some(body), .. } => {
         write!(f, "fn {}", name)?;
         write_comma_separated(f, params.iter(), |f, param| {
           let ParamDef { is_mut, name, ty, .. } = param;
@@ -108,6 +101,26 @@ impl fmt::Debug for Def {
 
 fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
   write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
+}
+*/
+
+/// Local definition
+
+#[derive(Clone,Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LocalId(usize);
+
+enum LocalDef {
+  Param { name: RefStr, ty: Ty, is_mut: IsMut, index: usize },
+  Let   { name: RefStr, ty: Ty, is_mut: IsMut }
+}
+
+impl LocalDef {
+  fn name(&self) -> RefStr {
+    match self {
+      LocalDef::Param { name, .. } => *name,
+      LocalDef::Let { name, .. } => *name,
+    }
+  }
 }
 
 /// Types
@@ -163,14 +176,16 @@ impl fmt::Debug for Ty {
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Func(params, ty) => {
         write!(f, "Function")?;
-        write_params(f, params)?;
+        write_comma_separated(f,
+          params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))?;
         write!(f, " -> {:?}", ty)
       },
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
-      Tuple(params) => write_params(f, params),
-
+      Tuple(params) => {
+        write_comma_separated(f,
+          params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
+      }
       TVar(idx) => write!(f, "'{}", idx),
-
       BoundAny => write!(f, "Any"),
       BoundNum => write!(f, "Num"),
       BoundInt => write!(f, "Int"),
@@ -182,9 +197,9 @@ impl fmt::Debug for Ty {
 /// Expressions
 
 enum LValue {
-  DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, def: DefId },
-  ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
-  LocalRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
+  DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, id: DefId },
+  ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
+  LetRef    { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
   Str       { ty: Ty, is_mut: IsMut, val: RefStr },
   Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -193,8 +208,8 @@ enum LValue {
 
 enum RValue {
   Null      { ty: Ty },
-  ConstRef  { ty: Ty, name: RefStr, def: DefId },
-  FuncRef   { ty: Ty, name: RefStr, def: DefId },
+  ConstRef  { ty: Ty, name: RefStr, id: DefId },
+  FuncRef   { ty: Ty, name: RefStr, id: DefId },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -214,17 +229,10 @@ enum RValue {
   Continue  { ty: Ty },
   Break     { ty: Ty, arg: Box<RValue> },
   Return    { ty: Ty, arg: Box<RValue> },
-  Let       { ty: Ty, def: LocalDef, init: Box<RValue> },
+  Let       { ty: Ty, id: LocalId, init: Box<RValue> },
   If        { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While     { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop      { ty: Ty, body: Box<RValue> },
-}
-
-struct LocalDef {
-  name: RefStr,
-  ty: Ty,
-  is_mut: IsMut,
-  index: usize
 }
 
 impl LValue {
@@ -232,7 +240,7 @@ impl LValue {
     match self {
       LValue::DataRef   { ty, .. } => ty,
       LValue::ParamRef  { ty, .. } => ty,
-      LValue::LocalRef  { ty, .. } => ty,
+      LValue::LetRef    { ty, .. } => ty,
       LValue::Str       { ty, .. } => ty,
       LValue::Dot       { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
@@ -244,7 +252,7 @@ impl LValue {
     match self {
       LValue::DataRef   { is_mut, .. }  => *is_mut,
       LValue::ParamRef  { is_mut, .. }  => *is_mut,
-      LValue::LocalRef  { is_mut, .. }  => *is_mut,
+      LValue::LetRef    { is_mut, .. }  => *is_mut,
       LValue::Str       { is_mut, .. }  => *is_mut,
       LValue::Dot       { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
@@ -291,7 +299,7 @@ impl fmt::Debug for LValue {
     match self {
       LValue::DataRef { name, .. } |
       LValue::ParamRef { name, .. } |
-      LValue::LocalRef { name, .. } => {
+      LValue::LetRef { name, .. } => {
         write!(f, "{}", name)
       }
       LValue::Str { val, .. } => {
@@ -386,8 +394,8 @@ impl fmt::Debug for RValue {
       RValue::Return { arg, .. } => {
         write!(f, "return {:?}", arg)
       }
-      RValue::Let { def: LocalDef { name, ty, is_mut, .. }, init, .. } => {
-        write!(f, "let {}{}: {:?} = {:?}", is_mut, name, ty, init)
+      RValue::Let { id, init, .. } => {
+        write!(f, "let {:?} = {:?}", id, init)
       }
       RValue::If { cond, tbody, ebody, .. } => {
         write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody)

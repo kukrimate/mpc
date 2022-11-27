@@ -15,14 +15,12 @@ type Val = LLVMValueRef;
 
 unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::DataRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
+    LValue::DataRef { id, .. } => {
+      ctx.get_value(*id)
     }
-    LValue::ParamRef { index, .. } => {
-      *ctx.params.get(index).unwrap()
-    }
-    LValue::LocalRef { index, .. } => {
-      *ctx.locals.get(index).unwrap()
+    LValue::ParamRef { id, .. } |
+    LValue::LetRef { id, .. } => {
+      ctx.get_local(*id)
     }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
@@ -47,11 +45,9 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Null { .. } => {
       ctx.build_void()
     }
-    RValue::ConstRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
-    }
-    RValue::FuncRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
+    RValue::ConstRef { id, .. } |
+    RValue::FuncRef { id, .. } => {
+      ctx.get_value(*id)
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
@@ -103,14 +99,12 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::DataRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
+    LValue::DataRef { id, .. } => {
+      ctx.get_value(*id)
     }
-    LValue::ParamRef { index, .. } => {
-      *ctx.params.get(index).unwrap()
-    }
-    LValue::LocalRef { index, .. } => {
-      *ctx.locals.get(index).unwrap()
+    LValue::ParamRef { id, .. } |
+    LValue::LetRef { id, .. }   => {
+      ctx.get_local(*id)
     }
     LValue::Str { val, .. } => {
       ctx.build_string_lit(*val)
@@ -135,11 +129,9 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Null { .. } => {
       ctx.build_void()
     }
-    RValue::ConstRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
-    }
-    RValue::FuncRef { def, .. } => {
-      *ctx.values.get(def).unwrap()
+    RValue::ConstRef { id, .. } |
+    RValue::FuncRef { id, .. } => {
+      ctx.get_value(*id)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -224,13 +216,12 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Return { .. } => {
       todo!() // TODO
     }
-    RValue::Let { def: LocalDef { name, ty, index, .. }, init, .. } => {
-      // Allocate stack slot for local variable
-      let l_alloca = ctx.build_alloca(*name, ty);
-      ctx.locals.insert(*index, l_alloca);
-      // Store initializer in stack slot
-      let init = lower_rvalue(init, ctx);
-      ctx.build_store(ty, l_alloca, init);
+    RValue::Let { id, init, .. } => {
+      // Store initializer
+      let l_local = ctx.get_local(*id);
+      let l_init = lower_rvalue(init, ctx);
+      ctx.build_store(init.ty(), l_local, l_init);
+
       // Void value
       ctx.build_void()
     }
@@ -330,8 +321,7 @@ struct LowerCtx {
 
   // Values
   values: HashMap<DefId, LLVMValueRef>,
-  params: HashMap<usize, LLVMValueRef>,
-  locals: HashMap<usize, LLVMValueRef>,
+  locals: HashMap<LocalId, LLVMValueRef>,
 
   // String literals
   string_lits: HashMap<RefStr, LLVMValueRef>,
@@ -388,7 +378,6 @@ impl LowerCtx {
 
       types: HashMap::new(),
       values: HashMap::new(),
-      params: HashMap::new(),
       locals: HashMap::new(),
       string_lits: HashMap::new()
     }
@@ -400,6 +389,10 @@ impl LowerCtx {
 
   fn get_value(&self, id: DefId) -> LLVMValueRef {
     *self.values.get(&id).unwrap()
+  }
+
+  fn get_local(&self, id: LocalId) -> LLVMValueRef {
+    *self.locals.get(&id).unwrap()
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
@@ -431,8 +424,8 @@ impl LowerCtx {
       Uintn | Intn => LLVMInt64TypeInContext(self.l_context),
       Float => LLVMFloatTypeInContext(self.l_context),
       Double => LLVMDoubleTypeInContext(self.l_context),
-      Ref(_, def) => {
-        *self.types.get(def).unwrap()
+      Ref(_, id) => {
+        self.get_type(*id)
       }
       Ptr(_, base_ty) => {
         LLVMPointerType(self.lower_ty(base_ty), 0)
@@ -1034,24 +1027,32 @@ impl LowerCtx {
           // Create LLVM initializer
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
-        Def::Func { params, body: Some(body), .. } => {
+        Def::Func { locals, body: Some(body), .. } => {
           self.l_func = self.get_value(*id);
 
           // Create LLVM function body
           let entry_block = self.new_block();
           self.enter_block(entry_block);
 
-          // Spill parameters
-          self.params.clear();
+          // Allocate locals
           self.locals.clear();
 
-          for ParamDef { name, ty, index, .. } in params.iter() {
-            // Build allocation and spill parameter
-            let l_alloca = self.build_alloca(*name, ty);
-            let l_param = LLVMGetParam(self.l_func, *index as u32);
-            self.build_store(ty, l_alloca, l_param);
-            // Save value for later resolution
-            self.params.insert(*index, l_alloca);
+          for (id, local) in locals.iter() {
+            let l_value = match local {
+              LocalDef::Param { name, ty, index, .. } => {
+                // Build allocation and spill parameter
+                let l_alloca = self.build_alloca(*name, ty);
+                let l_param = LLVMGetParam(self.l_func, *index as u32);
+                self.build_store(ty, l_alloca, l_param);
+                l_alloca
+              }
+              LocalDef::Let { name, ty, .. } => {
+                // Build allocation
+                self.build_alloca(*name, ty)
+              }
+            };
+
+            self.locals.insert(*id, l_value);
           }
 
           LLVMBuildRet(self.l_builder, lower_rvalue(body, self));
