@@ -85,7 +85,7 @@ pub enum Expr {
   Loop(Box<Expr>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Clone,Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DefId(usize);
 
 #[derive(Debug)]

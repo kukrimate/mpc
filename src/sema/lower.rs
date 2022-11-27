@@ -326,10 +326,10 @@ struct LowerCtx {
   l_func: LLVMValueRef,
 
   // Types
-  types: HashMap<Ptr<Def>, LLVMTypeRef>,
+  types: HashMap<DefId, LLVMTypeRef>,
 
   // Values
-  values: HashMap<Ptr<Def>, LLVMValueRef>,
+  values: HashMap<DefId, LLVMValueRef>,
   params: HashMap<usize, LLVMValueRef>,
   locals: HashMap<usize, LLVMValueRef>,
 
@@ -392,6 +392,14 @@ impl LowerCtx {
       locals: HashMap::new(),
       string_lits: HashMap::new()
     }
+  }
+
+  fn get_type(&self, id: DefId) -> LLVMTypeRef {
+    *self.types.get(&id).unwrap()
+  }
+
+  fn get_value(&self, id: DefId) -> LLVMValueRef {
+    *self.values.get(&id).unwrap()
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
@@ -473,22 +481,24 @@ impl LowerCtx {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, defs: &Vec<Own<Def>>) {
+  unsafe fn lower_ty_defs(&mut self, defs: &HashMap<DefId, Def>) {
     // Pass 1: Create named LLVM structure for each type definition
-    for def in defs.iter() {
-      match &**def {
+    for (id, def) in defs.iter() {
+      let l_type = match def {
         Def::Struct { name, .. } |
         Def::Union { name, .. } |
         Def::Enum { name, .. } => {
-          self.types.insert(def.ptr(),
-            LLVMStructCreateNamed(self.l_context, name.borrow_c()));
+          LLVMStructCreateNamed(self.l_context, name.borrow_c())
         }
-        _ => ()
-      }
+        _ => continue
+      };
+
+      self.types.insert(*id, l_type);
     }
+
     // Pass 2: Resolve bodies
-    for def in defs.iter() {
-      let mut l_params = match &**def {
+    for (id, def) in defs.iter() {
+      let mut l_params = match def {
         Def::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
           self.lower_params(params)
@@ -522,9 +532,12 @@ impl LowerCtx {
         }
         _ => continue,
       };
-      // Resolve body
-      LLVMStructSetBody(*self.types.get(&def.ptr()).unwrap(),
-        l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0);
+
+      let l_type = self.get_type(*id);
+      LLVMStructSetBody(l_type,
+                        l_params.get_unchecked_mut(0) as _,
+                        l_params.len() as u32,
+                        0);
     }
   }
 
@@ -992,10 +1005,10 @@ impl LowerCtx {
     }
   }
 
-  unsafe fn lower_defs(&mut self, defs: &Vec<Own<Def>>) {
+  unsafe fn lower_defs(&mut self, defs: &HashMap<DefId, Def>) {
     // Pass 1: Create LLVM values for each definition
-    for def in defs.iter() {
-      let l_value = match &**def {
+    for (id, def) in defs.iter() {
+      let l_value = match def {
         Def::Const { val, .. } => {
           lower_const_rvalue(val, self)
         }
@@ -1009,18 +1022,22 @@ impl LowerCtx {
         }
         _ => continue
       };
-      self.values.insert(def.ptr(), l_value);
+
+      self.values.insert(*id, l_value);
     }
     // Pass 2: Lower initializers and function bodies
-    for def in defs.iter() {
-      match &**def {
+    for (id, def) in defs.iter() {
+      match def {
         Def::Data { init: Some(init), .. }  => {
-          let l_value = *self.values.get(&def.ptr()).unwrap();
+          let l_value = self.get_value(*id);
+
+          // Create LLVM initializer
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
         Def::Func { params, body: Some(body), .. } => {
-          // Entry point
-          self.l_func = *self.values.get(&def.ptr()).unwrap();
+          self.l_func = self.get_value(*id);
+
+          // Create LLVM function body
           let entry_block = self.new_block();
           self.enter_block(entry_block);
 
@@ -1031,8 +1048,8 @@ impl LowerCtx {
           for ParamDef { name, ty, index, .. } in params.iter() {
             // Build allocation and spill parameter
             let l_alloca = self.build_alloca(*name, ty);
-            LLVMBuildStore(self.l_builder,
-              LLVMGetParam(self.l_func, *index as u32), l_alloca);
+            let l_param = LLVMGetParam(self.l_func, *index as u32);
+            self.build_store(ty, l_alloca, l_param);
             // Save value for later resolution
             self.params.insert(*index, l_alloca);
           }

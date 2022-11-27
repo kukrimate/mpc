@@ -10,21 +10,29 @@
 use crate::parse::{self,IsMut,UnOp,BinOp,DefId};
 use crate::util::*;
 use std::collections::HashMap;
+use std::error;
 use std::fmt::{self,Write};
+
+mod tctx;
+use tctx::*;
 
 /// Module
 
 #[derive(Debug)]
 pub struct Module {
   // Definitions
-  defs: Vec<Own<Def>>
+  defs: HashMap<DefId, Def>
 }
 
 impl Module {
   fn new() -> Module {
     Module {
-      defs: vec![]
+      defs: HashMap::new()
     }
+  }
+
+  fn def(&self, id: DefId) -> &Def {
+    self.defs.get(&id).unwrap()
   }
 }
 
@@ -120,7 +128,7 @@ enum Ty {
   Intn,
   Float,
   Double,
-  Ref(RefStr, Ptr<Def>),
+  Ref(RefStr, DefId),
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(usize, Box<Ty>),
@@ -174,7 +182,7 @@ impl fmt::Debug for Ty {
 /// Expressions
 
 enum LValue {
-  DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, def: Ptr<Def> },
+  DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, def: DefId },
   ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
   LocalRef  { ty: Ty, is_mut: IsMut, name: RefStr, index: usize },
   Str       { ty: Ty, is_mut: IsMut, val: RefStr },
@@ -185,8 +193,8 @@ enum LValue {
 
 enum RValue {
   Null      { ty: Ty },
-  ConstRef  { ty: Ty, name: RefStr, def: Ptr<Def> },
-  FuncRef   { ty: Ty, name: RefStr, def: Ptr<Def> },
+  ConstRef  { ty: Ty, name: RefStr, def: DefId },
+  FuncRef   { ty: Ty, name: RefStr, def: DefId },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },

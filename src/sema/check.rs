@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
-use std::error;
 
 /// Errors
 
@@ -17,17 +16,6 @@ impl fmt::Display for TypeError {
 impl error::Error for TypeError {}
 
 #[derive(Debug)]
-struct CannotUnifyError(Ty, Ty);
-
-impl fmt::Display for CannotUnifyError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Cannot unify types {:?} and {:?}", self.0, self.1)
-  }
-}
-
-impl error::Error for CannotUnifyError {}
-
-#[derive(Debug)]
 struct UnresolvedIdentError {
   name: RefStr
 }
@@ -39,307 +27,6 @@ impl fmt::Display for UnresolvedIdentError {
 }
 
 impl error::Error for UnresolvedIdentError {}
-
-/// Type inference engine
-///
-/// The algorithm used is similar to "Algorithm J" from the paper
-/// "A Theory of Type Polymorphism in Programming" by Robin Milner,
-/// but with the typing rules extended with type constructors for
-/// additional types supported that are irrelevant to lambda calculus.
-///
-/// A type is a term containing literal types and type variables, nested in
-/// a variety of type constructors. Type variables are held in a context that
-/// has a variety of methods for enforcing equality or other constraints on
-/// types, which are called by `check.rs` according to the typing rules.
-///
-/// The most important operation is enforcing equality of two types. This is
-/// done using Robinson's first order unification. The most important operation
-/// arises when the unification algorithm finds that two type variables must be
-/// equal. Type variables are represented as a "disjoint-set forset", where each
-/// set is a set of type variables that are deemed equal. When two type variables
-/// are found to be equal during unification, the union of the sets they
-/// represent is computed using the union-find algorithm.
-
-struct TVarCtx {
-  tvars: Vec<Ty>
-}
-
-impl TVarCtx {
-  fn new() -> Self {
-    Self {
-      tvars: vec![],
-    }
-  }
-
-  fn tvar(&mut self, bound: Ty) -> Ty {
-    let ty = Ty::TVar(self.tvars.len());
-    self.tvars.push(bound);
-    ty
-  }
-
-  fn root(&mut self, idx: usize) -> usize {
-    if let Ty::TVar(parent) = &self.tvars[idx] {
-      let parent = *parent;
-      let root = self.root(parent);
-      self.tvars[idx] = Ty::TVar(root);
-      root
-    } else {
-      idx
-    }
-  }
-
-  fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
-    use Ty::*;
-    'error: loop {
-      return Ok(match (ty1, ty2) {
-        (Bool, Bool) => Bool,
-        (Uint8, Uint8) => Uint8,
-        (Int8, Int8) => Int8,
-        (Uint16, Uint16) => Uint16,
-        (Int16, Int16) => Int16,
-        (Uint32, Uint32) => Uint32,
-        (Int32, Int32) => Int32,
-        (Uint64, Uint64) => Uint64,
-        (Int64, Int64) => Int64,
-        (Uintn, Uintn) => Uintn,
-        (Intn, Intn) => Intn,
-        (Float, Float) => Float,
-        (Double, Double) => Double,
-
-        (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
-          assert_eq!(name1, name2);
-          Ref(name1.clone(), def1.clone())
-        }
-        (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
-          let mut par = Vec::new();
-          for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
-            if n1 != n2 {
-              break 'error;
-            }
-            par.push((*n1, self.unify(t1, t2)?));
-          }
-          Func(par, Box::new(self.unify(ret1, ret2)?))
-        }
-        (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
-          Ptr(*is_mut1, Box::new(self.unify(base1, base2)?))
-        }
-        (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
-          Arr(*siz1, Box::new(self.unify(elem1, elem2)?))
-        }
-        (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
-          let mut par = Vec::new();
-          for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
-            if n1 != n2 {
-              break 'error;
-            }
-            par.push((*n1, self.unify(t1, t2)?));
-          }
-          Tuple(par)
-        }
-        (TVar(idx1), TVar(idx2)) => {
-          // Find root nodes
-          let root1 = self.root(*idx1);
-          let root2 = self.root(*idx2);
-
-          // Apply union-find if they are different
-          if root1 != root2 {
-            // Unify bounds
-            let unified = self.unify(&self.tvars[root1].clone(),
-                                     &self.tvars[root2].clone())?;
-            // Store unified bound in root1
-            self.tvars[root1] = unified;
-            // Point root2 to root1
-            self.tvars[root2] = TVar(root1);
-          }
-
-          // Return reference to new root
-          TVar(root1)
-        }
-        (TVar(idx), ty) | (ty, TVar(idx)) => {
-          // Find root node
-          let root = self.root(*idx);
-
-          // Unify bounds
-          let unified = self.unify(&self.tvars[root].clone(), ty)?;
-          // Store unified bound
-          self.tvars[root] = unified;
-
-          // Return reference to root
-          TVar(root)
-        }
-
-        // Any type
-        (BoundAny, ty) | (ty, BoundAny) => ty.clone(),
-
-        // Numeric types
-        (BoundNum, ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-                          Uintn|Intn|Float|Double|BoundNum|BoundInt|BoundFlt)) |
-        (ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
-              Uintn|Intn|Float|Double|BoundInt|BoundFlt), BoundNum) => {
-          ty.clone()
-        }
-
-        // Integer types
-        (BoundInt, ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|BoundInt)) |
-        (ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn), BoundInt) => {
-          ty.clone()
-        }
-
-        // Floating types
-        (BoundFlt, ty @ (Float|Double|BoundFlt)) |
-        (ty @ (Float|Double), BoundFlt) => {
-          ty.clone()
-        }
-
-        _ => break 'error,
-      });
-    }
-
-    // Types cannot unify
-    Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
-  }
-
-  /// Pre LLVM pass to clean up type variable references in the IR
-
-  fn fixup_ty(&mut self, ty: &mut Ty) {
-    use Ty::*;
-    match ty {
-      Bool|Uint8|Int8|Uint16|Int16|Uint32|
-      Int32|Uint64|Int64|Uintn|Intn|Float|Double => (),
-      Ref(..) => (),
-      Ptr(_, ty) => {
-        self.fixup_ty(ty);
-      },
-      Func(params, ty) => {
-        for (_, ty) in params {
-          self.fixup_ty(ty);
-        }
-        self.fixup_ty(ty);
-      },
-      Arr(_, ty) => {
-        self.fixup_ty(ty);
-      },
-      Tuple(params) => {
-        for (_, ty) in params {
-          self.fixup_ty(ty);
-        }
-      }
-      // Find real type
-      TVar(idx) => {
-        // Find root element
-        let root = self.root(*idx);
-        // Find variable bound
-        *ty = self.tvars[root].clone();
-        // Replace bound with real type
-        self.fixup_ty(ty);
-      }
-      // Choose a fitting concrete type
-      Ty::BoundAny => *ty = Ty::Tuple(vec![]),
-      Ty::BoundNum => *ty = Ty::Int32,
-      Ty::BoundInt => *ty = Ty::Int32,
-      Ty::BoundFlt => *ty = Ty::Float,
-    }
-  }
-
-  fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
-    match lvalue {
-      LValue::DataRef { ty, .. } |
-      LValue::ParamRef { ty, .. } |
-      LValue::LocalRef { ty, .. } |
-      LValue::Str { ty, .. } => {
-        self.fixup_ty(ty);
-      }
-      LValue::Dot { ty, arg, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-      }
-      LValue::Index { ty, arg, idx, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-        self.fixup_rvalue(idx);
-      }
-      LValue::Ind { ty, arg, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-      }
-    }
-  }
-
-  fn fixup_rvalue(&mut self, rvalue: &mut RValue) {
-    match rvalue {
-      RValue::Null { ty } |
-      RValue::Bool { ty, .. } |
-      RValue::Int { ty, .. } |
-      RValue::Flt { ty, .. } |
-      RValue::Char { ty, .. } |
-      RValue::ConstRef { ty, .. } |
-      RValue::FuncRef { ty, .. } |
-      RValue::Continue { ty } => {
-        self.fixup_ty(ty);
-      }
-      RValue::Load { ty, arg } |
-      RValue::Adr { ty, arg } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-      }
-      RValue::Call { ty, arg, args } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-        for (_, arg) in args.iter_mut() {
-          self.fixup_rvalue(arg);
-        }
-      }
-      RValue::Un { ty, arg, .. } |
-      RValue::Break { ty, arg } |
-      RValue::Return { ty, arg } |
-      RValue::LNot { ty, arg } |
-      RValue::Cast { ty, arg } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-      }
-      RValue::Bin { ty, lhs, rhs, .. } |
-      RValue::LAnd { ty, lhs, rhs } |
-      RValue::LOr  { ty, lhs, rhs } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(lhs);
-        self.fixup_rvalue(rhs);
-      }
-      RValue::As { ty, lhs, rhs } |
-      RValue::Rmw { ty, lhs, rhs, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(lhs);
-        self.fixup_rvalue(rhs);
-      }
-      RValue::Block { ty, body, .. } => {
-        self.fixup_ty(ty);
-        for expr in body.iter_mut() {
-          self.fixup_rvalue(expr);
-        }
-      }
-      RValue::Let { ty, def, init, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_ty(&mut def.ty);
-        self.fixup_rvalue(init);
-      }
-      RValue::If { ty, cond, tbody, ebody } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(cond);
-        self.fixup_rvalue(tbody);
-        self.fixup_rvalue(ebody);
-      }
-      RValue::While { ty, cond, body } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(cond);
-        self.fixup_rvalue(body);
-      }
-      RValue::Loop { ty, body } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(body);
-      }
-    }
-  }
-}
-
 
 struct LocalCtx<'a> {
   global: &'a mut CheckCtx,
@@ -445,7 +132,7 @@ impl<'a> LocalCtx<'a> {
 
     // Resolve global
     let def = self.global.resolve(path[0])?;
-    match &*def {
+    match self.global.module.def(def) {
       // Global data defintions
       Def::Data { ty, is_mut, .. } |
       Def::ExternData { ty, is_mut, .. } => {
@@ -496,7 +183,7 @@ impl<'a> LocalCtx<'a> {
 
     // Resolve global
     let def = self.global.resolve(path[0])?;
-    match &*def {
+    match self.global.module.def(def) {
       Def::Const { name, ty, .. } => {
         Ok(RValue::ConstRef {
           ty: ty.clone(),
@@ -538,7 +225,7 @@ impl<'a> LocalCtx<'a> {
     'error: loop {
       // Find parameter list
       let params = match arg.ty() {
-        Ty::Ref(_, def) => match &**def {
+        Ty::Ref(_, def) => match self.global.module.def(*def) {
           Def::Struct { params: Some(params), .. } => params,
           Def::Union { params: Some(params), .. } => params,
           _ => break 'error
@@ -941,32 +628,22 @@ struct CheckCtx {
   // Module being currenly checked
   module: Module,
   // Global symbol table
-  globals: HashMap<RefStr, Ptr<Def>>,
+  scope: HashMap<RefStr, DefId>,
 }
 
 impl CheckCtx {
   fn new() -> Self {
     Self {
       module: Module::new(),
-      globals: HashMap::new(),
+      scope: HashMap::new(),
     }
-  }
-
-  /// Create global definition
-
-  fn define(&mut self, name: RefStr, def: Def) -> Ptr<Def> {
-    let own = Own::new(def);
-    let ptr = own.ptr();
-    self.module.defs.push(own);
-    self.globals.insert(name, ptr);
-    ptr
   }
 
   /// Resolve global definition
 
-  fn resolve(&self, name: RefStr) -> MRes<Ptr<Def>> {
-    if let Some(def) = self.globals.get(&name) {
-      Ok(def.clone())
+  fn resolve(&self, name: RefStr) -> MRes<DefId> {
+    if let Some(def) = self.scope.get(&name) {
+      Ok(*def)
     } else {
       Err(Box::new(UnresolvedIdentError { name }))
     }
@@ -977,12 +654,12 @@ impl CheckCtx {
   //
 
   fn resolve_ty(&mut self, name: RefStr) -> MRes<Ty> {
-    let def = self.resolve(name)?;
-    match &*def {
+    let id = self.resolve(name)?;
+    match self.module.def(id) {
       Def::Struct {..} |
       Def::Union {..} |
       Def::Enum {..} => {
-        Ok(Ty::Ref(name, def))
+        Ok(Ty::Ref(name, id))
       }
       _ => {
         Err(Box::new(UnresolvedIdentError { name }))
@@ -1036,37 +713,34 @@ impl CheckCtx {
   fn check_ty_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()>  {
     use parse::Def::*;
 
-    let mut queue = vec![];
-
     // Pass 1: Create definitions
-    for (_, def) in defs.iter() {
-      match def {
+    for (id, def) in defs.iter() {
+      let def = match def {
         Struct { name, .. } =>  {
-          queue.push((def,
-            self.define(*name, Def::Struct { name: *name, params: None })));
+          Def::Struct { name: *name, params: None }
         }
         Union { name, .. } => {
-          queue.push((def,
-            self.define(*name, Def::Union { name: *name, params: None })));
+          Def::Union { name: *name, params: None }
         }
         Enum { name, .. } => {
-          queue.push((def,
-            self.define(*name, Def::Enum { name: *name, variants: None })));
+          Def::Enum { name: *name, variants: None }
         }
-        _ => ()
-      }
+        _ => continue
+      };
+
+      self.module.defs.insert(*id, def);
     }
 
     // Pass 2: Fill bodies
-    for (def, mut ptr) in queue {
-      match (def, &mut *ptr) {
-        (Struct { params, .. }, Def::Struct { params: dest, .. }) => {
-          *dest = Some(self.check_params(params)?);
+    for (id, def) in defs.iter() {
+      let def = match def {
+        Struct { name, params, .. } => {
+          Def::Struct { name: *name, params: Some(self.check_params(params)?) }
         }
-        (Union { params, .. }, Def::Union { params: dest, .. }) => {
-          *dest = Some(self.check_params(params)?);
+        Union { name, params, .. } => {
+          Def::Union { name: *name, params: Some(self.check_params(params)?) }
         }
-        (Enum { variants, .. }, Def::Enum { variants: dest, .. }) => {
+        Enum { name, variants, .. } => {
           let mut result = vec![];
           for (name, variant) in variants {
             result.push((*name, match variant {
@@ -1078,10 +752,12 @@ impl CheckCtx {
               }
             }));
           }
-          *dest = Some(result);
+          Def::Enum { name: *name, variants: Some(result) }
         }
-        _ => ()
-      }
+        _ => continue
+      };
+
+      self.module.defs.insert(*id, def);
     }
 
     Ok(())
@@ -1114,11 +790,9 @@ impl CheckCtx {
   fn check_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()> {
     use parse::Def::*;
 
-    let mut queue = vec![];
-
     // Pass 1: Create definitions
-    for (_, def) in defs {
-      match def {
+    for (id, def) in defs.iter() {
+      let def = match def {
         Const { name, ty, val } => {
           let ty = self.check_ty(ty)?;
 
@@ -1129,13 +803,11 @@ impl CheckCtx {
             Ok(val)
           })?;
 
-          self.define(*name, Def::Const { name: *name, ty, val });
+          Def::Const { name: *name, ty, val }
         }
         Data { name, is_mut, ty, .. } => {
           let ty = self.check_ty(ty)?;
-          let ptr = self.define(*name,
-            Def::Data { name: *name, ty, is_mut: *is_mut, init: None });
-          queue.push((def, ptr));
+          Def::Data { name: *name, ty, is_mut: *is_mut, init: None }
         }
         Func { name, params, ret_ty, .. } => {
           let mut param_tys = vec![];
@@ -1148,59 +820,79 @@ impl CheckCtx {
           }
 
           let ty = Ty::Func(param_tys, Box::new(self.check_ty(ret_ty)?));
-          let ptr = self.define(*name,
-            Def::Func { name: *name, ty, params: param_defs, body: None });
-          queue.push((def, ptr));
+
+          Def::Func { name: *name, ty, params: param_defs, body: None }
         }
         ExternData { name, is_mut, ty } => {
           let ty = self.check_ty(ty)?;
-          self.define(*name,
-            Def::ExternData { name: *name, ty, is_mut: *is_mut });
+
+          Def::ExternData { name: *name, ty, is_mut: *is_mut }
         }
         ExternFunc { name, params, ret_ty } => {
           let ty = Ty::Func(self.check_params(params)?,
                           Box::new(self.check_ty(ret_ty)?));
-          self.define(*name, Def::ExternFunc { name: *name, ty });
+
+          Def::ExternFunc { name: *name, ty }
         }
-        _ => ()
-      }
+        _ => continue,
+      };
+
+      self.module.defs.insert(*id, def);
     }
 
     // Pass 2: Fill bodies
-    for (def, mut ptr) in queue {
-      match (def, &mut *ptr) {
-        (Data { init, .. }, Def::Data { ty, init: dest, .. }) => {
+    for (id, def) in defs.iter() {
+      let def = match def {
+        Data { name, is_mut, ty, init } => {
+          let ty = self.check_ty(ty)?;
+
           let init = self.enter_data(|local_ctx| {
             let mut init = local_ctx.infer_rvalue(init)?;
-            local_ctx.tctx.unify(ty, init.ty())?;
+            local_ctx.tctx.unify(&ty, init.ty())?;
             local_ctx.tctx.fixup_rvalue(&mut init);
             Ok(init)
           })?;
 
-          // Complete definition
-          *dest = Some(init);
+          Def::Data { name: *name, ty, is_mut: *is_mut, init: Some(init) }
         }
-        (Func { ret_ty, body, .. }, Def::Func { params, body: dest, .. }) => {
+        Func { name, params, ret_ty, body, .. } => {
+          let mut param_tys = vec![];
+          let mut param_defs = vec![];
+
+          for (index, (name, is_mut, ty)) in params.iter().enumerate() {
+            let ty = self.check_ty(ty)?;
+            param_tys.push((*name, ty.clone()));
+            param_defs.push(ParamDef { name: *name, is_mut: *is_mut, ty, index });
+          }
+
           let ret_ty = self.check_ty(ret_ty)?;
 
-          let body = self.enter_func(params, &ret_ty, |local_ctx| {
+          let ty = Ty::Func(param_tys, Box::new(ret_ty.clone()));
+
+          let body = self.enter_func(&param_defs, &ret_ty, |local_ctx| {
             let mut body = local_ctx.infer_rvalue(body)?;
             local_ctx.tctx.unify(&ret_ty, body.ty())?;
             local_ctx.tctx.fixup_rvalue(&mut body);
             Ok(body)
           })?;
 
-          // Complete definition
-          *dest = Some(body);
+          Def::Func { name: *name, ty, params: param_defs, body: Some(body) }
         }
-        _ => ()
-      }
+        _ => continue
+      };
+
+      self.module.defs.insert(*id, def);
     }
 
     Ok(())
   }
 
   fn check_module(&mut self, module: &parse::Module) -> MRes<()> {
+    // Build symbol table
+    for (id, def) in module.defs.iter() {
+      self.scope.insert(def.name(), *id);
+    }
+
     self.check_ty_defs(&module.defs)?;
     self.check_defs(&module.defs)?;
     Ok(())
