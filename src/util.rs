@@ -85,7 +85,7 @@ impl RefStr {
   }
 
   pub fn borrow_c(&self) -> *const i8 {
-    unsafe { std::mem::transmute(self.s.as_ptr()) }
+    self.s.as_ptr() as _
   }
 }
 
@@ -148,7 +148,7 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
 // Empty NUL-terminated string
 
 pub fn empty_cstr() -> *const i8 {
-  unsafe { std::mem::transmute(&b"\0"[0] as *const u8) }
+  b"\0".as_ptr() as _
 }
 
 /// Monadic collection over an iterator of results
