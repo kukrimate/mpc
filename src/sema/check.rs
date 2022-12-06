@@ -2,47 +2,52 @@
 
 use super::*;
 
-/// Errors
+pub(super) fn check_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<Module> {
+  let mut ctx = CheckCtx {
+    tctx,
+    parsed_defs: &parsed_module.defs,
+    checked_defs: HashMap::new(),
+    scopes: vec! [ HashMap::new() ],
+    local_cnt: 0,
+    local_defs: Vec::new(),
+    ret_ty: Vec::new(),
+    loop_ty: Vec::new(),
+  };
 
-#[derive(Debug)]
-struct TypeError(String);
-
-impl fmt::Display for TypeError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.0)
+  // Build symbol table
+  for (id, def) in parsed_module.defs.iter() {
+    ctx.define(def.name(), Sym::Def(*id));
   }
-}
 
-impl error::Error for TypeError {}
-
-#[derive(Debug)]
-struct UnresolvedIdentError {
-  name: RefStr
-}
-
-impl fmt::Display for UnresolvedIdentError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unresolved identifier {}", self.name)
+  // Start checking at main
+  for (id, def) in parsed_module.defs.iter() {
+    if def.name().borrow_rs() == "main" {
+      ctx.check_def(*id, def)?;
+    }
   }
-}
 
-impl error::Error for UnresolvedIdentError {}
+  Ok(Module::new(ctx.checked_defs))
+}
 
 struct CheckCtx<'a> {
   // Type variable context
   tctx: &'a mut TVarCtx,
 
-  // Definitions
-  defs: HashMap<DefId, Def>,
+  // Parsed definitions
+  parsed_defs: &'a HashMap<DefId, parse::Def>,
 
-  // Global symbol table
+  // Checked definitions
+  checked_defs: HashMap<DefId, Def>,
+
+  // Symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
 
   // Local definition
-  local_defs: HashMap<LocalId, LocalDef>,
+  local_cnt: usize,
+  local_defs: Vec<HashMap<LocalId, LocalDef>>,
 
   // Function return type
-  ret_ty: Option<Ty>,
+  ret_ty: Vec<Ty>,
 
   // Loop types
   loop_ty: Vec<Ty>,
@@ -55,27 +60,137 @@ enum Sym {
 }
 
 impl<'a> CheckCtx<'a> {
-  /// Resolve definition by id
+  fn check_def(&mut self, id: DefId, def: &parse::Def) -> MRes<()> {
+    match def {
+      parse::Def::Struct { name, type_params, params } => {
+        assert_eq!(type_params.len(), 0);
 
-  fn def(&self, id: DefId) -> &Def {
-    self.defs.get(&id).unwrap()
-  }
+        // Temporary record
+        self.checked_defs.insert(id, Def::Struct { name: *name, params: None });
 
-  /// Introduce symbol
+        // Body
+        let params = self.check_params(params)?;
+        self.checked_defs.insert(id, Def::Struct { name: *name, params: Some(params) });
+      }
+      parse::Def::Union { name, type_params, params } => {
+        assert_eq!(type_params.len(), 0);
 
-  fn define(&mut self, name: RefStr, sym: Sym) {
-    self.scopes.last_mut().unwrap().insert(name, sym);
-  }
+        // Temporary record
+        self.checked_defs.insert(id, Def::Union { name: *name, params: None });
 
-  /// Resolve symbol
+        // Body
+        let params = self.check_params(params)?;
+        self.checked_defs.insert(id, Def::Union { name: *name, params: Some(params) });
+      }
+      parse::Def::Enum { name, type_params, variants } => {
+        assert_eq!(type_params.len(), 0);
 
-  fn lookup(&self, name: RefStr) -> MRes<&Sym> {
-    for scope in self.scopes.iter().rev() {
-      if let Some(sym) = scope.get(&name) {
-        return Ok(sym);
+        // Temporary record
+        self.checked_defs.insert(id, Def::Enum { name: *name, variants: None });
+
+        // Body
+        let variants = self.check_variants(variants)?;
+        self.checked_defs.insert(id, Def::Enum { name: *name, variants: Some(variants) });
+      }
+      parse::Def::Const { name, ty, val } => {
+        // Temporary record
+        let ty = self.check_ty(ty)?;
+        self.checked_defs.insert(id, Def::Const { name: *name, ty: ty.clone(), val: None });
+
+        // Body
+        let val = self.infer_rvalue(val)?;
+        self.tctx.unify(&ty, val.ty())?;
+        self.checked_defs.insert(id, Def::Const { name: *name, ty, val: Some(val) });
+      }
+      parse::Def::Data { name, is_mut, ty, init } => {
+        // Temporary record
+        let ty = self.check_ty(ty)?;
+        self.checked_defs.insert(id, Def::Data { name: *name, ty: ty.clone(), is_mut: *is_mut, init: None });
+
+        // Body
+        let init = self.infer_rvalue(init)?;
+        self.tctx.unify(&ty, init.ty())?;
+        self.checked_defs.insert(id, Def::Data { name: *name, ty, is_mut: *is_mut, init: Some(init) });
+      }
+      parse::Def::Func { type_params, name, params, ret_ty, body } => {
+        assert_eq!(type_params.len(), 0);
+
+        // Temporary record
+        let mut param_tys = vec![];
+        for (name, _, ty) in params.iter() { param_tys.push((*name, self.check_ty(ty)?)); }
+        let ty = Ty::Func(param_tys, Box::new(self.check_ty(ret_ty)?));
+        self.checked_defs.insert(id, Def::Func { name: *name, ty: ty.clone(), locals: HashMap::new(), body: None });
+
+        // Body
+        self.newscope();
+        self.local_defs.push(HashMap::new());
+        let ret_ty = self.check_ty(ret_ty)?;
+        self.ret_ty.push(ret_ty);
+
+        for (index, (name, is_mut, ty)) in params.iter().enumerate() {
+          let ty = self.check_ty(ty)?;
+          self.newlocal(LocalDef::Param { name: *name, ty: ty, is_mut: *is_mut, index: index });
+        }
+
+        let body = self.infer_rvalue(body)?;
+        let locals = self.local_defs.pop().unwrap();
+        let ret_ty = self.ret_ty.pop().unwrap();
+        self.tctx.unify(&ret_ty, body.ty())?;
+        self.popscope();
+
+        self.checked_defs.insert(id, Def::Func { name: *name, ty, locals, body: Some(body) });
+      }
+      parse::Def::ExternData { name, is_mut, ty } => {
+        let ty = self.check_ty(ty)?;
+        self.checked_defs.insert(id, Def::ExternData { name: *name, ty, is_mut: *is_mut });
+      }
+      parse::Def::ExternFunc { name, params, ret_ty } => {
+        let ty = Ty::Func(self.check_params(params)?, Box::new(self.check_ty(ret_ty)?));
+        self.checked_defs.insert(id, Def::ExternFunc { name: *name, ty });
       }
     }
-    Err(Box::new(UnresolvedIdentError { name }))
+
+    Ok(())
+  }
+
+  fn check_variants(&mut self, variants: &Vec<(RefStr, parse::Variant)>) -> MRes<Vec<(RefStr, Variant)>> {
+    let mut result = vec![];
+    for (name, variant) in variants {
+      result.push((*name, match variant {
+        parse::Variant::Unit => {
+          Variant::Unit(*name)
+        }
+        parse::Variant::Struct(params) => {
+          Variant::Struct(*name, self.check_params(params)?)
+        }
+      }));
+    }
+    Ok(result)
+  }
+
+  /// Resolve definitions by id
+
+  fn parsed_def(&self, id: DefId) -> &'static parse::Def {
+    unsafe { &*(self.parsed_defs.get(&id).unwrap() as *const _) }
+  }
+
+  fn checked_def(&mut self, id: DefId) -> MRes<&Def> {
+    match self.checked_def_hack(id) {
+      Some(def) => return Ok(def),
+      None => ()
+    }
+
+    let parsed_def = self.parsed_def(id);
+    self.check_def(id, parsed_def)?;
+    Ok(self.checked_defs.get(&id).unwrap())
+  }
+
+
+  fn checked_def_hack(&self, id: DefId) -> Option<&'static Def> {
+    match self.checked_defs.get(&id) {
+      Some(def) => Some(unsafe { &*(def as *const _) }),
+      None => None
+    }
   }
 
   /// Create scope
@@ -90,19 +205,38 @@ impl<'a> CheckCtx<'a> {
     self.scopes.pop().unwrap();
   }
 
+  /// Introduce symbol
+
+  fn define(&mut self, name: RefStr, sym: Sym) {
+    self.scopes.last_mut().unwrap().insert(name, sym);
+  }
+
+  /// Resolve symbol
+
+  fn lookup(&self, name: RefStr) -> MRes<Sym> {
+    for scope in self.scopes.iter().rev() {
+      if let Some(sym) = scope.get(&name) {
+        return Ok(sym.clone());
+      }
+    }
+    Err(Box::new(UnresolvedIdentError { name }))
+  }
+
   /// Create local variable
 
   fn newlocal(&mut self, def: LocalDef) -> LocalId {
-    let id = LocalId(self.local_defs.len());
+    let id = LocalId(self.local_cnt);
+    self.local_cnt += 1;
+    
     self.define(def.name(), Sym::Local(id));
-    self.local_defs.insert(id, def);
+    self.local_defs.last_mut().unwrap().insert(id, def);
     id
   }
 
   /// Resolve local by id
 
   fn local_def(&self, id: LocalId) -> &LocalDef {
-    self.local_defs.get(&id).unwrap()
+    self.local_defs.last().unwrap().get(&id).unwrap()
   }
 
   //
@@ -147,11 +281,11 @@ impl<'a> CheckCtx<'a> {
   fn resolve_ty(&mut self, name: RefStr) -> MRes<Ty> {
     'error: loop {
       let id = match self.lookup(name)? {
-        Sym::Def(id) => *id,
+        Sym::Def(id) => id,
         _ => break 'error
       };
 
-      match self.def(id) {
+      match self.checked_def(id)? {
         Def::Struct {..} |
         Def::Union {..} |
         Def::Enum {..} => (),
@@ -176,11 +310,11 @@ impl<'a> CheckCtx<'a> {
   // Expressions
   //
 
-  fn resolve_lvalue(&self, path: &parse::Path) -> MRes<LValue> {
+  fn resolve_lvalue(&mut self, path: &parse::Path) -> MRes<LValue> {
     match self.lookup(path[0])? {
       // Global definition
       Sym::Def(id) => {
-        match self.def(*id) {
+        match self.checked_def(id)? {
           // Global data defintions
           Def::Data { ty, is_mut, .. } |
           Def::ExternData { ty, is_mut, .. } => {
@@ -188,7 +322,7 @@ impl<'a> CheckCtx<'a> {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             })
           }
           // Wrong kind of definition
@@ -197,13 +331,13 @@ impl<'a> CheckCtx<'a> {
       }
       // Function parameters
       Sym::Local(id) => {
-        match self.local_def(*id) {
+        match self.local_def(id) {
           LocalDef::Param { ty, is_mut, .. } => {
             Ok(LValue::ParamRef {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             })
           },
           LocalDef::Let { ty, is_mut, .. } => {
@@ -211,25 +345,26 @@ impl<'a> CheckCtx<'a> {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             })
-          }
+          },
+          _ => Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path[0]))))
         }
       }
     }
   }
 
-  fn resolve_rvalue(&self, path: &parse::Path) -> MRes<RValue> {
+  fn resolve_rvalue(&mut self, path: &parse::Path) -> MRes<RValue> {
     match self.lookup(path[0])? {
       // Global definition
       Sym::Def(id) => {
-        match self.def(*id) {
+        match self.checked_def(id)? {
           // Constant definition
           Def::Const { name, ty, .. } => {
             Ok(RValue::ConstRef {
               ty: ty.clone(),
               name: *name,
-              id: *id
+              id
             })
           }
           // Function definition
@@ -238,7 +373,7 @@ impl<'a> CheckCtx<'a> {
             Ok(RValue::FuncRef {
               ty: ty.clone(),
               name: *name,
-              id: *id
+              id
             })
           }
           // Data defintions
@@ -248,7 +383,7 @@ impl<'a> CheckCtx<'a> {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             };
             Ok(self.load_lvalue(lvalue))
           }
@@ -258,13 +393,13 @@ impl<'a> CheckCtx<'a> {
       }
       // Function parameters
       Sym::Local(id) => {
-        match self.local_def(*id) {
+        match self.local_def(id) {
           LocalDef::Param { ty, is_mut, .. } => {
             let lvalue = LValue::ParamRef {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             };
             Ok(self.load_lvalue(lvalue))
           },
@@ -273,10 +408,11 @@ impl<'a> CheckCtx<'a> {
               ty: ty.clone(),
               is_mut: is_mut.clone(),
               name: path[0],
-              id: *id
+              id
             };
             Ok(self.load_lvalue(lvalue))
           }
+          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path[0]))))
         }
       }
     }
@@ -296,7 +432,7 @@ impl<'a> CheckCtx<'a> {
     'error: loop {
       // Find parameter list
       let params = match arg.ty() {
-        Ty::Ref(_, id) => match self.def(*id) {
+        Ty::Ref(_, id) => match self.checked_def(*id)? {
           Def::Struct { params: Some(params), .. } => params,
           Def::Union { params: Some(params), .. } => params,
           _ => break 'error
@@ -619,7 +755,7 @@ impl<'a> CheckCtx<'a> {
         let arg = self.infer_rvalue(&*arg)?;
 
         // Can only have return inside a function
-        let ret_ty = match &self.ret_ty {
+        let ret_ty = match self.ret_ty.last() {
           Some(ret_ty) => ret_ty.clone(),
           None => return Err(Box::new(
             TypeError(format!("Return outside function")))),
@@ -691,201 +827,30 @@ impl<'a> CheckCtx<'a> {
       }
     })
   }
+}
 
-  //
-  // Definitions
-  //
+/// Errors
 
-  fn check_ty_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()>  {
-    use parse::Def::*;
+#[derive(Debug)]
+struct TypeError(String);
 
-    // Pass 1: Create definitions
-    for (id, def) in defs.iter() {
-      let def = match def {
-        Struct { name, .. } =>  {
-          Def::Struct { name: *name, params: None }
-        }
-        Union { name, .. } => {
-          Def::Union { name: *name, params: None }
-        }
-        Enum { name, .. } => {
-          Def::Enum { name: *name, variants: None }
-        }
-        _ => continue
-      };
-
-      self.defs.insert(*id, def);
-    }
-
-    // Pass 2: Fill bodies
-    for (id, def) in defs.iter() {
-      let def = match def {
-        Struct { name, params, .. } => {
-          Def::Struct { name: *name, params: Some(self.check_params(params)?) }
-        }
-        Union { name, params, .. } => {
-          Def::Union { name: *name, params: Some(self.check_params(params)?) }
-        }
-        Enum { name, variants, .. } => {
-          let mut result = vec![];
-          for (name, variant) in variants {
-            result.push((*name, match variant {
-              parse::Variant::Unit => {
-                Variant::Unit(*name)
-              }
-              parse::Variant::Struct(params) => {
-                Variant::Struct(*name, self.check_params(params)?)
-              }
-            }));
-          }
-          Def::Enum { name: *name, variants: Some(result) }
-        }
-        _ => continue
-      };
-
-      self.defs.insert(*id, def);
-    }
-
-    Ok(())
-  }
-
-  fn check_defs(&mut self, defs: &HashMap<DefId, parse::Def>) -> MRes<()> {
-    use parse::Def::*;
-
-    // Pass 1: Create definitions
-    for (id, def) in defs.iter() {
-      let def = match def {
-        Const { name, ty, val } => {
-          self.clear_context();
-
-          let ty = self.check_ty(ty)?;
-          let val = self.infer_rvalue(val)?;
-          self.tctx.unify(&ty, val.ty())?;
-
-          Def::Const { name: *name, ty, val }
-        }
-        Data { name, is_mut, ty, .. } => {
-          let ty = self.check_ty(ty)?;
-          Def::Data { name: *name, ty, is_mut: *is_mut, init: None }
-        }
-        Func { name, params, ret_ty, .. } => {
-          let mut param_tys = vec![];
-          for (name, _, ty) in params.iter() {
-            param_tys.push((*name, self.check_ty(ty)?));
-          }
-
-          let ret_ty = self.check_ty(ret_ty)?;
-
-          Def::Func {
-            name: *name,
-            ty: Ty::Func(param_tys, Box::new(ret_ty)),
-            locals: HashMap::new(),
-            body: None
-          }
-        }
-        ExternData { name, is_mut, ty } => {
-          let ty = self.check_ty(ty)?;
-
-          Def::ExternData { name: *name, ty, is_mut: *is_mut }
-        }
-        ExternFunc { name, params, ret_ty } => {
-          let ty = Ty::Func(self.check_params(params)?,
-                          Box::new(self.check_ty(ret_ty)?));
-
-          Def::ExternFunc { name: *name, ty }
-        }
-        _ => continue,
-      };
-
-      self.defs.insert(*id, def);
-    }
-
-    // Pass 2: Fill bodies
-    for (id, def) in defs.iter() {
-      let def = match def {
-        Data { name, is_mut, ty, init } => {
-          self.clear_context();
-
-          let ty = self.check_ty(ty)?;
-
-          let init = self.infer_rvalue(init)?;
-          self.tctx.unify(&ty, init.ty())?;
-
-          Def::Data { name: *name, ty, is_mut: *is_mut, init: Some(init) }
-        }
-        Func { name, params, ret_ty, body, .. } => {
-          self.clear_context();
-
-          // Add return type to context
-          self.ret_ty = Some(self.check_ty(ret_ty)?);
-
-          let mut param_tys = vec![];
-
-          self.newscope();
-
-          for (index, (name, is_mut, ty)) in params.iter().enumerate() {
-            let ty = self.check_ty(ty)?;
-
-            param_tys.push((*name, ty.clone()));
-
-            self.newlocal(LocalDef::Param {
-              name: *name,
-              ty: ty,
-              is_mut: *is_mut,
-              index: index
-            });
-          }
-
-          let ret_ty = std::mem::take(&mut self.ret_ty).unwrap();
-
-          let body = self.infer_rvalue(body)?;
-          self.tctx.unify(&ret_ty, body.ty())?;
-
-          self.popscope();
-
-          Def::Func {
-            name: *name,
-            ty: Ty::Func(param_tys, Box::new(ret_ty)),
-            locals: std::mem::take(&mut self.local_defs),
-            body: Some(body)
-          }
-        }
-        _ => continue
-      };
-
-      self.defs.insert(*id, def);
-    }
-
-    Ok(())
-  }
-
-  fn clear_context(&mut self) {
-    self.ret_ty = None;
-    self.local_defs.clear();
-    self.loop_ty.clear();
+impl fmt::Display for TypeError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.0)
   }
 }
 
-pub(super) fn check_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<Module> {
-  let mut ctx = CheckCtx {
-    tctx,
-    defs: HashMap::new(),
-    scopes: vec! [ HashMap::new() ],
-    local_defs: HashMap::new(),
-    ret_ty: None,
-    loop_ty: Vec::new(),
-  };
+impl error::Error for TypeError {}
 
-  // Build symbol table
-  for (id, def) in parsed_module.defs.iter() {
-    ctx.define(def.name(), Sym::Def(*id));
-  }
-
-  // Type definitions
-  ctx.check_ty_defs(&parsed_module.defs)?;
-
-  // Object definitions
-  ctx.check_defs(&parsed_module.defs)?;
-
-  Ok(Module::new(ctx.defs))
+#[derive(Debug)]
+struct UnresolvedIdentError {
+  name: RefStr
 }
+
+impl fmt::Display for UnresolvedIdentError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Unresolved identifier {}", self.name)
+  }
+}
+
+impl error::Error for UnresolvedIdentError {}

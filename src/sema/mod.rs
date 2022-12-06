@@ -36,7 +36,7 @@ enum Def {
   Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
-  Const       { name: RefStr, ty: Ty, val: RValue },
+  Const       { name: RefStr, ty: Ty, val: Option<RValue> },
   Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
   ExternFunc  { name: RefStr, ty: Ty },
@@ -110,15 +110,29 @@ fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::
 pub struct LocalId(usize);
 
 enum LocalDef {
-  Param { name: RefStr, ty: Ty, is_mut: IsMut, index: usize },
-  Let   { name: RefStr, ty: Ty, is_mut: IsMut }
+  TParam {
+    name: RefStr,
+    ty: Ty
+  },
+  Param {
+    name: RefStr,
+    ty: Ty,
+    is_mut: IsMut,
+    index: usize
+  },
+  Let {
+    name: RefStr,
+    ty: Ty,
+    is_mut: IsMut
+  }
 }
 
 impl LocalDef {
   fn name(&self) -> RefStr {
     match self {
+      LocalDef::TParam { name, .. } => *name,
       LocalDef::Param { name, .. } => *name,
-      LocalDef::Let { name, .. } => *name,
+      LocalDef::Let { name, .. } => *name
     }
   }
 }

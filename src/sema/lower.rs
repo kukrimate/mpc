@@ -1007,7 +1007,7 @@ impl<'a> LowerCtx<'a> {
     for (id, def) in defs.iter() {
       let l_value = match def {
         Def::Const { val, .. } => {
-          lower_const_rvalue(val, self)
+          lower_const_rvalue(val.as_ref().unwrap(), self)
         }
         Def::Data { name, ty, .. } |
         Def::ExternData { name, ty, .. } => {
@@ -1043,15 +1043,19 @@ impl<'a> LowerCtx<'a> {
 
           for (id, local) in locals.iter() {
             let l_value = match local {
+              // These no longer matter here
+              LocalDef::TParam { .. } => continue,
+
+              // Parameter
               LocalDef::Param { name, ty, index, .. } => {
-                // Build allocation and spill parameter
                 let l_alloca = self.build_alloca(*name, ty);
                 let l_param = LLVMGetParam(self.l_func, *index as u32);
                 self.build_store(ty, l_alloca, l_param);
                 l_alloca
               }
+
+              // Local variable
               LocalDef::Let { name, ty, .. } => {
-                // Build allocation
                 self.build_alloca(*name, ty)
               }
             };
