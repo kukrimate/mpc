@@ -7,6 +7,7 @@
 // operate on the same intermediate representation.
 //
 
+use crate::*;
 use crate::parse::{self,IsMut,UnOp,BinOp,DefId};
 use crate::util::*;
 use std::collections::HashMap;
@@ -28,7 +29,6 @@ impl Module {
     Module { defs }
   }
 }
-
 
 /// Definitions
 
@@ -412,5 +412,12 @@ impl fmt::Debug for RValue {
 
 /// Type checker and lowerer live in their own files
 
-pub mod check;
-pub mod lower;
+mod check;
+mod lower;
+
+pub fn compile_module(parsed_module: &parse::Module, output_path: &str, compile_to: CompileTo) -> MRes<()> {
+  let mut tctx = TVarCtx::new();
+
+  let mut checked_module = check::check_module(&mut tctx, parsed_module)?;
+  lower::lower_module(&mut tctx, &mut checked_module, output_path, compile_to)
+}

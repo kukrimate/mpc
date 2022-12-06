@@ -28,15 +28,15 @@ impl fmt::Display for UnresolvedIdentError {
 
 impl error::Error for UnresolvedIdentError {}
 
-struct CheckCtx {
+struct CheckCtx<'a> {
+  // Type variable context
+  tctx: &'a mut TVarCtx,
+
   // Definitions
   defs: HashMap<DefId, Def>,
 
   // Global symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
-
-  // Type variable context
-  tctx: TVarCtx,
 
   // Local definition
   local_defs: HashMap<LocalId, LocalDef>,
@@ -54,7 +54,7 @@ enum Sym {
   Local(LocalId),
 }
 
-impl CheckCtx {
+impl<'a> CheckCtx<'a> {
   /// Resolve definition by id
 
   fn def(&self, id: DefId) -> &Def {
@@ -759,9 +759,8 @@ impl CheckCtx {
           self.clear_context();
 
           let ty = self.check_ty(ty)?;
-          let mut val = self.infer_rvalue(val)?;
+          let val = self.infer_rvalue(val)?;
           self.tctx.unify(&ty, val.ty())?;
-          self.tctx.fixup_rvalue(&mut val);
 
           Def::Const { name: *name, ty, val }
         }
@@ -809,9 +808,8 @@ impl CheckCtx {
 
           let ty = self.check_ty(ty)?;
 
-          let mut init = self.infer_rvalue(init)?;
+          let init = self.infer_rvalue(init)?;
           self.tctx.unify(&ty, init.ty())?;
-          self.tctx.fixup_rvalue(&mut init);
 
           Def::Data { name: *name, ty, is_mut: *is_mut, init: Some(init) }
         }
@@ -840,25 +838,15 @@ impl CheckCtx {
 
           let ret_ty = std::mem::take(&mut self.ret_ty).unwrap();
 
-          let mut body = self.infer_rvalue(body)?;
+          let body = self.infer_rvalue(body)?;
           self.tctx.unify(&ret_ty, body.ty())?;
-          self.tctx.fixup_rvalue(&mut body);
 
           self.popscope();
-
-          // Fixup let expression types
-          let mut locals = std::mem::take(&mut self.local_defs);
-          for (_, local) in locals.iter_mut() {
-            match local {
-              LocalDef::Let { ty, .. } => self.tctx.fixup_ty(ty),
-              _ => (),
-            }
-          }
 
           Def::Func {
             name: *name,
             ty: Ty::Func(param_tys, Box::new(ret_ty)),
-            locals: locals,
+            locals: std::mem::take(&mut self.local_defs),
             body: Some(body)
           }
         }
@@ -872,18 +860,17 @@ impl CheckCtx {
   }
 
   fn clear_context(&mut self) {
-    self.tctx = TVarCtx::new();
     self.ret_ty = None;
     self.local_defs.clear();
     self.loop_ty.clear();
   }
 }
 
-pub fn check_module(parsed_module: &parse::Module) -> MRes<Module> {
+pub(super) fn check_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<Module> {
   let mut ctx = CheckCtx {
+    tctx,
     defs: HashMap::new(),
     scopes: vec! [ HashMap::new() ],
-    tctx: TVarCtx::new(),
     local_defs: HashMap::new(),
     ret_ty: None,
     loop_ty: Vec::new(),

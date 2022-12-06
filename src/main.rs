@@ -5,17 +5,19 @@ mod sema;
 mod util;
 
 use crate::util::*;
-use crate::sema::lower::CompileTo;
 use clap::*;
+
+pub enum CompileTo {
+  LLVMIr,
+  Assembly,
+  Object,
+}
 
 fn compile(input_path: &str, output_path: &str, compile_to: CompileTo) -> MRes<()> {
   // Parse module
   let parsed_module = parse::parse_module(input_path)?;
-  // Typecheck
-  let mut checked_module = sema::check::check_module(&parsed_module)?;
-  // Lower
-  sema::lower::lower_module(&mut checked_module, output_path, compile_to)?;
-  Ok(())
+  // Compile module
+  sema::compile_module(&parsed_module, output_path, compile_to)
 }
 
 fn main() {

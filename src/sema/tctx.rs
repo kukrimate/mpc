@@ -12,7 +12,6 @@ impl fmt::Display for CannotUnifyError {
 
 impl error::Error for CannotUnifyError {}
 
-
 /// Type inference engine
 ///
 /// The algorithm used is similar to "Algorithm J" from the paper
@@ -172,142 +171,51 @@ impl TVarCtx {
     Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
   }
 
-  /// Pre LLVM pass to clean up type variable references in the IR
+  /// Obtain the literal type for a type expression
 
-  pub(super) fn fixup_ty(&mut self, ty: &mut Ty) {
+  pub(super) fn lit_ty(&mut self, ty: &Ty) -> Ty {
     use Ty::*;
     match ty {
-      Bool|Uint8|Int8|Uint16|Int16|Uint32|
-      Int32|Uint64|Int64|Uintn|Intn|Float|Double => (),
-      Ref(..) => (),
-      Ptr(_, ty) => {
-        self.fixup_ty(ty);
-      },
+      Bool => Bool,
+      Uint8 => Uint8,
+      Int8 => Int8,
+      Uint16 => Uint16,
+      Int16 => Int16,
+      Uint32 => Uint32,
+      Int32 => Int32,
+      Uint64 => Uint64,
+      Int64 => Int64,
+      Uintn => Uintn,
+      Intn => Intn,
+      Float => Float,
+      Double => Double,
+      Ref(name, id) => Ref(*name, *id),
+      Ptr(is_mut, ty) => Ptr(*is_mut, Box::new(self.lit_ty(&**ty))),
       Func(params, ty) => {
-        for (_, ty) in params {
-          self.fixup_ty(ty);
-        }
-        self.fixup_ty(ty);
-      },
-      Arr(_, ty) => {
-        self.fixup_ty(ty);
-      },
-      Tuple(params) => {
-        for (_, ty) in params {
-          self.fixup_ty(ty);
-        }
+        let params = params
+          .iter()
+          .map(|(name, ty)| (*name, self.lit_ty(ty)))
+          .collect();
+        Func(params, Box::new(self.lit_ty(&**ty)))
       }
-      // Find real type
+      Arr(cnt, ty) => Arr(*cnt, Box::new(self.lit_ty(&**ty))),
+      Tuple(params) => {
+        let params = params
+          .iter()
+          .map(|(name, ty)| (*name, self.lit_ty(ty)))
+          .collect();
+        Tuple(params)
+      }
       TVar(idx) => {
         // Find root element
         let root = self.root(*idx);
-        // Find variable bound
-        *ty = self.tvars[root].clone();
-        // Replace bound with real type
-        self.fixup_ty(ty);
+        // Obtain real type from its bound
+        self.lit_ty(&self.tvars[root].clone())
       }
-      // Choose a fitting concrete type
-      Ty::BoundAny => *ty = Ty::Tuple(vec![]),
-      Ty::BoundNum => *ty = Ty::Int32,
-      Ty::BoundInt => *ty = Ty::Int32,
-      Ty::BoundFlt => *ty = Ty::Float,
-    }
-  }
-
-  pub(super) fn fixup_lvalue(&mut self, lvalue: &mut LValue) {
-    match lvalue {
-      LValue::DataRef { ty, .. } |
-      LValue::ParamRef { ty, .. } |
-      LValue::LetRef { ty, .. } |
-      LValue::Str { ty, .. } => {
-        self.fixup_ty(ty);
-      }
-      LValue::Dot { ty, arg, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-      }
-      LValue::Index { ty, arg, idx, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-        self.fixup_rvalue(idx);
-      }
-      LValue::Ind { ty, arg, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-      }
-    }
-  }
-
-  pub(super) fn fixup_rvalue(&mut self, rvalue: &mut RValue) {
-    match rvalue {
-      RValue::Null { ty } |
-      RValue::Bool { ty, .. } |
-      RValue::Int { ty, .. } |
-      RValue::Flt { ty, .. } |
-      RValue::Char { ty, .. } |
-      RValue::ConstRef { ty, .. } |
-      RValue::FuncRef { ty, .. } |
-      RValue::Continue { ty } => {
-        self.fixup_ty(ty);
-      }
-      RValue::Load { ty, arg } |
-      RValue::Adr { ty, arg } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(arg);
-      }
-      RValue::Call { ty, arg, args } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-        for (_, arg) in args.iter_mut() {
-          self.fixup_rvalue(arg);
-        }
-      }
-      RValue::Un { ty, arg, .. } |
-      RValue::Break { ty, arg } |
-      RValue::Return { ty, arg } |
-      RValue::LNot { ty, arg } |
-      RValue::Cast { ty, arg } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(arg);
-      }
-      RValue::Bin { ty, lhs, rhs, .. } |
-      RValue::LAnd { ty, lhs, rhs } |
-      RValue::LOr  { ty, lhs, rhs } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(lhs);
-        self.fixup_rvalue(rhs);
-      }
-      RValue::As { ty, lhs, rhs } |
-      RValue::Rmw { ty, lhs, rhs, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_lvalue(lhs);
-        self.fixup_rvalue(rhs);
-      }
-      RValue::Block { ty, body, .. } => {
-        self.fixup_ty(ty);
-        for expr in body.iter_mut() {
-          self.fixup_rvalue(expr);
-        }
-      }
-      RValue::Let { ty, init, .. } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(init);
-      }
-      RValue::If { ty, cond, tbody, ebody } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(cond);
-        self.fixup_rvalue(tbody);
-        self.fixup_rvalue(ebody);
-      }
-      RValue::While { ty, cond, body } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(cond);
-        self.fixup_rvalue(body);
-      }
-      RValue::Loop { ty, body } => {
-        self.fixup_ty(ty);
-        self.fixup_rvalue(body);
-      }
+      BoundAny => Ty::Tuple(vec![]),
+      BoundNum => Ty::Int32,
+      BoundInt => Ty::Int32,
+      BoundFlt => Ty::Float,
     }
   }
 }

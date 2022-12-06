@@ -305,7 +305,9 @@ unsafe fn lower_bool(rvalue: &RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) 
   }
 }
 
-struct LowerCtx {
+struct LowerCtx<'a> {
+  tctx: &'a mut TVarCtx,
+
   // Target machine
   l_machine: LLVMTargetMachineRef,
   l_layout: LLVMTargetDataRef,
@@ -327,8 +329,8 @@ struct LowerCtx {
   string_lits: HashMap<RefStr, LLVMValueRef>,
 }
 
-impl LowerCtx {
-  unsafe fn new(module_id: RefStr) -> Self {
+impl<'a> LowerCtx<'a> {
+  unsafe fn new(tctx: &'a mut TVarCtx, module_id: RefStr) -> Self {
     LLVM_InitializeAllTargetInfos();
     LLVM_InitializeAllTargets();
     LLVM_InitializeAllTargetMCs();
@@ -369,6 +371,8 @@ impl LowerCtx {
     LLVMDisposeMessage(l_cpu_features);
 
     LowerCtx {
+      tctx,
+
       l_machine,
       l_layout,
       l_context,
@@ -414,7 +418,7 @@ impl LowerCtx {
   unsafe fn lower_ty(&mut self, ty: &Ty) -> LLVMTypeRef {
     use Ty::*;
 
-    match ty {
+    match &self.tctx.lit_ty(ty) {
       Bool => LLVMInt1TypeInContext(self.l_context),
       Uint8 | Int8 => LLVMInt8TypeInContext(self.l_context),
       Uint16 | Int16 => LLVMInt16TypeInContext(self.l_context),
@@ -621,7 +625,7 @@ impl LowerCtx {
     use Ty::*;
     use UnOp::*;
 
-    match (op, ty) {
+    match (op, self.tctx.lit_ty(ty)) {
       (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
         arg
       }
@@ -650,7 +654,7 @@ impl LowerCtx {
     use Ty::*;
     use BinOp::*;
 
-    match (op, ty) {
+    match (op, self.tctx.lit_ty(ty)) {
       // Integer multiply
       (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
         LLVMConstMul(lhs, rhs)
@@ -777,9 +781,9 @@ impl LowerCtx {
 
   /// Determine if a type should use value or pointer semantics
 
-  fn backend_value_semantics(ty: &Ty) -> bool {
+  fn backend_value_semantics(&mut self, ty: &Ty) -> bool {
     use Ty::*;
-    match ty {
+    match self.tctx.lit_ty(ty) {
       Bool | Uint8 | Int8 | Uint16 |
       Int16 |Uint32 | Int32 | Uint64 |
       Int64 | Uintn | Intn | Float |
@@ -794,7 +798,7 @@ impl LowerCtx {
   }
 
   unsafe fn build_load(&mut self, ty: &Ty, l_src: LLVMValueRef) -> LLVMValueRef {
-    if Self::backend_value_semantics(ty) {
+    if self.backend_value_semantics(ty) {
       LLVMBuildLoad(self.l_builder, l_src, empty_cstr())
     } else {
       l_src
@@ -802,7 +806,7 @@ impl LowerCtx {
   }
 
   unsafe fn build_store(&mut self, ty: &Ty, l_dest: LLVMValueRef, l_src: LLVMValueRef) {
-    if Self::backend_value_semantics(ty) {
+    if self.backend_value_semantics(ty) {
       LLVMBuildStore(self.l_builder, l_src, l_dest);
     } else {
       let l_type = self.lower_ty(ty);
@@ -852,7 +856,7 @@ impl LowerCtx {
     use Ty::*;
     use UnOp::*;
 
-    match (op, ty) {
+    match (op, self.tctx.lit_ty(ty)) {
       (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
         l_arg
       }
@@ -873,7 +877,7 @@ impl LowerCtx {
     use Ty::*;
     use BinOp::*;
 
-    match (op, ty) {
+    match (op, self.tctx.lit_ty(ty)) {
       // Integer multiply
       (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
         LLVMBuildMul(self.l_builder, l_lhs, l_rhs, empty_cstr())
@@ -1103,7 +1107,7 @@ impl LowerCtx {
   }
 }
 
-impl Drop for LowerCtx {
+impl<'a> Drop for LowerCtx<'a> {
   fn drop(&mut self) {
     unsafe {
       LLVMDisposeTargetMachine(self.l_machine);
@@ -1115,16 +1119,9 @@ impl Drop for LowerCtx {
   }
 }
 
-pub enum CompileTo {
-  LLVMIr,
-  Assembly,
-  Object,
-}
-
-
-pub fn lower_module(module: &mut Module, path: &str, compile_to: CompileTo) -> MRes<()> {
+pub(super) fn lower_module(tctx: &mut TVarCtx, module: &mut Module, path: &str, compile_to: CompileTo) -> MRes<()> {
   unsafe {
-    let mut ctx = LowerCtx::new(RefStr::new(""));
+    let mut ctx = LowerCtx::new(tctx, RefStr::new(""));
     ctx.lower_module(module);
     ctx.dump();
     match compile_to {

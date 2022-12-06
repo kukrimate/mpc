@@ -150,3 +150,21 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
 pub fn empty_cstr() -> *const i8 {
   unsafe { std::mem::transmute(&b"\0"[0] as *const u8) }
 }
+
+/// Monadic collection over an iterator of results
+
+pub trait MonadicCollect<O> {
+  fn monadic_collect(&mut self) -> MRes<Vec<O>>;
+}
+
+impl<I, O> MonadicCollect<O> for I
+  where I: Iterator<Item=MRes<O>>
+{
+  fn monadic_collect(&mut self) -> MRes<Vec<O>> {
+    let mut vec = Vec::new();
+    for item in self {
+      vec.push(item?);
+    }
+    Ok(vec)
+  }
+}
