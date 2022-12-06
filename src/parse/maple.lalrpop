@@ -27,7 +27,7 @@ TypeName: Ty = {
   "Intn"      => Ty::Intn,
   "Float"     => Ty::Float,
   "Double"    => Ty::Double,
-  <p:Path>    => Ty::Path(p),
+  <p:Path>    => Ty::Inst(p, vec![]),
   "*" <is_mut:IsMut> <ty:TypeName> =>
     Ty::Ptr(is_mut, Box::new(ty)),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
@@ -227,15 +227,15 @@ PrimExpr: Expr = {
 TypeDefinition: () = {
   "struct" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.def(Def::Struct { name, type_params, params });
+    module.def(Def::Struct(StructDef { name, type_params, params }));
   },
   "union" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.def(Def::Union { name, type_params, params });
+    module.def(Def::Union(UnionDef { name, type_params, params }));
   },
   "enum" <name:Identifier>
       <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
-    module.def(Def::Enum { name, type_params, variants });
+    module.def(Def::Enum(EnumDef { name, type_params, variants }));
   },
 };
 
@@ -274,13 +274,13 @@ Variant: (RefStr, Variant) = {
 
 ConstDefinition: () = {
   "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
-    module.def(Def::Const { name, ty, val });
+    module.def(Def::Const(ConstDef { name, ty, val }));
   }
 };
 
 DataDefinition: () = {
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
-    module.def(Def::Data { name, is_mut, ty, init });
+    module.def(Def::Data(DataDef { name, is_mut, ty, init }));
   }
 };
 
@@ -288,7 +288,7 @@ FunctionDefinition: () = {
   "function" <name:Identifier> <type_params:TypeParameterListOpt>
       "(" <params:ParameterDefinitionListOpt> ")"
       <ret_ty:ReturnType> <body:Block> => {
-    module.def(Def::Func { name, type_params, params, ret_ty, body });
+    module.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
   }
 };
 
@@ -315,10 +315,10 @@ ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
-    module.def(Def::ExternFunc { name, params, ret_ty });
+    module.def(Def::ExternFunc(ExternFuncDef { name, params, ret_ty }));
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    module.def(Def::ExternData { name, is_mut, ty });
+    module.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
   }
 };
 

@@ -17,22 +17,9 @@ use std::fmt::{self,Write};
 mod tctx;
 use tctx::*;
 
-/// Module
-
-pub struct Module {
-  // Definitions
-  defs: HashMap<DefId, Def>
-}
-
-impl Module {
-  fn new(defs: HashMap<DefId, Def>) -> Module {
-    Module { defs }
-  }
-}
-
 /// Definitions
 
-enum Def {
+enum Inst {
   Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
@@ -47,62 +34,6 @@ enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
 }
-
-/*
-impl fmt::Debug for Def {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      Def::Struct { name, params: Some(params) } => {
-        write!(f, "struct {} ", name)?;
-        write_params(f, params)
-      },
-      Def::Union { name, params: Some(params) } => {
-        write!(f, "union {} ", name)?;
-        write_params(f, params)
-      },
-      Def::Enum { name, variants: Some(variants) } => {
-        write!(f, "enum {} ", name)?;
-        write_comma_separated(f, variants.iter(), |f, (_, variant)| {
-          match variant {
-            Variant::Unit(name) => {
-              write!(f, "{}", name)
-            },
-            Variant::Struct(name, params) => {
-              write!(f, "{} ", name)?;
-              write_params(f, params)
-            },
-          }
-        })
-      },
-      Def::Const { name, ty, val } => {
-        write!(f, "const {}: {:?} = {:#?}", name, ty, val)
-      }
-      Def::Func { name, params: Some(params), body: Some(body), .. } => {
-        write!(f, "fn {}", name)?;
-        write_comma_separated(f, params.iter(), |f, param| {
-          let ParamDef { is_mut, name, ty, .. } = param;
-          write!(f, "{}{}: {:?}", is_mut, name, ty)
-        })?;
-        write!(f, " -> {:?} {:#?}", body.ty(), body)
-      }
-      Def::Data { name, ty, is_mut, init: Some(init) } => {
-        write!(f, "data {}{}: {:?} = {:#?}", is_mut, name, ty, init)
-      }
-      Def::ExternFunc { name, ty } => {
-        write!(f, "extern fn {}: {:?}", name, ty)
-      }
-      Def::ExternData { name, ty, is_mut } => {
-        write!(f, "extern data {}{}: {:?}", is_mut, name, ty)
-      }
-      _ => unreachable!()
-    }
-  }
-}
-
-fn write_params(f: &mut fmt::Formatter<'_>, params: &Vec<(RefStr, Ty)>) -> fmt::Result {
-  write_comma_separated(f, params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
-}
-*/
 
 /// Local definition
 
@@ -139,7 +70,7 @@ impl LocalDef {
 
 /// Types
 
-#[derive(Clone)]
+#[derive(Clone,PartialEq,Eq,Hash)]
 enum Ty {
   // Real types
   Bool,
@@ -155,7 +86,7 @@ enum Ty {
   Intn,
   Float,
   Double,
-  Ref(RefStr, DefId),
+  Inst(RefStr, (DefId, Vec<Ty>)),
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(usize, Box<Ty>),
@@ -186,7 +117,7 @@ impl fmt::Debug for Ty {
       Intn => write!(f, "Intn"),
       Float => write!(f, "Float"),
       Double => write!(f, "Double"),
-      Ref(name, _) => write!(f, "{}", name),
+      Inst(name, ..) => write!(f, "{}", name),
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Func(params, ty) => {
         write!(f, "Function")?;
@@ -223,7 +154,7 @@ enum LValue {
 enum RValue {
   Null      { ty: Ty },
   ConstRef  { ty: Ty, name: RefStr, id: DefId },
-  FuncRef   { ty: Ty, name: RefStr, id: DefId },
+  FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -426,12 +357,11 @@ impl fmt::Debug for RValue {
 
 /// Type checker and lowerer live in their own files
 
-mod check;
-mod lower;
+mod infer;
+// mod lower;
 
 pub fn compile_module(parsed_module: &parse::Module, output_path: &str, compile_to: CompileTo) -> MRes<()> {
   let mut tctx = TVarCtx::new();
-
-  let mut checked_module = check::check_module(&mut tctx, parsed_module)?;
-  lower::lower_module(&mut tctx, &mut checked_module, output_path, compile_to)
+  infer::infer_module(&mut tctx, parsed_module)?;
+  Ok(())
 }

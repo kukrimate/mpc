@@ -7,7 +7,7 @@ lalrpop_mod!(maple, "/parse/maple.rs");
 
 /// Syntax tree produced by the parser
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IsMut { Yes, No }
 
 impl fmt::Display for IsMut {
@@ -36,7 +36,7 @@ pub enum Ty {
   Intn,
   Float,
   Double,
-  Path(Path),
+  Inst(Path, Vec<Ty>),
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(Box<Expr>, Box<Ty>),
@@ -90,62 +90,86 @@ pub struct DefId(usize);
 
 #[derive(Debug)]
 pub enum Def {
-  Struct {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    params: Vec<(RefStr, Ty)>,
-  },
-  Union {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    params: Vec<(RefStr, Ty)>,
-  },
-  Enum {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    variants: Vec<(RefStr, Variant)>,
-  },
-  Const {
-    name: RefStr,
-    ty: Ty,
-    val: Expr
-  },
-  Data {
-    name: RefStr,
-    is_mut: IsMut,
-    ty: Ty,
-    init: Expr
-  },
-  Func {
-    name: RefStr,
-    type_params: Vec<RefStr>,
-    params: Vec<(RefStr, IsMut, Ty)>,
-    ret_ty: Ty,
-    body: Expr,
-  },
-  ExternData {
-    name: RefStr,
-    is_mut: IsMut,
-    ty: Ty,
-  },
-  ExternFunc {
-    name: RefStr,
-    params: Vec<(RefStr, Ty)>,
-    ret_ty: Ty,
-  },
+  Struct(StructDef),
+  Union(UnionDef),
+  Enum(EnumDef),
+  Const(ConstDef),
+  Data(DataDef),
+  Func(FuncDef),
+  ExternData(ExternDataDef),
+  ExternFunc(ExternFuncDef)
+}
+
+#[derive(Debug)]
+pub struct StructDef {
+  pub name: RefStr,
+  pub type_params: Vec<RefStr>,
+  pub params: Vec<(RefStr, Ty)>
+}
+
+#[derive(Debug)]
+pub struct UnionDef {
+  pub name: RefStr,
+  pub type_params: Vec<RefStr>,
+  pub params: Vec<(RefStr, Ty)>
+}
+
+#[derive(Debug)]
+pub struct EnumDef {
+  pub name: RefStr,
+  pub type_params: Vec<RefStr>,
+  pub variants: Vec<(RefStr, Variant)>
+}
+
+#[derive(Debug)]
+pub struct ConstDef {
+  pub name: RefStr,
+  pub ty: Ty,
+  pub val: Expr
+}
+
+#[derive(Debug)]
+pub struct DataDef {
+  pub name: RefStr,
+  pub is_mut: IsMut,
+  pub ty: Ty,
+  pub init: Expr
+}
+
+#[derive(Debug)]
+pub struct FuncDef {
+  pub name: RefStr,
+  pub type_params: Vec<RefStr>,
+  pub params: Vec<(RefStr, IsMut, Ty)>,
+  pub ret_ty: Ty,
+  pub body: Expr
+}
+
+#[derive(Debug)]
+pub struct ExternDataDef {
+  pub name: RefStr,
+  pub is_mut: IsMut,
+  pub ty: Ty
+}
+
+#[derive(Debug)]
+pub struct ExternFuncDef {
+  pub name: RefStr,
+  pub params: Vec<(RefStr, Ty)>,
+  pub ret_ty: Ty
 }
 
 impl Def {
   pub fn name(&self) -> RefStr {
     match self {
-      Def::Struct { name, .. } => *name,
-      Def::Union { name, .. } => *name,
-      Def::Enum { name, .. } => *name,
-      Def::Const { name, .. } => *name,
-      Def::Data { name, .. } => *name,
-      Def::Func { name, .. } => *name,
-      Def::ExternData { name, .. } => *name,
-      Def::ExternFunc { name, .. } => *name,
+      Def::Struct(def) => def.name,
+      Def::Union(def) => def.name,
+      Def::Enum(def) => def.name,
+      Def::Const(def) => def.name,
+      Def::Data(def) => def.name,
+      Def::Func(def) => def.name,
+      Def::ExternData(def) => def.name,
+      Def::ExternFunc(def) => def.name,
     }
   }
 }

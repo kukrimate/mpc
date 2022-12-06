@@ -78,9 +78,13 @@ impl TVarCtx {
         (Float, Float) => Float,
         (Double, Double) => Double,
 
-        (Ref(name1, def1), Ref(name2, def2)) if def1 == def2 => {
-          assert_eq!(name1, name2);
-          Ref(name1.clone(), def1.clone())
+        (Inst(name, (def_id, targs1)), Inst(_, (def_id2, targs2))) if def_id == def_id2 => {
+          let targs = targs1
+            .iter()
+            .zip(targs2.iter())
+            .map(|(ty1, ty2)| self.unify(ty1, ty2))
+            .monadic_collect()?;
+          Inst(*name, (*def_id, targs))
         }
         (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
           let mut par = Vec::new();
@@ -190,7 +194,13 @@ impl TVarCtx {
       Intn => Intn,
       Float => Float,
       Double => Double,
-      Ref(name, id) => Ref(*name, *id),
+      Inst(name, (id, targs)) => {
+        let targs = targs
+          .iter()
+          .map(|ty| self.lit_ty(ty))
+          .collect();
+        Inst(*name, (*id, targs))
+      }
       Ptr(is_mut, ty) => Ptr(*is_mut, Box::new(self.lit_ty(&**ty))),
       Func(params, ty) => {
         let params = params
