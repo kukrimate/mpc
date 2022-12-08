@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<()> {
+pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
   let mut ctx = CheckCtx {
     tctx,
     parsed_defs: &parsed_module.defs,
@@ -49,14 +49,11 @@ pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) ->
 
     for (def_id, type_args) in queue.into_iter() {
       let parsed_func = if let parse::Def::Func(def) = ctx.parsed_def(def_id) { def } else { unreachable!() };
-      ctx.inst_func_body((def_id, type_args), parsed_func);
+      ctx.inst_func_body((def_id, type_args), parsed_func)?;
     }
   }
 
-  println!("{:#?}", ctx.insts);
-  println!("{:#?}", ctx.tctx);
-
-  Ok(())
+  Ok(ctx.insts)
 }
 
 struct CheckCtx<'a> {

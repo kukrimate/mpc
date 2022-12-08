@@ -360,10 +360,15 @@ impl fmt::Debug for RValue {
 /// Type checker and lowerer live in their own files
 
 mod infer;
-// mod lower;
+mod lower;
 
 pub fn compile_module(parsed_module: &parse::Module, output_path: &str, compile_to: CompileTo) -> MRes<()> {
   let mut tctx = TVarCtx::new();
-  infer::infer_module(&mut tctx, parsed_module)?;
+  let insts = infer::infer_module(&mut tctx, parsed_module)?;
+  println!("{:#?}", insts);
+  println!("{:#?}", tctx);
+
+  lower::lower_module(&mut tctx, &insts, output_path, compile_to)?;
+
   Ok(())
 }

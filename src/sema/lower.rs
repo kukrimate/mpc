@@ -16,7 +16,7 @@ type Val = LLVMValueRef;
 unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
     LValue::DataRef { id, .. } => {
-      ctx.get_value(*id)
+      ctx.get_value(&(*id, vec![]))
     }
     LValue::ParamRef { id, .. } |
     LValue::LetRef { id, .. } => {
@@ -45,9 +45,11 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Null { .. } => {
       ctx.build_void()
     }
-    RValue::ConstRef { id, .. } |
+    RValue::ConstRef { id, .. } => {
+      ctx.get_value(&(*id, vec![]))
+    }
     RValue::FuncRef { id, .. } => {
-      ctx.get_value(*id)
+      ctx.get_value(id)
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
@@ -100,7 +102,7 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
     LValue::DataRef { id, .. } => {
-      ctx.get_value(*id)
+      ctx.get_value(&(*id, vec![]))
     }
     LValue::ParamRef { id, .. } |
     LValue::LetRef { id, .. }   => {
@@ -129,9 +131,11 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Null { .. } => {
       ctx.build_void()
     }
-    RValue::ConstRef { id, .. } |
+    RValue::ConstRef { id, .. } => {
+      ctx.get_value(&(*id, vec![]))
+    }
     RValue::FuncRef { id, .. } => {
-      ctx.get_value(*id)
+      ctx.get_value(id)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -319,10 +323,10 @@ struct LowerCtx<'a> {
   l_func: LLVMValueRef,
 
   // Types
-  types: HashMap<DefId, LLVMTypeRef>,
+  types: HashMap<(DefId, Vec<Ty>), LLVMTypeRef>,
 
   // Values
-  values: HashMap<DefId, LLVMValueRef>,
+  values: HashMap<(DefId, Vec<Ty>), LLVMValueRef>,
   locals: HashMap<LocalId, LLVMValueRef>,
 
   // String literals
@@ -387,12 +391,14 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  fn get_type(&self, id: DefId) -> LLVMTypeRef {
-    *self.types.get(&id).unwrap()
+  fn get_type(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMTypeRef {
+    let tmp = (id.0, self.tctx.root_type_args(&id.1));
+    *self.types.get(&tmp).unwrap()
   }
 
-  fn get_value(&self, id: DefId) -> LLVMValueRef {
-    *self.values.get(&id).unwrap()
+  fn get_value(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMValueRef {
+    let tmp = (id.0, self.tctx.root_type_args(&id.1));
+    *self.values.get(&tmp).unwrap()
   }
 
   fn get_local(&self, id: LocalId) -> LLVMValueRef {
@@ -428,8 +434,8 @@ impl<'a> LowerCtx<'a> {
       Uintn | Intn => LLVMInt64TypeInContext(self.l_context),
       Float => LLVMFloatTypeInContext(self.l_context),
       Double => LLVMDoubleTypeInContext(self.l_context),
-      Ref(_, id) => {
-        self.get_type(*id)
+      Inst(_, id) => {
+        self.get_type(id)
       }
       Ptr(_, base_ty) => {
         LLVMPointerType(self.lower_ty(base_ty), 0)
@@ -478,34 +484,34 @@ impl<'a> LowerCtx<'a> {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, defs: &HashMap<DefId, Def>) {
+  unsafe fn lower_ty_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
     // Pass 1: Create named LLVM structure for each type definition
-    for (id, def) in defs.iter() {
+    for (id, def) in insts.iter() {
       let l_type = match def {
-        Def::Struct { name, .. } |
-        Def::Union { name, .. } |
-        Def::Enum { name, .. } => {
+        Inst::Struct { name, .. } |
+        Inst::Union { name, .. } |
+        Inst::Enum { name, .. } => {
           LLVMStructCreateNamed(self.l_context, name.borrow_c())
         }
         _ => continue
       };
 
-      self.types.insert(*id, l_type);
+      self.types.insert(id.clone(), l_type);
     }
 
     // Pass 2: Resolve bodies
-    for (id, def) in defs.iter() {
+    for (id, def) in insts.iter() {
       let mut l_params = match def {
-        Def::Struct { params: Some(params), .. } => {
+        Inst::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
           self.lower_params(params)
         }
-        Def::Union { params: Some(params), .. } => {
+        Inst::Union { params: Some(params), .. } => {
           // The union lowering code is shared with enums thus it's in 'lower_union'
           let l_params = self.lower_params(params);
           self.lower_union(l_params)
         }
-        Def::Enum { variants: Some(variants), .. } => {
+        Inst::Enum { variants: Some(variants), .. } => {
           // Enum lowering is done by adding a discriminant (always a dword for now)
           // Followed by the variants lowered as if they were parameters of a union
 
@@ -530,7 +536,7 @@ impl<'a> LowerCtx<'a> {
         _ => continue,
       };
 
-      let l_type = self.get_type(*id);
+      let l_type = self.get_type(id);
       LLVMStructSetBody(l_type,
                         l_params.get_unchecked_mut(0) as _,
                         l_params.len() as u32,
@@ -788,7 +794,7 @@ impl<'a> LowerCtx<'a> {
       Int16 |Uint32 | Int32 | Uint64 |
       Int64 | Uintn | Intn | Float |
       Double | Ptr(..) | Func(..) => true,
-      Ref(..) | Arr(..) | Tuple(..) => false,
+      Inst(..) | Arr(..) | Tuple(..) => false,
       _ => unreachable!()
     }
   }
@@ -1002,37 +1008,37 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn lower_defs(&mut self, defs: &HashMap<DefId, Def>) {
+  unsafe fn lower_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
     // Pass 1: Create LLVM values for each definition
-    for (id, def) in defs.iter() {
+    for (id, def) in insts.iter() {
       let l_value = match def {
-        Def::Const { val, .. } => {
-          lower_const_rvalue(val.as_ref().unwrap(), self)
+        Inst::Const { val, .. } => {
+          lower_const_rvalue(val, self)
         }
-        Def::Data { name, ty, .. } |
-        Def::ExternData { name, ty, .. } => {
+        Inst::Data { name, ty, .. } |
+        Inst::ExternData { name, ty, .. } => {
           LLVMAddGlobal(self.l_module, self.lower_ty(ty), name.borrow_c())
         }
-        Def::Func { name, ty, .. } |
-        Def::ExternFunc { name, ty, .. } => {
+        Inst::Func { name, ty, .. } |
+        Inst::ExternFunc { name, ty, .. } => {
           LLVMAddFunction(self.l_module, name.borrow_c(), self.lower_ty(ty))
         }
         _ => continue
       };
 
-      self.values.insert(*id, l_value);
+      self.values.insert(id.clone(), l_value);
     }
     // Pass 2: Lower initializers and function bodies
-    for (id, def) in defs.iter() {
+    for (id, def) in insts.iter() {
       match def {
-        Def::Data { init: Some(init), .. }  => {
-          let l_value = self.get_value(*id);
+        Inst::Data { init, .. }  => {
+          let l_value = self.get_value(id);
 
           // Create LLVM initializer
           LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
         }
-        Def::Func { locals, body: Some(body), .. } => {
-          self.l_func = self.get_value(*id);
+        Inst::Func { locals, body: Some(body), .. } => {
+          self.l_func = self.get_value(id);
 
           // Create LLVM function body
           let entry_block = self.new_block();
@@ -1043,9 +1049,6 @@ impl<'a> LowerCtx<'a> {
 
           for (id, local) in locals.iter() {
             let l_value = match local {
-              // These no longer matter here
-              LocalDef::TParam { .. } => continue,
-
               // Parameter
               LocalDef::Param { name, ty, index, .. } => {
                 let l_alloca = self.build_alloca(*name, ty);
@@ -1068,11 +1071,6 @@ impl<'a> LowerCtx<'a> {
         _ => ()
       }
     }
-  }
-
-  unsafe fn lower_module(&mut self, module: &Module) {
-    self.lower_ty_defs(&module.defs);
-    self.lower_defs(&module.defs);
   }
 
   unsafe fn dump(&self) {
@@ -1123,10 +1121,11 @@ impl<'a> Drop for LowerCtx<'a> {
   }
 }
 
-pub(super) fn lower_module(tctx: &mut TVarCtx, module: &mut Module, path: &str, compile_to: CompileTo) -> MRes<()> {
+pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>), Inst>, path: &str, compile_to: CompileTo) -> MRes<()> {
   unsafe {
     let mut ctx = LowerCtx::new(tctx, RefStr::new(""));
-    ctx.lower_module(module);
+    ctx.lower_ty_defs(insts);
+    ctx.lower_defs(insts);
     ctx.dump();
     match compile_to {
       CompileTo::LLVMIr => ctx.write_ir(path),
