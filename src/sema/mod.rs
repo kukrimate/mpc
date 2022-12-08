@@ -19,17 +19,19 @@ use tctx::*;
 
 /// Definitions
 
+#[derive(Debug)]
 enum Inst {
   Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
-  Const       { name: RefStr, ty: Ty, val: Option<RValue> },
+  Const       { name: RefStr, ty: Ty, val: RValue },
   Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
-  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: Option<RValue> },
+  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: RValue },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
 }
 
+#[derive(Debug)]
 enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
@@ -37,14 +39,15 @@ enum Variant {
 
 /// Local definition
 
-#[derive(Clone,Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone,Copy, PartialEq, Eq, Hash)]
 pub struct LocalId(usize);
 
+impl fmt::Debug for LocalId {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.0.fmt(f) }
+}
+
+#[derive(Debug)]
 enum LocalDef {
-  TParam {
-    name: RefStr,
-    ty: Ty
-  },
   Param {
     name: RefStr,
     ty: Ty,
@@ -61,7 +64,6 @@ enum LocalDef {
 impl LocalDef {
   fn name(&self) -> RefStr {
     match self {
-      LocalDef::TParam { name, .. } => *name,
       LocalDef::Param { name, .. } => *name,
       LocalDef::Let { name, .. } => *name
     }
@@ -343,7 +345,7 @@ impl fmt::Debug for RValue {
         write!(f, "let {:?} = {:?}", id, init)
       }
       RValue::If { cond, tbody, ebody, .. } => {
-        write!(f, "if {:?} {:?} {:?}", cond, tbody, ebody)
+        write!(f, "if {:?} {:?} else {:?}", cond, tbody, ebody)
       }
       RValue::While { cond, body, .. } => {
         write!(f, "while {:?} {:?}", cond, body)

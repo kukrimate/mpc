@@ -32,6 +32,7 @@ impl error::Error for CannotUnifyError {}
 /// are found to be equal during unification, the union of the sets they
 /// represent is computed using the union-find algorithm.
 
+#[derive(Debug)]
 pub(super) struct TVarCtx {
   tvars: Vec<Ty>
 }
@@ -227,6 +228,59 @@ impl TVarCtx {
       BoundNum => Ty::Int32,
       BoundInt => Ty::Int32,
       BoundFlt => Ty::Float,
+    }
+  }
+
+  pub(super) fn root_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
+    type_args.iter().map(|ty| self.root_ty(ty)).collect()
+  }
+
+  pub(super) fn root_ty(&mut self, ty: &Ty) -> Ty {
+    use Ty::*;
+    match ty {
+      Bool => Bool,
+      Uint8 => Uint8,
+      Int8 => Int8,
+      Uint16 => Uint16,
+      Int16 => Int16,
+      Uint32 => Uint32,
+      Int32 => Int32,
+      Uint64 => Uint64,
+      Int64 => Int64,
+      Uintn => Uintn,
+      Intn => Intn,
+      Float => Float,
+      Double => Double,
+      Inst(name, (id, type_args)) => {
+        Inst(*name, (*id, self.root_type_args(type_args)))
+      }
+      Ptr(is_mut, ty) => {
+        Ptr(*is_mut, Box::new(self.root_ty(ty)))
+      }
+      Func(params, ty) => {
+        let params = params
+          .iter()
+          .map(|(name, ty)| (*name, self.root_ty(ty)))
+          .collect();
+        Func(params, Box::new(self.root_ty(ty)))
+      }
+      Arr(cnt, ty) => {
+        Arr(*cnt, Box::new(self.root_ty(ty)))
+      }
+      Tuple(params) => {
+        let params = params
+          .iter()
+          .map(|(name, ty)| (*name, self.root_ty(ty)))
+          .collect();
+        Tuple(params)
+      }
+      TVar(idx) => {
+        TVar(self.root(*idx))
+      }
+      BoundAny => BoundAny,
+      BoundNum => BoundNum,
+      BoundInt => BoundInt,
+      BoundFlt => BoundFlt
     }
   }
 }

@@ -85,8 +85,12 @@ pub enum Expr {
   Loop(Box<Expr>),
 }
 
-#[derive(Clone,Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DefId(usize);
+
+impl fmt::Debug for DefId {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.0.fmt(f) }
+}
 
 #[derive(Debug)]
 pub enum Def {
