@@ -1,4 +1,5 @@
 #![feature(hash_set_entry)]
+#![feature(hash_raw_entry)]
 
 mod parse;
 mod sema;

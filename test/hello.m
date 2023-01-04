@@ -1,7 +1,7 @@
 extern {
-  function puts(str: *Uint8) -> Int32
+  function printf(str: *Uint8) -> Int32
 }
 
 function main() {
-  puts(str: &"Hello World!"[0]);
+  printf(str: &"Hello World!\n"[0]);
 }

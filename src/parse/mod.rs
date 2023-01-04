@@ -62,8 +62,8 @@ pub enum Expr {
   Bool(bool),
   Int(usize),
   Flt(f64),
-  Char(RefStr),
-  Str(RefStr),
+  Char(Vec<u8>),
+  Str(Vec<u8>),
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),
   Index(Box<Expr>, Box<Expr>),
@@ -230,10 +230,11 @@ impl error::Error for SyntaxError {}
 
 pub fn parse_module(path: &str) -> MRes<Module> {
   let input = fs::read_to_string(path)?;
+  let mut lexer = lexer::Lexer::new(&input);
   let mut module = Module::new();
-  match maple::ModuleParser::new().parse(&mut module, &input) {
+
+  match maple::ModuleParser::new().parse(&mut module, &mut lexer) {
     Ok(()) => Ok(module),
-    Err(error) => Err(Box::new(
-      SyntaxError::new(error))),
+    Err(error) => Err(Box::new(SyntaxError::new(error))),
   }
 }

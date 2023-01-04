@@ -23,7 +23,7 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       ctx.get_local(*id)
     }
     LValue::Str { val, .. } => {
-      ctx.build_string_lit(*val)
+      ctx.build_string_lit(val)
     }
     LValue::Dot { arg, idx, .. } => {
       let addr = lower_const_lvalue(arg, ctx);
@@ -109,7 +109,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       ctx.get_local(*id)
     }
     LValue::Str { val, .. } => {
-      ctx.build_string_lit(*val)
+      ctx.build_string_lit(val)
     }
     LValue::Dot { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -330,7 +330,7 @@ struct LowerCtx<'a> {
   locals: HashMap<LocalId, LLVMValueRef>,
 
   // String literals
-  string_lits: HashMap<RefStr, LLVMValueRef>,
+  string_lits: HashMap<Vec<u8>, LLVMValueRef>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -568,28 +568,32 @@ impl<'a> LowerCtx<'a> {
       self.l_context, std::ptr::null_mut(), 0, 0))
   }
 
-  unsafe fn build_string_lit(&mut self, s: RefStr) -> LLVMValueRef {
+  unsafe fn build_string_lit(&mut self, data: &[u8]) -> LLVMValueRef {
     // Borrow checker :/
     let l_module = self.l_module;
     let l_context = self.l_context;
     let index = self.string_lits.len();
 
-    *self.string_lits.entry(s).or_insert_with(|| {
+    *self.string_lits.raw_entry_mut().from_key(data).or_insert_with(|| {
       // Create name
       let name = RefStr::new(&format!(".str.{}", index));
 
       // Create global
-      let len = s.borrow_rs().len() as u32;
+      let len = data.len() as u32;
       let val = LLVMAddGlobal(l_module,
-                  LLVMArrayType(LLVMInt8TypeInContext(l_context), len),
-                  name.borrow_c());
+                              LLVMArrayType(LLVMInt8TypeInContext(l_context), len),
+                              name.borrow_c());
 
       // Set initializer
       // NOTE: for now these are NUL-terminated
-      LLVMSetInitializer(val, LLVMConstStringInContext(l_context, s.borrow_c(), len, 0));
+      LLVMSetInitializer(val, LLVMConstStringInContext(
+                           l_context,
+                           data.as_ptr() as _,
+                           len,
+                           0));
 
-      val
-    })
+      (data.to_vec(), val)
+    }).1
   }
 
   unsafe fn build_bool(&mut self, val: bool) -> LLVMValueRef {

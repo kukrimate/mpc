@@ -402,8 +402,8 @@ impl<'a> CheckCtx<'a> {
         self.inst_as_lvalue(path)?
       }
       Str(val) => {
-        let ty = Ty::Arr(val.borrow_rs().len(), Box::new(self.tctx.tvar(Ty::BoundInt)));
-        LValue::Str { ty, is_mut: IsMut::No, val: *val }
+        let ty = Ty::Arr(val.len(), Box::new(self.tctx.tvar(Ty::BoundInt)));
+        LValue::Str { ty, is_mut: IsMut::No, val: val.clone() }
       }
       Dot(arg, name) => {
         self.infer_dot(arg, *name)?
@@ -551,7 +551,7 @@ impl<'a> CheckCtx<'a> {
         RValue::Flt { ty: self.tctx.tvar(Ty::BoundFlt), val: *val }
       }
       Char(val) => {
-        RValue::Char { ty: self.tctx.tvar(Ty::BoundInt), val: *val }
+        RValue::Char { ty: self.tctx.tvar(Ty::BoundInt), val: val.clone() }
       }
       Call(arg, args) => {
         self.infer_call(arg, args)?

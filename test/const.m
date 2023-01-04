@@ -8,5 +8,4 @@ extern {
 function main(argc: Int32, argv: *[0]*Int8) {
   printf(fmt: &"%d "[0], arg: I32_100);
   printf(fmt: &"%d "[0], arg: I32_200);
-
 }

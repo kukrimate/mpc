@@ -13,7 +13,6 @@ pub struct Lexer<'input> {
 
 #[derive(Clone, Debug)]
 pub enum Token {
-  EndOfFile,
   Ident(RefStr),    // [_a-zA-Z][_a-zA-Z0-9]*
   IntLit(usize),    // [0-9]+
                     // 0[xX][a-fA-f0-9]+
@@ -110,6 +109,14 @@ pub enum Error {
   UnterminatedComment
 }
 
+impl<'input> Iterator for Lexer<'input> {
+  type Item = Result<(usize, Token, usize), Error>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.read_token()
+  }
+}
+
 impl<'input> Lexer<'input> {
   pub fn new(input: &'input str) -> Self {
     let keywords = HashMap::from([
@@ -159,7 +166,7 @@ impl<'input> Lexer<'input> {
     }
   }
 
-  pub fn read_token(&mut self) -> Result<Token, Error> {
+  pub fn read_token(&mut self) -> Option<Result<(usize, Token, usize), Error>> {
     loop {
       // Save beginning of token
       self.begin = self.end;
@@ -168,11 +175,11 @@ impl<'input> Lexer<'input> {
       let byte = if let Some(byte) = self.consume_byte() {
         byte
       } else {
-        return Ok(Token::EndOfFile)
+        return None
       };
 
       // Decide next state after seeing initial char
-      return Ok(match byte {
+      let token = match byte {
         // Whitespaces
         b'\n' => {
           self.line += 1;
@@ -203,10 +210,12 @@ impl<'input> Lexer<'input> {
         b'"' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Err(Error::UnterminatedStr)
+              return Some(Err(Error::UnterminatedStr))
             }
             Some(b'"') => {
-              break Token::StrLit(unescape(self.slice())?)
+              // FIXME: propagate error
+              let s = self.slice();
+              break Token::StrLit(unescape(&s[1..s.len() - 1]).unwrap())
             },
             Some(_) => (),
           }
@@ -215,10 +224,12 @@ impl<'input> Lexer<'input> {
         b'\'' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Err(Error::UnterminatedChar)
+              return Some(Err(Error::UnterminatedChar))
             }
             Some(b'\'') => {
-              break Token::CharLit(unescape(self.slice())?)
+              // FIXME: propagate error
+              let s = self.slice();
+              break Token::CharLit(unescape(&s[1..s.len()-1]).unwrap())
             },
             Some(_) => (),
           }
@@ -320,7 +331,7 @@ impl<'input> Lexer<'input> {
             self.consume_byte();
             while match self.consume_byte() {
               None => {
-                return Err(Error::UnterminatedComment)
+                return Some(Err(Error::UnterminatedComment))
               }
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
@@ -380,8 +391,10 @@ impl<'input> Lexer<'input> {
             Token::Colon
           }
         }
-        _ => return Err(Error::InvalidToken)
-      })
+        _ => return Some(Err(Error::InvalidToken))
+      };
+
+      return Some(Ok((self.begin, token, self.end)))
     }
   }
 

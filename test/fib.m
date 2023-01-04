@@ -9,7 +9,7 @@ function fib(mut n: Int32) {
   let mut j: Int32 = 1;
 
   while n > 0 {
-    printf(fmt: &"%d "[0], arg: i);
+    printf(fmt: &"%d\n"[0], arg: i);
     let tmp = i + j;
     i = j;
     j = tmp;

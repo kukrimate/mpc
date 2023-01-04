@@ -1,5 +1,4 @@
 use crate::parse::*;
-use std::str::FromStr;
 
 grammar(module: &mut Module);
 
@@ -335,11 +334,95 @@ pub Module: () = Seq<GlobalDefinition>;
 
 // Tokens
 
-Identifier: RefStr = r"[_a-zA-Z][_a-zA-Z0-9]*" => RefStr::new(<>);
-Integer: usize = r"[0-9]+" => usize::from_str(<>).unwrap();
-Float: f64 = r"[0-9]*[.][0-9]+([eE][+-]?[0-9]+)?" => f64::from_str(<>).unwrap();
-Character: RefStr = <s:r#"'([^']|\\')*'"#> => RefStr::new(&s[1..s.len()-1]);
-String: RefStr = <s:r#""([^"]|\\")*""#> => RefStr::new(&s[1..s.len()-1]);
+extern {
+  type Location = usize;
+  type Error = lexer::Error;
+
+  enum lexer::Token {
+    Identifier => lexer::Token::Ident(<RefStr>),
+    Integer => lexer::Token::IntLit(<usize>),
+    Float => lexer::Token::FltLit(<f64>),
+    Character => lexer::Token::CharLit(<Vec<u8>>),
+    String => lexer::Token::StrLit(<Vec<u8>>),
+    "Bool" => lexer::Token::TyBool,
+    "Uint8" => lexer::Token::TyUint8,
+    "Int8" => lexer::Token::TyInt8,
+    "Uint16" => lexer::Token::TyUint16,
+    "Int16" => lexer::Token::TyInt16,
+    "Uint32" => lexer::Token::TyUint32,
+    "Int32" => lexer::Token::TyInt32,
+    "Uint64" => lexer::Token::TyUint64,
+    "Int64" => lexer::Token::TyInt64,
+    "Uintn" => lexer::Token::TyUintn,
+    "Intn" => lexer::Token::TyIntn,
+    "Float" => lexer::Token::TyFloat,
+    "Double" => lexer::Token::TyDouble,
+    "Function" => lexer::Token::TyFunction,
+    "as" => lexer::Token::KwAs,
+    "let" => lexer::Token::KwLet,
+    "mut" => lexer::Token::KwMut,
+    "continue" => lexer::Token::KwContinue,
+    "break" => lexer::Token::KwBreak,
+    "return" => lexer::Token::KwReturn,
+    "if" => lexer::Token::KwIf,
+    "else" => lexer::Token::KwElse,
+    "while" => lexer::Token::KwWhile,
+    "loop" => lexer::Token::KwLoop,
+    "true" => lexer::Token::KwTrue,
+    "false" => lexer::Token::KwFalse,
+    "struct" => lexer::Token::KwStruct,
+    "union" => lexer::Token::KwUnion,
+    "enum" => lexer::Token::KwEnum,
+    "function" => lexer::Token::KwFunction,
+    "const" => lexer::Token::KwConst,
+    "data" => lexer::Token::KwData,
+    "import" => lexer::Token::KwImport,
+    "extern" => lexer::Token::KwExtern,
+    "(" => lexer::Token::LParen,
+    ")" => lexer::Token::RParen,
+    "[" => lexer::Token::LSquare,
+    "]" => lexer::Token::RSquare,
+    "{" => lexer::Token::LCurly,
+    "}" => lexer::Token::RCurly,
+    "<" => lexer::Token::LAngle,
+    ">" => lexer::Token::RAngle,
+    "&" => lexer::Token::Amp,
+    "*" => lexer::Token::Star,
+    "+" => lexer::Token::Plus,
+    "-" => lexer::Token::Minus,
+    "~" => lexer::Token::Tilde,
+    "!" => lexer::Token::Excl,
+    "/" => lexer::Token::Slash,
+    "%" => lexer::Token::Percent,
+    "|" => lexer::Token::Pipe,
+    "^" => lexer::Token::Caret,
+    "=" => lexer::Token::Eq,
+    "." => lexer::Token::Dot,
+    "," => lexer::Token::Comma,
+    ";" => lexer::Token::Semi,
+    ":" => lexer::Token::Colon,
+    "<<" => lexer::Token::LShift,
+    ">>" => lexer::Token::RShift,
+    "::" => lexer::Token::DColon,
+    "->" => lexer::Token::Arrow,
+    "==" => lexer::Token::EqEq,
+    "!=" => lexer::Token::ExclEq,
+    "<=" => lexer::Token::LessEq,
+    ">=" => lexer::Token::GreaterEq,
+    "&&" => lexer::Token::LogicAnd,
+    "||" => lexer::Token::LogicOr,
+    "+=" => lexer::Token::RmwAdd,
+    "-=" => lexer::Token::RmwSub,
+    "*=" => lexer::Token::RmwMul,
+    "/=" => lexer::Token::RmwDiv,
+    "%=" => lexer::Token::RmwMod,
+    "<<=" => lexer::Token::RmwLShift,
+    ">>=" => lexer::Token::RmwRShift,
+    "&=" => lexer::Token::RmwBitAnd,
+    "|=" => lexer::Token::RmwBitOr,
+    "^=" => lexer::Token::RmwBitXor,
+  }
+}
 
 // Macros
 
