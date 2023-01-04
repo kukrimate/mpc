@@ -1,4 +1,4 @@
-use crate::util::*;
+use super::*;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -100,17 +100,8 @@ pub enum Token {
   RmwBitXor         // ^=
 }
 
-#[derive(Debug)]
-pub enum Error {
-  InvalidToken,
-  UnknownEscape,
-  UnterminatedStr,
-  UnterminatedChar,
-  UnterminatedComment
-}
-
 impl<'input> Iterator for Lexer<'input> {
-  type Item = Result<(usize, Token, usize), Error>;
+  type Item = Result<(Location, Token, Location), Error>;
 
   fn next(&mut self) -> Option<Self::Item> {
     self.read_token()
@@ -166,10 +157,12 @@ impl<'input> Lexer<'input> {
     }
   }
 
-  pub fn read_token(&mut self) -> Option<Result<(usize, Token, usize), Error>> {
+  pub fn read_token(&mut self) -> Option<Result<(Location, Token, Location), Error>> {
     loop {
       // Save beginning of token
       self.begin = self.end;
+      // Save starting location of token
+      let start_loc = self.location();
 
       // Read character or bail on EOF
       let byte = if let Some(byte) = self.consume_byte() {
@@ -210,12 +203,14 @@ impl<'input> Lexer<'input> {
         b'"' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Some(Err(Error::UnterminatedStr))
+              return Some(Err(Error::UnterminatedStr(self.location())))
             }
             Some(b'"') => {
-              // FIXME: propagate error
               let s = self.slice();
-              break Token::StrLit(unescape(&s[1..s.len() - 1]).unwrap())
+              match unescape(start_loc, &s[1..s.len() - 1]) {
+                Ok(v) => break Token::StrLit(v),
+                Err(err) => return Some(Err(err)),
+              }
             },
             Some(_) => (),
           }
@@ -224,12 +219,14 @@ impl<'input> Lexer<'input> {
         b'\'' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Some(Err(Error::UnterminatedChar))
+              return Some(Err(Error::UnterminatedChar(self.location())))
             }
             Some(b'\'') => {
-              // FIXME: propagate error
               let s = self.slice();
-              break Token::CharLit(unescape(&s[1..s.len()-1]).unwrap())
+              match unescape(start_loc, &s[1..s.len() - 1]) {
+                Ok(v) => break Token::CharLit(v),
+                Err(err) => return Some(Err(err)),
+              }
             },
             Some(_) => (),
           }
@@ -331,7 +328,7 @@ impl<'input> Lexer<'input> {
             self.consume_byte();
             while match self.consume_byte() {
               None => {
-                return Some(Err(Error::UnterminatedComment))
+                return Some(Err(Error::UnterminatedComment(self.location())))
               }
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
@@ -391,10 +388,10 @@ impl<'input> Lexer<'input> {
             Token::Colon
           }
         }
-        _ => return Some(Err(Error::InvalidToken))
+        _ => return Some(Err(Error::UnknownToken(self.location())))
       };
 
-      return Some(Ok((self.begin, token, self.end)))
+      return Some(Ok((start_loc, token, self.location())))
     }
   }
 
@@ -501,6 +498,7 @@ impl<'input> Lexer<'input> {
 
   #[inline(always)]
   fn consume_byte(&mut self) -> Option<u8> {
+    self.column += 1;
     let byte = self.peek_byte()?;
     self.end += 1;
     Some(byte)
@@ -518,12 +516,15 @@ impl<'input> Lexer<'input> {
   }
 
   #[inline(always)]
+  fn location(&self) -> Location { Location { line: self.line, column: self.column } }
+
+  #[inline(always)]
   fn slice(&self) -> &'input str {
     &self.input[self.begin..self.end]
   }
 }
 
-fn unescape(s: &str) -> Result<Vec<u8>, Error> {
+fn unescape(loc: Location, s: &str) -> Result<Vec<u8>, Error> {
   let mut iterator = s.bytes().peekable();
   let mut buffer = Vec::new();
 
@@ -535,6 +536,7 @@ fn unescape(s: &str) -> Result<Vec<u8>, Error> {
           Some(b'n') => { buffer.push(b'\n'); }
           Some(b'r') => { buffer.push(b'\r'); }
           Some(b't') => { buffer.push(b'\t'); }
+          Some(b'\\') => { buffer.push(b'\\'); }
           Some(b'x') => {
             let mut byte = 0u8;
             loop {
@@ -556,7 +558,7 @@ fn unescape(s: &str) -> Result<Vec<u8>, Error> {
             }
             buffer.push(byte);
           }
-          _ => { return Err(Error::UnknownEscape) }
+          _ => { return Err(Error::UnknownEscape(loc)) }
         }
       }
       Some(byte) => {

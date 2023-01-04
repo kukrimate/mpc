@@ -1,4 +1,5 @@
 use crate::util::*;
+use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};
 use std::collections::{HashMap,HashSet};
 use std::{error,fs,fmt};
@@ -206,27 +207,67 @@ impl Module {
   }
 }
 
-/// Wrapper around lalrpop
+
+#[derive(Clone,Copy,Default,Debug)]
+pub struct Location {
+  pub line: usize,
+  pub column: usize
+}
+
+impl fmt::Display for Location {
+  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    write!(fmt, "line {} column {}", self.line, self.column)
+  }
+}
 
 #[derive(Debug)]
-struct SyntaxError {
-  msg: RefStr
+pub enum Error {
+  UnknownToken(Location),
+  UnknownEscape(Location),
+  UnterminatedStr(Location),
+  UnterminatedChar(Location),
+  UnterminatedComment(Location),
+  UnexpectedToken(Location),
+  UnexpectedEndOfFile(Location)
 }
 
-impl SyntaxError {
-  fn new<T: fmt::Debug, E: fmt::Debug>(e: lalrpop_util::ParseError<usize, T, E>) -> SyntaxError {
-    let s = format!("{:?}", e);
-    SyntaxError { msg: RefStr::new(&s) }
+impl Error {
+  fn from_lalrpop(err: lalrpop_util::ParseError<Location, Token, Error>) -> Error {
+    match err {
+      // Parser expected a different token
+      lalrpop_util::ParseError::UnrecognizedToken { token: (location, ..), .. } => {
+        Error::UnexpectedToken(location)
+      }
+      // Parser expected token instead of EOF
+      lalrpop_util::ParseError::UnrecognizedEOF { location, .. } => {
+        Error::UnexpectedEndOfFile(location)
+      }
+      // Lexer errors propagate to here
+      lalrpop_util::ParseError::User { error } => {
+        error
+      }
+      // NOTE: the following two are not generated using our setup
+      lalrpop_util::ParseError::InvalidToken { .. } => unreachable!(),
+      lalrpop_util::ParseError::ExtraToken { .. } => unreachable!()
+    }
   }
 }
 
-impl fmt::Display for SyntaxError {
+impl fmt::Display for Error {
   fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    write!(fmt, "{}", self.msg)
+    match self {
+      Error::UnknownToken(location) => write!(fmt, "Error at {}: Unknown token", location),
+      Error::UnknownEscape(location) => write!(fmt, "Error at {}: Unknown escape sequence", location),
+      Error::UnterminatedStr(location) => write!(fmt, "Error at {}: Unterminated string literal", location),
+      Error::UnterminatedChar(location) => write!(fmt, "Error at {}: Unterminated character literal", location),
+      Error::UnterminatedComment(location) => write!(fmt, "Error at {}: Unterminated block comment", location),
+      Error::UnexpectedToken(location) => write!(fmt, "Error at {}: Unexpected token", location),
+      Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location)
+    }
   }
 }
 
-impl error::Error for SyntaxError {}
+impl error::Error for Error {}
 
 pub fn parse_module(path: &str) -> MRes<Module> {
   let input = fs::read_to_string(path)?;
@@ -235,6 +276,6 @@ pub fn parse_module(path: &str) -> MRes<Module> {
 
   match maple::ModuleParser::new().parse(&mut module, &mut lexer) {
     Ok(()) => Ok(module),
-    Err(error) => Err(Box::new(SyntaxError::new(error))),
+    Err(err) => Err(Box::new(Error::from_lalrpop(err))),
   }
 }
