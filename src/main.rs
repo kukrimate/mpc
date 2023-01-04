@@ -7,6 +7,7 @@ mod util;
 
 use crate::util::*;
 use clap::*;
+use std::path::Path;
 
 /// Choice of output artifact
 
@@ -16,9 +17,9 @@ pub enum CompileTo {
   Object,
 }
 
-fn compile(input_path: &str, output_path: &str, compile_to: CompileTo) -> MRes<()> {
+fn compile(input_path: &Path, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
   // Parse module
-  let parsed_module = parse::parse_module(input_path)?;
+  let parsed_module = parse::parse_bundle(input_path)?;
   // Compile module
   sema::compile_module(&parsed_module, output_path, compile_to)
 }
@@ -53,8 +54,8 @@ fn main() {
     CompileTo::Object
   };
 
-  match compile(args.value_of("input").unwrap(),
-                  args.value_of("output").unwrap(),
+  match compile(Path::new(args.value_of_os("input").unwrap()),
+                  Path::new(args.value_of_os("output").unwrap()),
                   compile_to) {
     Ok(()) => eprintln!("ok :)"),
     Err(error) => eprintln!("{} :(", error),

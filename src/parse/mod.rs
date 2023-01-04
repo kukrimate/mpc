@@ -188,14 +188,14 @@ pub enum Variant {
 }
 
 #[derive(Debug)]
-pub struct Module {
+pub struct Repository {
   pub deps: HashSet<RefStr>,
   pub defs: HashMap<DefId, Def>,
 }
 
-impl Module {
-  pub fn new() -> Module {
-    Module {
+impl Repository {
+  pub fn new() -> Repository {
+    Repository {
       deps: HashSet::new(),
       defs: HashMap::new(),
     }
@@ -269,10 +269,10 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-pub fn parse_module(path: &str) -> MRes<Module> {
+pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
   let input = fs::read_to_string(path)?;
   let mut lexer = lexer::Lexer::new(&input);
-  let mut module = Module::new();
+  let mut module = Repository::new();
 
   match maple::ModuleParser::new().parse(&mut module, &mut lexer) {
     Ok(()) => Ok(module),

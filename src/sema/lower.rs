@@ -1081,35 +1081,55 @@ impl<'a> LowerCtx<'a> {
     LLVMDumpModule(self.l_module)
   }
 
-  unsafe fn write_ir(&self, output_path: &str) {
-    let errors = std::ptr::null_mut();
-    LLVMPrintModuleToFile(self.l_module, RefStr::new(output_path).borrow_c(), errors);
-    assert!(errors.is_null());
+  unsafe fn write_llvm_ir(&self, path: &Path) -> MRes<()> {
+    // Create string representation of module
+    let module_str = LLVMPrintModuleToString(self.l_module);
+
+    // Write string to file
+    let data: &[u8] = std::slice::from_raw_parts(
+      module_str as *const u8,
+      c_strlen(module_str));
+    std::fs::write(path, data)?;
+
+    // Free string
+    LLVMDisposeMessage(module_str);
+
+    // We are okay
+    Ok(())
   }
 
-  unsafe fn write_asm(&self, output_path: &str) {
-    let errors = std::ptr::null_mut();
-    LLVMTargetMachineEmitToFile(
-      self.l_machine,
-      self.l_module,
-      // NOTE: this transmute is borked, but LLVMTargetMachineEmitToFile
-      // should take a const pointer anyways, so it seems like the Rust FFI
-      // bindings are at fault here.
-      std::mem::transmute(RefStr::new(output_path).borrow_c()),
-      LLVMCodeGenFileType::LLVMAssemblyFile,
-      errors);
-    assert!(errors.is_null());
-  }
+  unsafe fn write_machine_code(&self, textual: bool, path: &Path) -> MRes<()> {
+    let file_type = if textual {
+      LLVMCodeGenFileType::LLVMAssemblyFile
+    } else {
+      LLVMCodeGenFileType::LLVMObjectFile
+    };
 
-  unsafe fn write_obj(&self, output_path: &str) {
-    let errors = std::ptr::null_mut();
-    LLVMTargetMachineEmitToFile(
+    let mut errors = std::ptr::null_mut();
+    let mut buffer = std::ptr::null_mut();
+
+    // Ask LLVM put the data into a buffer for us
+    LLVMTargetMachineEmitToMemoryBuffer(
       self.l_machine,
       self.l_module,
-      std::mem::transmute(RefStr::new(output_path).borrow_c()),
-      LLVMCodeGenFileType::LLVMObjectFile,
-      errors);
+      file_type,
+      &mut errors,
+      &mut buffer);
+
+    // NOTE: Generating un-compilable IR is considered a bug
     assert!(errors.is_null());
+
+    // Write the data from above to the output file
+    let data: &[u8] = std::slice::from_raw_parts(
+      LLVMGetBufferStart(buffer) as *const u8,
+      LLVMGetBufferSize(buffer));
+    std::fs::write(path, data)?;
+
+    // Free buffer
+    LLVMDisposeMemoryBuffer(buffer);
+
+    // We are all okay
+    Ok(())
   }
 }
 
@@ -1125,16 +1145,16 @@ impl<'a> Drop for LowerCtx<'a> {
   }
 }
 
-pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>), Inst>, path: &str, compile_to: CompileTo) -> MRes<()> {
+pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>), Inst>, path: &Path, compile_to: CompileTo) -> MRes<()> {
   unsafe {
     let mut ctx = LowerCtx::new(tctx, RefStr::new(""));
     ctx.lower_ty_defs(insts);
     ctx.lower_defs(insts);
     ctx.dump();
     match compile_to {
-      CompileTo::LLVMIr => ctx.write_ir(path),
-      CompileTo::Assembly => ctx.write_asm(path),
-      CompileTo::Object => ctx.write_obj(path),
+      CompileTo::LLVMIr => ctx.write_llvm_ir(path)?,
+      CompileTo::Assembly => ctx.write_machine_code(true, path)?,
+      CompileTo::Object => ctx.write_machine_code(false, path)?,
     };
     Ok(())
   }

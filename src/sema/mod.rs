@@ -362,7 +362,7 @@ impl fmt::Debug for RValue {
 mod infer;
 mod lower;
 
-pub fn compile_module(parsed_module: &parse::Module, output_path: &str, compile_to: CompileTo) -> MRes<()> {
+pub fn compile_module(parsed_module: &parse::Repository, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
   let mut tctx = TVarCtx::new();
   let insts = infer::infer_module(&mut tctx, parsed_module)?;
   println!("{:#?}", insts);

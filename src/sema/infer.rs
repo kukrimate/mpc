@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Module) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
+pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Repository) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
   let mut ctx = CheckCtx {
     tctx,
     parsed_defs: &parsed_module.defs,

@@ -1,6 +1,6 @@
 use crate::parse::*;
 
-grammar(module: &mut Module);
+grammar(module: &mut Repository);
 
 Path: Path = {
   Identifier  => vec![<>],

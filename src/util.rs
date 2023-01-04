@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::mem::MaybeUninit;
+use std::os::raw::c_char;
 
 /// Same thing std uses for pretty printing
 /// This should really be an exposed API :(
@@ -167,4 +168,14 @@ impl<I, O> MonadicCollect<O> for I
     }
     Ok(vec)
   }
+}
+
+/// Calculate the length of a C-style string (in bytes)
+
+pub unsafe fn c_strlen(s: *const c_char) -> usize {
+  let mut end = s;
+  while end.read() != 0 {
+    end = end.add(1);
+  }
+  end.offset_from(s) as _
 }
