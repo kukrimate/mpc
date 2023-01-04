@@ -6,7 +6,9 @@ pub struct Lexer<'input> {
   keywords: HashMap<&'static str, Token>,
   input: &'input str,
   begin: usize,
-  end: usize
+  end: usize,
+  line: usize,
+  column: usize
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +104,10 @@ pub enum Token {
 #[derive(Debug)]
 pub enum Error {
   InvalidToken,
-  UnknownEscape
+  UnknownEscape,
+  UnterminatedStr,
+  UnterminatedChar,
+  UnterminatedComment
 }
 
 impl<'input> Lexer<'input> {
@@ -148,7 +153,9 @@ impl<'input> Lexer<'input> {
       keywords,
       input,
       begin: 0,
-      end: 0
+      end: 0,
+      line: 1,
+      column: 1
     }
   }
 
@@ -167,7 +174,12 @@ impl<'input> Lexer<'input> {
       // Decide next state after seeing initial char
       return Ok(match byte {
         // Whitespaces
-        b'\n' | b'\r' | b'\t' | b' ' => continue,
+        b'\n' => {
+          self.line += 1;
+          self.column = 1;
+          continue
+        }
+        b'\r' | b'\t' | b' ' => continue,
         // Identifiers
         b'_' | b'a'..=b'z' | b'A'..=b'Z' => self.read_ident(),
         // Numeric literals
@@ -190,7 +202,10 @@ impl<'input> Lexer<'input> {
         // String literals
         b'"' => loop {
           match self.consume_byte() {
-            Some(b'"') | None => {
+            Some(b'\n') | None => {
+              return Err(Error::UnterminatedStr)
+            }
+            Some(b'"') => {
               break Token::StrLit(unescape(self.slice())?)
             },
             Some(_) => (),
@@ -199,7 +214,10 @@ impl<'input> Lexer<'input> {
         // Character literals
         b'\'' => loop {
           match self.consume_byte() {
-            Some(b'\'') | None => {
+            Some(b'\n') | None => {
+              return Err(Error::UnterminatedChar)
+            }
+            Some(b'\'') => {
               break Token::CharLit(unescape(self.slice())?)
             },
             Some(_) => (),
@@ -301,11 +319,11 @@ impl<'input> Lexer<'input> {
           Some(b'*') => {
             self.consume_byte();
             while match self.consume_byte() {
+              None => {
+                return Err(Error::UnterminatedComment)
+              }
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
-                false
-              }
-              None => {
                 false
               }
               _ => true
