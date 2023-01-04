@@ -3,6 +3,8 @@ use lalrpop_util::{self,lalrpop_mod};
 use std::collections::{HashMap,HashSet};
 use std::{error,fs,fmt};
 
+mod lexer;
+
 lalrpop_mod!(maple, "/parse/maple.rs");
 
 /// Syntax tree produced by the parser

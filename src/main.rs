@@ -7,6 +7,8 @@ mod util;
 use crate::util::*;
 use clap::*;
 
+/// Choice of output artifact
+
 pub enum CompileTo {
   LLVMIr,
   Assembly,
