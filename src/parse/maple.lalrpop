@@ -116,8 +116,13 @@ LetType: Option<Ty> = {
 
 Expr: Expr = {
   LOrExpr,
-  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
+  IfExpr,
   "loop" <b:Block> => Expr::Loop(Box::new(b))
+};
+
+IfExpr: Expr = {
+  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
+  "if" <c:Expr> <t:Block> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
 };
 
 LOrExpr: Expr = {
