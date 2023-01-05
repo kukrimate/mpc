@@ -90,7 +90,7 @@ enum Ty {
   Double,
   Inst(RefStr, (DefId, Vec<Ty>)),
   Ptr(IsMut, Box<Ty>),
-  Func(Vec<(RefStr, Ty)>, Box<Ty>),
+  Func(Vec<(RefStr, Ty)>, bool, Box<Ty>),
   Arr(usize, Box<Ty>),
   Tuple(Vec<(RefStr, Ty)>),
   // Type variables
@@ -121,7 +121,7 @@ impl fmt::Debug for Ty {
       Double => write!(f, "Double"),
       Inst(name, ..) => write!(f, "{}", name),
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
-      Func(params, ty) => {
+      Func(params, va, ty) => {
         write!(f, "Function")?;
         write_comma_separated(f,
           params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))?;
@@ -157,6 +157,7 @@ enum RValue {
   Null      { ty: Ty },
   ConstRef  { ty: Ty, name: RefStr, id: DefId },
   FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
+  CStr      { ty: Ty, val: Vec<u8> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -214,6 +215,7 @@ impl RValue {
       RValue::Null      { ty, .. } => ty,
       RValue::ConstRef  { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
+      RValue::CStr      { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
@@ -276,6 +278,9 @@ impl fmt::Debug for RValue {
       }
       RValue::FuncRef { name, .. } => {
         write!(f, "{}", name)
+      }
+      RValue::CStr { val, .. } => {
+        write!(f, "c{:?}", val)
       }
       RValue::Load { arg, .. } => {
         write!(f, "{:?}", arg)

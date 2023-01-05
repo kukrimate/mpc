@@ -202,11 +202,16 @@ ArgumentListOpt: Vec<(RefStr, Expr)> = {
 }
 
 ArgumentList: Vec<(RefStr, Expr)> = {
-  <name:Identifier> ":" <expr:Expr> => vec![ (name, expr) ],
-  <mut l:ArgumentList> "," <name:Identifier> ":" <expr:Expr> => {
-    l.push((name, expr));
-    l
+  Argument => vec![<>],
+  <mut args:ArgumentList> "," <arg:Argument> => {
+    args.push(arg);
+    args
   }
+};
+
+Argument: (RefStr, Expr) = {
+  Expr => (RefStr::new(""), <>),
+  <name:Identifier> ":" <expr:Expr> => (name, expr)
 };
 
 PrimExpr: Expr = {
@@ -219,6 +224,7 @@ PrimExpr: Expr = {
   Float => Expr::Flt(<>),
   Character => Expr::Char(<>),
   String => Expr::Str(<>),
+  CString => Expr::CStr(<>),
 };
 
 // Modules
@@ -314,7 +320,10 @@ ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
-    module.def(Def::ExternFunc(ExternFuncDef { name, params, ret_ty }));
+    module.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: false, ret_ty }));
+  },
+  "function" <name:Identifier> "(" <params:ParameterList> "," "..." ")" <ret_ty:ReturnType> => {
+    module.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: true, ret_ty }));
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
     module.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
@@ -344,6 +353,7 @@ extern {
     Float => lexer::Token::FltLit(<f64>),
     Character => lexer::Token::CharLit(<Vec<u8>>),
     String => lexer::Token::StrLit(<Vec<u8>>),
+    CString => lexer::Token::CStrLit(<Vec<u8>>),
     "Bool" => lexer::Token::TyBool,
     "Uint8" => lexer::Token::TyUint8,
     "Int8" => lexer::Token::TyInt8,
@@ -421,6 +431,7 @@ extern {
     "&=" => lexer::Token::RmwBitAnd,
     "|=" => lexer::Token::RmwBitOr,
     "^=" => lexer::Token::RmwBitXor,
+    "..." => lexer::Token::Varargs
   }
 }
 

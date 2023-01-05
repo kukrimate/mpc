@@ -79,7 +79,8 @@ impl TVarCtx {
         (Float, Float) => Float,
         (Double, Double) => Double,
 
-        (Inst(name, (def_id, targs1)), Inst(_, (def_id2, targs2))) if def_id == def_id2 => {
+        (Inst(name, (def_id, targs1)),
+          Inst(_, (def_id2, targs2))) if def_id == def_id2 => {
           let targs = targs1
             .iter()
             .zip(targs2.iter())
@@ -87,7 +88,8 @@ impl TVarCtx {
             .monadic_collect()?;
           Inst(*name, (*def_id, targs))
         }
-        (Func(par1, ret1), Func(par2, ret2)) if par1.len() == par2.len() => {
+        (Func(par1, va1, ret1),
+          Func(par2, va2, ret2)) if par1.len() == par2.len() && va1 == va2 => {
           let mut par = Vec::new();
           for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
             if n1 != n2 {
@@ -95,7 +97,7 @@ impl TVarCtx {
             }
             par.push((*n1, self.unify(t1, t2)?));
           }
-          Func(par, Box::new(self.unify(ret1, ret2)?))
+          Func(par, *va1,Box::new(self.unify(ret1, ret2)?))
         }
         (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
           Ptr(*is_mut1, Box::new(self.unify(base1, base2)?))
@@ -203,12 +205,12 @@ impl TVarCtx {
         Inst(*name, (*id, targs))
       }
       Ptr(is_mut, ty) => Ptr(*is_mut, Box::new(self.lit_ty(&**ty))),
-      Func(params, ty) => {
+      Func(params, va, ty) => {
         let params = params
           .iter()
           .map(|(name, ty)| (*name, self.lit_ty(ty)))
           .collect();
-        Func(params, Box::new(self.lit_ty(&**ty)))
+        Func(params, *va, Box::new(self.lit_ty(&**ty)))
       }
       Arr(cnt, ty) => Arr(*cnt, Box::new(self.lit_ty(&**ty))),
       Tuple(params) => {
@@ -257,12 +259,12 @@ impl TVarCtx {
       Ptr(is_mut, ty) => {
         Ptr(*is_mut, Box::new(self.root_ty(ty)))
       }
-      Func(params, ty) => {
+      Func(params, va, ty) => {
         let params = params
           .iter()
           .map(|(name, ty)| (*name, self.root_ty(ty)))
           .collect();
-        Func(params, Box::new(self.root_ty(ty)))
+        Func(params, *va, Box::new(self.root_ty(ty)))
       }
       Arr(cnt, ty) => {
         Arr(*cnt, Box::new(self.root_ty(ty)))

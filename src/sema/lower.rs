@@ -51,6 +51,9 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
     }
+    RValue::CStr { val, .. } => {
+      ctx.build_string_lit(val)
+    }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
     }
@@ -136,6 +139,9 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
+    }
+    RValue::CStr { val, .. } => {
+      ctx.build_string_lit(val)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -440,10 +446,12 @@ impl<'a> LowerCtx<'a> {
       Ptr(_, base_ty) => {
         LLVMPointerType(self.lower_ty(base_ty), 0)
       }
-      Func(params, ret_ty) => {
+      Func(params, va, ret_ty) => {
         let mut l_params = self.lower_params(params);
         LLVMFunctionType(self.lower_ty(ret_ty),
-          l_params.get_unchecked_mut(0) as _, l_params.len() as u32, 0)
+                         l_params.get_unchecked_mut(0) as _,
+                         l_params.len() as u32,
+                         *va as _)
       }
       Arr(siz, elem_ty) => {
         LLVMArrayType(self.lower_ty(elem_ty), *siz as u32)
@@ -581,7 +589,9 @@ impl<'a> LowerCtx<'a> {
       // Create global
       let len = data.len() as u32;
       let val = LLVMAddGlobal(l_module,
-                              LLVMArrayType(LLVMInt8TypeInContext(l_context), len),
+                              LLVMArrayType(
+                                LLVMInt8TypeInContext(l_context),
+                                len),
                               name.borrow_c());
 
       // Set initializer

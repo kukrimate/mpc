@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::str::FromStr;
 
 pub struct Lexer<'input> {
@@ -21,6 +22,7 @@ pub enum Token {
   FltLit(f64),      // [0-9]*[.][0-9]+([eE][+-]?[0-9]+)?
   CharLit(Vec<u8>), // '([^']|\')*'
   StrLit(Vec<u8>),  // "([^"]|\")*"
+  CStrLit(Vec<u8>), // c"([^"]|\")*"
   TyBool,           // Bool
   TyUint8,          // Uint8
   TyInt8,           // Int8
@@ -97,7 +99,8 @@ pub enum Token {
   RmwRShift,        // >>=
   RmwBitAnd,        // &=
   RmwBitOr,         // |=
-  RmwBitXor         // ^=
+  RmwBitXor,        // ^=
+  Varargs           // ...
 }
 
 impl<'input> Iterator for Lexer<'input> {
@@ -180,6 +183,22 @@ impl<'input> Lexer<'input> {
           continue
         }
         b'\r' | b'\t' | b' ' => continue,
+        // C string literals
+        b'c' if self.consume(b'"') => loop {
+          match self.consume_byte() {
+            Some(b'\n') | None => {
+              return Some(Err(Error::UnterminatedStr(self.location())))
+            }
+            Some(b'"') => {
+              let s = self.slice();
+              match unescape(start_loc, &s[2..s.len() - 1]) {
+                Ok(v) => break Token::CStrLit(v),
+                Err(err) => return Some(Err(err)),
+              }
+            },
+            Some(_) => (),
+          }
+        }
         // Identifiers
         b'_' | b'a'..=b'z' | b'A'..=b'Z' => self.read_ident(),
         // Numeric literals
@@ -376,7 +395,14 @@ impl<'input> Lexer<'input> {
           }
           _ => Token::Eq
         }
-        b'.' => Token::Dot,
+        b'.' => match self.peek_bytes() {
+          Some(b"..") => {
+            self.consume_byte();
+            self.consume_byte();
+            Token::Varargs
+          }
+          _ => Token::Dot
+        }
         b',' => Token::Comma,
         b';' => Token::Semi,
         b':' => match self.peek_byte() {
@@ -494,6 +520,13 @@ impl<'input> Lexer<'input> {
   #[inline(always)]
   fn peek_byte(&self) -> Option<u8> {
     self.input.as_bytes().get(self.end).cloned()
+  }
+
+  #[inline(always)]
+  fn peek_bytes<const N: usize>(&self) -> Option<&[u8; N]> {
+    self.input.as_bytes()
+      .get(self.end..self.end+N)
+      .map(|slice| <&[u8; N]>::try_from(slice).unwrap())
   }
 
   #[inline(always)]

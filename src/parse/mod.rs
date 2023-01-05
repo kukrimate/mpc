@@ -65,6 +65,7 @@ pub enum Expr {
   Flt(f64),
   Char(Vec<u8>),
   Str(Vec<u8>),
+  CStr(Vec<u8>),
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),
   Index(Box<Expr>, Box<Expr>),
@@ -163,6 +164,7 @@ pub struct ExternDataDef {
 pub struct ExternFuncDef {
   pub name: RefStr,
   pub params: Vec<(RefStr, Ty)>,
+  pub varargs: bool,
   pub ret_ty: Ty
 }
 

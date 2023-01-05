@@ -1,7 +1,6 @@
 extern {
   function atoi(str: *Int8) -> Int32
-  function puts(str: *Uint8) -> Int32
-  function printf(fmt: *Int8, arg: Int32) -> Int32
+  function printf(fmt: *Int8, ...) -> Int32
 }
 
 function fib(mut n: Int32) {
@@ -9,7 +8,7 @@ function fib(mut n: Int32) {
   let mut j: Int32 = 1;
 
   while n > 0 {
-    printf(fmt: &"%d\n"[0], arg: i);
+    printf(c"%d\n", i);
     let tmp = i + j;
     i = j;
     j = tmp;
@@ -19,9 +18,8 @@ function fib(mut n: Int32) {
 
 function main(argc: Int32, argv: *[0]*Int8) {
   if argc < 2 {
-    puts(str: &"Usage: fib N"[0]);
+    printf(c"Usage: fib N\n");
   } else {
-    let cnt_str = (*argv)[1];
-    fib(n: atoi(str: cnt_str));
+    fib(atoi((*argv)[1]));
   }
 }

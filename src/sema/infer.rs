@@ -204,14 +204,14 @@ impl<'a> CheckCtx<'a> {
     // Insert signature record
     self.insts.insert(id.clone(), Inst::Func {
       name: def.name,
-      ty: Ty::Func(param_tys.clone(), Box::new(ret_ty.clone())),
+      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
       locals: HashMap::new(),
       body: None
     });
 
     // Return reference to signature
     Ok(RValue::FuncRef {
-      ty: Ty::Func(param_tys.clone(), Box::new(ret_ty.clone())),
+      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
       name: def.name,
       id
     })
@@ -253,7 +253,7 @@ impl<'a> CheckCtx<'a> {
     // Insert body
     self.insts.insert(id.clone(), Inst::Func {
       name: def.name,
-      ty: Ty::Func(param_tys.clone(), Box::new(ret_ty.clone())),
+      ty: Ty::Func(param_tys.clone(), false,Box::new(ret_ty.clone())),
       locals,
       body: Some(body)
     });
@@ -269,7 +269,9 @@ impl<'a> CheckCtx<'a> {
   }
 
   fn inst_extern_func(&mut self, id: DefId, def: &parse::ExternFuncDef) -> MRes<RValue> {
-    let ty = Ty::Func(self.infer_params(&def.params)?, Box::new(self.infer_ty(&def.ret_ty)?));
+    let ty = Ty::Func(self.infer_params(&def.params)?,
+                      def.varargs,
+                      Box::new(self.infer_ty(&def.ret_ty)?));
     self.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
 
     Ok(RValue::FuncRef { ty, name: def.name, id: (id, vec![]) })
@@ -353,7 +355,8 @@ impl<'a> CheckCtx<'a> {
         Ty::Ptr(*is_mut, Box::new(self.infer_ty(base_ty)?))
       },
       Func(params, ret_ty) => {
-        Ty::Func(self.infer_params(params)?, Box::new(self.infer_ty(ret_ty)?))
+        Ty::Func(self.infer_params(params)?,
+                 false,Box::new(self.infer_ty(ret_ty)?))
       },
       Arr(_, elem_ty) => {
         // FIXME: evaluate elem_cnt constant expression
@@ -540,6 +543,9 @@ impl<'a> CheckCtx<'a> {
           ty: arg.ty().clone(),
           arg: Box::new(arg)
         }
+      }
+      CStr(val) => {
+        RValue::CStr { ty: Ty::Ptr(IsMut::No, Box::new(Ty::Int8)), val: val.clone() }
       }
       Bool(val) => {
         RValue::Bool { ty: Ty::Bool, val: *val }
@@ -806,34 +812,42 @@ impl<'a> CheckCtx<'a> {
 
   fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
     // Infer function type
-    let arg = self.infer_rvalue(arg)?;
+    let called_expr = self.infer_rvalue(arg)?;
 
     // Find parameter list and return type
-    let (params, ret_ty) = match arg.ty() {
-      Ty::Func(params, ret_ty) => (params, &**ret_ty),
-      _ => return Err(Box::new(
-        TypeError(format!("Cannot call type {:?}", arg.ty()))))
+    let (params, va, ret_ty) = match called_expr.ty() {
+      Ty::Func(params, va, ret_ty) => (params, *va, &**ret_ty),
+      _ => return Err(Box::new(TypeError(format!("Cannot call type {:?}", called_expr.ty()))))
     };
 
-    // Typecheck call arguments
-    let mut nargs = vec![];
-
-    if args.len() != params.len() {
-      return Err(Box::new(
-        TypeError(format!("Wrong number of arguments for {:?}", arg.ty()))))
+    // Validate argument count
+    if args.len() < params.len() {
+      return Err(Box::new(TypeError(format!("Not enough arguments for {:?}", called_expr.ty()))))
+    }
+    if va == false && args.len() > params.len() {
+      return Err(Box::new(TypeError(format!("Too many arguments for {:?}", called_expr.ty()))))
     }
 
-    for ((arg_name, arg_val), (param_name, param_ty)) in args.iter().zip(params.iter()) {
-      if arg_name != param_name {
-        return Err(Box::new(
-          TypeError(format!("Incorrect argument label {}", arg_name))))
-      }
+    // Type check call arguments
+    let mut nargs = vec![];
+
+    let mut params_iter = params.iter();
+
+    for (arg_name, arg_val) in args.iter() {
+      // Infer type of argument value
       let arg_val = self.infer_rvalue(arg_val)?;
-      self.tctx.unify(arg_val.ty(), param_ty)?;
+      // If there is a corresponding parameter name and type, check it
+      if let Some((param_name, param_ty)) = params_iter.next() {
+        if *arg_name != RefStr::new("") && arg_name != param_name {
+          return Err(Box::new(TypeError(format!("Incorrect argument label {}", arg_name))))
+        }
+        self.tctx.unify(arg_val.ty(), param_ty)?;
+      }
+      // Append checked argument
       nargs.push((*arg_name, arg_val));
     }
 
-    Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(arg), args: nargs })
+    Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(called_expr), args: nargs })
   }
 
   fn infer_un(&mut self, op: UnOp, arg: &Ty) -> MRes<Ty> {
