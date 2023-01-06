@@ -1,14 +1,11 @@
-extern {
-  function atoi(str: *Int8) -> Int32
-  function printf(fmt: *Int8, ...) -> Int32
-}
+import libc
 
 function fib(mut n: Int32) {
   let mut i: Int32 = 0;
   let mut j: Int32 = 1;
 
   while n > 0 {
-    printf(c"%d\n", i);
+    libc::printf(c"%d\n", i);
     let tmp = i + j;
     i = j;
     j = tmp;
@@ -18,8 +15,9 @@ function fib(mut n: Int32) {
 
 function main(argc: Int32, argv: *[0]*Int8) {
   if argc < 2 {
-    printf(c"Usage: fib N\n");
+    libc::printf(c"Usage: fib N\n");
   } else {
-    fib(atoi((*argv)[1]));
+    let n = libc::atoi((*argv)[1]);
+    fib(n);
   }
 }

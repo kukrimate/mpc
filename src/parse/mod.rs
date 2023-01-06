@@ -1,7 +1,7 @@
 use crate::util::*;
 use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};
-use std::collections::{HashMap,HashSet};
+use std::collections::HashMap;
 use std::{error,fs,fmt};
 
 mod lexer;
@@ -189,23 +189,73 @@ pub enum Variant {
   Struct(Vec<(RefStr, Ty)>),
 }
 
+/// Parser API
+
+pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
+  let mut repo = Repository::new();
+  repo.root_module_id = parse_module(&mut repo, path)?;
+  Ok(repo)
+}
+
+fn parse_module(repo: &mut Repository, path: &std::path::Path) -> MRes<DefId> {
+  let input = fs::read_to_string(path)?;
+  let module_id = repo.new_id();
+  match maple::ModuleParser::new().parse(module_id, path,
+                                         repo, lexer::Lexer::new(&input)) {
+    Ok(()) => Ok(module_id),
+    Err(err) => Err(Box::new(Error::from_lalrpop(err)))
+  }
+}
+
 #[derive(Debug)]
 pub struct Repository {
-  pub deps: HashSet<RefStr>,
+  def_cnt: usize,
+  pub root_module_id: DefId,
   pub defs: HashMap<DefId, Def>,
+  pub syms: HashMap<DefId, HashMap<RefStr, DefId>>
 }
 
 impl Repository {
   pub fn new() -> Repository {
     Repository {
-      deps: HashSet::new(),
+      def_cnt: 0,
+      root_module_id: DefId(0),
       defs: HashMap::new(),
+      syms: HashMap::new()
     }
   }
 
-  fn def(&mut self, def: Def) {
-    let id = DefId(self.defs.len());
+  fn new_id(&mut self) -> DefId {
+    let id = DefId(self.def_cnt);
+    self.def_cnt += 1;
+    id
+  }
+
+  fn def(&mut self, def: Def) -> DefId {
+    let id = self.new_id();
     self.defs.insert(id, def);
+    id
+  }
+
+  fn sym(&mut self, parent: DefId, name: RefStr, def: DefId) {
+    if let Some(syms) = self.syms.get_mut(&parent) {
+      syms.insert(name, def);
+    } else {
+      self.syms.insert(parent,HashMap::from([ (name, def) ]));
+    }
+  }
+
+  pub fn resolve_global_def(&self, path: &Path) -> Option<DefId> {
+    let mut cur_id = self.root_module_id;
+    for crumb in path.iter() {
+      let symtab = self.syms.get(&cur_id).unwrap();
+      if let Some(def_id) = symtab.get(crumb) {
+        cur_id = *def_id;
+      } else {
+        return None
+      }
+    }
+    Some(cur_id)
   }
 }
 
@@ -270,14 +320,3 @@ impl fmt::Display for Error {
 }
 
 impl error::Error for Error {}
-
-pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
-  let input = fs::read_to_string(path)?;
-  let mut lexer = lexer::Lexer::new(&input);
-  let mut module = Repository::new();
-
-  match maple::ModuleParser::new().parse(&mut module, &mut lexer) {
-    Ok(()) => Ok(module),
-    Err(err) => Err(Box::new(Error::from_lalrpop(err))),
-  }
-}

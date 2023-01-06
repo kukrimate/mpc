@@ -1,26 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+use std::fmt::Debug;
+use crate::parse::Repository;
 use super::*;
 
-pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Repository) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
+pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
   let mut ctx = CheckCtx {
+    repo,
     tctx,
-    parsed_defs: &parsed_module.defs,
     insts: HashMap::new(),
-    scopes: vec! [ HashMap::new() ],
+    scopes: vec! [],
     local_cnt: 0,
     local_defs: Vec::new(),
     ret_ty: Vec::new(),
     loop_ty: Vec::new(),
   };
 
-  // Build symbol table
-  for (id, def) in parsed_module.defs.iter() {
-    ctx.define(def.name(), Sym::Def(*id));
-  }
-
   // Instantiate signatures for non-generic functions
-  for (id, def) in parsed_module.defs.iter() {
+  for (id, def) in repo.defs.iter() {
     match def {
       parse::Def::Func(def) if def.type_params.len() == 0 => {
         ctx.inst_func_sig((*id, vec![]), def)?;
@@ -57,11 +54,10 @@ pub(super) fn infer_module(tctx: &mut TVarCtx, parsed_module: &parse::Repository
 }
 
 struct CheckCtx<'a> {
+  repo: &'a Repository,
+
   // Type variable context
   tctx: &'a mut TVarCtx,
-
-  // Parsed definitions
-  parsed_defs: &'a HashMap<DefId, parse::Def>,
 
   // Checked definitions
   insts: HashMap<(DefId, Vec<Ty>), Inst>,
@@ -279,7 +275,7 @@ impl<'a> CheckCtx<'a> {
 
   /// Lookup a parsed definition by its id
   fn parsed_def(&self, id: DefId) -> &'static parse::Def {
-    unsafe { &*(self.parsed_defs.get(&id).unwrap() as *const _) }
+    unsafe { &*(self.repo.defs.get(&id).unwrap() as *const _) }
   }
 
   /// Lookup a local definition by its id
@@ -308,13 +304,22 @@ impl<'a> CheckCtx<'a> {
   }
 
   /// Resolve symbol by name
-  fn lookup(&self, name: RefStr) -> MRes<Sym> {
-    for scope in self.scopes.iter().rev() {
-      if let Some(sym) = scope.get(&name) {
-        return Ok(sym.clone());
+  fn lookup(&self, path: &parse::Path) -> MRes<Sym> {
+    // Single crumb paths can refer to locals
+    if path.len() == 1 {
+      for scope in self.scopes.iter().rev() {
+        if let Some(sym) = scope.get(&path[0]) {
+          return Ok(sym.clone());
+        }
       }
     }
-    Err(Box::new(UnresolvedIdentError { name }))
+
+    // Otherwise check the global symbol table
+    if let Some(def_id) = self.repo.resolve_global_def(path) {
+      return Ok(Sym::Def(def_id))
+    }
+    
+    Err(Box::new(UnresolvedPathError(path.clone())))
   }
 
   /// Create local definition with a new id
@@ -349,7 +354,7 @@ impl<'a> CheckCtx<'a> {
           .iter()
           .map(|ty| self.infer_ty(ty))
           .monadic_collect()?;
-        self.inst_as_ty(path[0], targs)?
+        self.inst_as_ty(path, targs)?
       },
       Ptr(is_mut, base_ty) => {
         Ty::Ptr(*is_mut, Box::new(self.infer_ty(base_ty)?))
@@ -369,8 +374,8 @@ impl<'a> CheckCtx<'a> {
   }
 
   /// Lookup a definition and instantiate it as a type
-  fn inst_as_ty(&mut self, name: RefStr, targs: Vec<Ty>) -> MRes<Ty> {
-    match self.lookup(name)? {
+  fn inst_as_ty(&mut self, path: &parse::Path, targs: Vec<Ty>) -> MRes<Ty> {
+    match self.lookup(path)? {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Struct(def) => {
@@ -383,7 +388,7 @@ impl<'a> CheckCtx<'a> {
             self.inst_enum((def_id, targs), def)
           }
           _ => {
-            Err(Box::new(UnresolvedIdentError { name }))
+            Err(Box::new(UnresolvedPathError(path.clone())))
           }
         }
       }
@@ -391,7 +396,7 @@ impl<'a> CheckCtx<'a> {
         Ok(ty)
       }
       _ => {
-        Err(Box::new(UnresolvedIdentError { name }))
+        Err(Box::new(UnresolvedPathError(path.clone())))
       }
     }
   }
@@ -424,7 +429,7 @@ impl<'a> CheckCtx<'a> {
 
   /// Lookup a definition and instantiate it as an lvalue
   fn inst_as_lvalue(&mut self, path: &parse::Path) -> MRes<LValue> {
-    match self.lookup(path[0])? {
+    match self.lookup(path)? {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Data(def) => {
@@ -764,7 +769,7 @@ impl<'a> CheckCtx<'a> {
       }
     }
 
-    match self.lookup(path[0])? {
+    match self.lookup(path)? {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Const(def) => {
@@ -911,14 +916,18 @@ impl fmt::Display for TypeError {
 impl error::Error for TypeError {}
 
 #[derive(Debug)]
-struct UnresolvedIdentError {
-  name: RefStr
-}
+struct UnresolvedPathError(parse::Path);
 
-impl fmt::Display for UnresolvedIdentError {
+impl fmt::Display for UnresolvedPathError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unresolved identifier {}", self.name)
+    // There is always at least one crumb
+    write!(f, "Unresolved path {}", self.0[0].borrow_rs())?;
+    // Then the rest can be prefixed with ::
+    for crumb in self.0[1..].iter() {
+      write!(f, "::{}", crumb.borrow_rs())?;
+    }
+    Ok(())
   }
 }
 
-impl error::Error for UnresolvedIdentError {}
+impl error::Error for UnresolvedPathError {}

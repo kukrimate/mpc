@@ -1,6 +1,6 @@
 use crate::parse::*;
 
-grammar(module: &mut Repository);
+grammar(module_id: DefId, search_dir: &std::path::Path, repo: &mut Repository);
 
 Path: Path = {
   Identifier  => vec![<>],
@@ -232,20 +232,20 @@ PrimExpr: Expr = {
   CString => Expr::CStr(<>),
 };
 
-// Modules
+// Definitions
 
 TypeDefinition: () = {
-  "struct" <name:Identifier>
-      <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.def(Def::Struct(StructDef { name, type_params, params }));
+  "struct" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+    let def_id = repo.def(Def::Struct(StructDef { name, type_params, params }));
+    repo.sym(module_id, name, def_id);
   },
-  "union" <name:Identifier>
-      <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
-    module.def(Def::Union(UnionDef { name, type_params, params }));
+  "union" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+    let def_id = repo.def(Def::Union(UnionDef { name, type_params, params }));
+    repo.sym(module_id, name, def_id);
   },
-  "enum" <name:Identifier>
-      <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
-    module.def(Def::Enum(EnumDef { name, type_params, variants }));
+  "enum" <name:Identifier> <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
+    let def_id = repo.def(Def::Enum(EnumDef { name, type_params, variants }));
+    repo.sym(module_id, name, def_id);
   },
 };
 
@@ -276,29 +276,29 @@ VariantList: Vec<(RefStr, Variant)> = {
 };
 
 Variant: (RefStr, Variant) = {
-  Identifier =>
-    (<>, Variant::Unit),
-  <name:Identifier> "(" <params:ParameterListOpt> ")" =>
-    (name, Variant::Struct(params)),
+  Identifier => (<>, Variant::Unit),
+  <name:Identifier> "(" <params:ParameterListOpt> ")" => (name, Variant::Struct(params)),
 };
 
 ConstDefinition: () = {
   "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
-    module.def(Def::Const(ConstDef { name, ty, val }));
+    let def_id = repo.def(Def::Const(ConstDef { name, ty, val }));
+    repo.sym(module_id, name, def_id);
   }
 };
 
 DataDefinition: () = {
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
-    module.def(Def::Data(DataDef { name, is_mut, ty, init }));
+    let def_id = repo.def(Def::Data(DataDef { name, is_mut, ty, init }));
+    repo.sym(module_id, name, def_id);
   }
 };
 
 FunctionDefinition: () = {
   "function" <name:Identifier> <type_params:TypeParameterListOpt>
-      "(" <params:ParameterDefinitionListOpt> ")"
-      <ret_ty:ReturnType> <body:Block> => {
-    module.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
+      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:Block> => {
+    let def_id = repo.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
+    repo.sym(module_id, name, def_id);
   }
 };
 
@@ -318,20 +318,28 @@ ParameterDefinitionList: Vec<(RefStr, IsMut, Ty)> = {
 };
 
 ImportDefinition: () = "import" <name:Identifier> => {
-  module.deps.insert(name);
+  let imported_module_path = search_dir
+    .with_file_name(name.borrow_rs())
+    .with_extension("m");
+  // FIXME: propagate errors
+  let imported_module_id = parse_module(repo, &imported_module_path).unwrap();
+  repo.sym(module_id, name, imported_module_id);
 };
 
 ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
-    module.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: false, ret_ty }));
+    let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: false, ret_ty }));
+    repo.sym(module_id, name, def_id);
   },
   "function" <name:Identifier> "(" <params:ParameterList> "," "..." ")" <ret_ty:ReturnType> => {
-    module.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: true, ret_ty }));
+    let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: true, ret_ty }));
+    repo.sym(module_id, name, def_id);
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-    module.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
+    let def_id = repo.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
+    repo.sym(module_id, name, def_id);
   }
 };
 

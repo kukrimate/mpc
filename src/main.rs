@@ -14,14 +14,12 @@ use std::path::Path;
 pub enum CompileTo {
   LLVMIr,
   Assembly,
-  Object,
+  Object
 }
 
 fn compile(input_path: &Path, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
-  // Parse module
-  let parsed_module = parse::parse_bundle(input_path)?;
-  // Compile module
-  sema::compile_module(&parsed_module, output_path, compile_to)
+  let repo = parse::parse_bundle(input_path)?;
+  sema::compile(&repo, output_path, compile_to)
 }
 
 fn main() {
