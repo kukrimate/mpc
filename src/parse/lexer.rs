@@ -447,7 +447,7 @@ impl<'input> Lexer<'input> {
         _ => break
       }
     }
-    Token::IntLit(usize::from_str_radix(self.slice(), 2).unwrap())
+    Token::IntLit(usize::from_str_radix(&self.slice()[2..], 2).unwrap())
   }
 
   fn read_octal(&mut self) -> Token {
@@ -459,7 +459,7 @@ impl<'input> Lexer<'input> {
         _ => break
       }
     }
-    Token::IntLit(usize::from_str_radix(self.slice(), 8).unwrap())
+    Token::IntLit(usize::from_str_radix(&self.slice()[2..], 8).unwrap())
   }
 
   fn read_hex(&mut self) -> Token {
@@ -477,7 +477,7 @@ impl<'input> Lexer<'input> {
         _ => break
       }
     }
-    Token::IntLit(usize::from_str_radix(self.slice(), 16).unwrap())
+    Token::IntLit(usize::from_str_radix(&self.slice()[2..], 16).unwrap())
   }
 
   fn read_decimal(&mut self) -> Token {
