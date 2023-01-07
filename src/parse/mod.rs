@@ -66,6 +66,7 @@ pub enum Expr {
   Char(Vec<u8>),
   Str(Vec<u8>),
   CStr(Vec<u8>),
+  Arr(Vec<Expr>),
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),
   Index(Box<Expr>, Box<Expr>),

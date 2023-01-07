@@ -552,6 +552,19 @@ impl<'a> CheckCtx<'a> {
       CStr(val) => {
         RValue::CStr { ty: Ty::Ptr(IsMut::No, Box::new(Ty::Int8)), val: val.clone() }
       }
+      Arr(elements) => {
+        let elem_ty = self.tctx.tvar(Ty::BoundAny);
+        let elements = elements.iter()
+          .map(|element| self.infer_rvalue(element))
+          .monadic_collect()?;
+        for element in elements.iter() {
+          self.tctx.unify(&elem_ty, element.ty())?;
+        }
+        RValue::ArrayLit {
+          ty: Ty::Arr(elements.len(), Box::new(elem_ty)),
+          elements
+        }
+      }
       Bool(val) => {
         RValue::Bool { ty: Ty::Bool, val: *val }
       }

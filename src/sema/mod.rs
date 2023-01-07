@@ -12,7 +12,7 @@ use crate::parse::{self,IsMut,UnOp,BinOp,DefId};
 use crate::util::*;
 use std::collections::HashMap;
 use std::error;
-use std::fmt::{self,Write};
+use std::fmt::{self, Write};
 
 mod tctx;
 use tctx::*;
@@ -158,6 +158,7 @@ enum RValue {
   ConstRef  { ty: Ty, name: RefStr, id: DefId },
   FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
+  ArrayLit  { ty: Ty, elements: Vec<RValue> },
   StructLit { ty: Ty, name: RefStr, fields: Vec<(RefStr, RValue)> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
@@ -217,6 +218,7 @@ impl RValue {
       RValue::ConstRef  { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
       RValue::CStr      { ty, .. } => ty,
+      RValue::ArrayLit  { ty, .. } => ty,
       RValue::StructLit { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
@@ -289,6 +291,13 @@ impl fmt::Debug for RValue {
         write_comma_separated(f, fields.iter(), |f, field| {
           write!(f, "{:?}", field)
         })
+      }
+      RValue::ArrayLit { elements, .. } => {
+        write!(f, "[")?;
+        write_comma_separated(f, elements.iter(), |f, element| {
+          write!(f, "{:?}", element)
+        })?;
+        write!(f, "]")
       }
       RValue::Load { arg, .. } => {
         write!(f, "{:?}", arg)
