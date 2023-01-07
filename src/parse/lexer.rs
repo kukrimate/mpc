@@ -178,8 +178,7 @@ impl<'input> Lexer<'input> {
       let token = match byte {
         // Whitespaces
         b'\n' => {
-          self.line += 1;
-          self.column = 1;
+          self.handle_newline();
           continue
         }
         b'\r' | b'\t' | b' ' => continue,
@@ -338,7 +337,11 @@ impl<'input> Lexer<'input> {
           Some(b'/') => {
             self.consume_byte();
             while match self.consume_byte() {
-              Some(b'\n') | None => false,
+              Some(b'\n') => {
+                self.handle_newline();
+                false
+              }
+              None => false,
               Some(_) => true
             } {}
             continue
@@ -352,6 +355,10 @@ impl<'input> Lexer<'input> {
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
                 false
+              }
+              Some(b'\n') => {
+                self.handle_newline();
+                true
               }
               _ => true
             } {}
@@ -419,6 +426,11 @@ impl<'input> Lexer<'input> {
 
       return Some(Ok((start_loc, token, self.location())))
     }
+  }
+
+  fn handle_newline(&mut self) {
+    self.line += 1;
+    self.column = 1;
   }
 
   fn read_ident(&mut self) -> Token {
