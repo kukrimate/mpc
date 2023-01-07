@@ -121,7 +121,7 @@ impl fmt::Debug for Ty {
       Double => write!(f, "Double"),
       Inst(name, ..) => write!(f, "{}", name),
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
-      Func(params, va, ty) => {
+      Func(params, _va, ty) => {
         write!(f, "Function")?;
         write_comma_separated(f,
           params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))?;
@@ -158,6 +158,7 @@ enum RValue {
   ConstRef  { ty: Ty, name: RefStr, id: DefId },
   FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
+  StructLit { ty: Ty, name: RefStr, fields: Vec<(RefStr, RValue)> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -216,6 +217,7 @@ impl RValue {
       RValue::ConstRef  { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
       RValue::CStr      { ty, .. } => ty,
+      RValue::StructLit { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
@@ -281,6 +283,12 @@ impl fmt::Debug for RValue {
       }
       RValue::CStr { val, .. } => {
         write!(f, "c{:?}", val)
+      }
+      RValue::StructLit { name, fields, .. } => {
+        write!(f, "{}", name)?;
+        write_comma_separated(f, fields.iter(), |f, field| {
+          write!(f, "{:?}", field)
+        })
       }
       RValue::Load { arg, .. } => {
         write!(f, "{:?}", arg)

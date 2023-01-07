@@ -143,6 +143,12 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::CStr { val, .. } => {
       ctx.build_string_lit(val)
     }
+    RValue::StructLit { ty, fields, .. } => {
+      let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
+        .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
+        .collect();
+      ctx.build_struct(ty, &fields)
+    }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
       ctx.build_load(ty, addr)
@@ -835,6 +841,15 @@ impl<'a> LowerCtx<'a> {
                                 self.size_of(l_type) as u64, 0);
       LLVMBuildMemCpy(self.l_builder, l_dest, align, l_src, align, size);
     }
+  }
+
+  unsafe fn build_struct(&mut self, ty: &Ty, fields: &[(Ty, LLVMValueRef)]) -> LLVMValueRef {
+    let l_storage = self.build_alloca(RefStr::new(""), ty);
+    for (idx, (ty, l_val)) in fields.iter().enumerate() {
+      let l_addr = self.build_dot(l_storage, idx);
+      self.build_store(ty, l_addr, *l_val);
+    }
+    l_storage
   }
 
   unsafe fn build_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {

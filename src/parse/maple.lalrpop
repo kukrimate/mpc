@@ -26,7 +26,7 @@ TypeName: Ty = {
   "Intn"      => Ty::Intn,
   "Float"     => Ty::Float,
   "Double"    => Ty::Double,
-  <p:Path>    => Ty::Inst(p, vec![]),
+  <path:Path> <type_args:TypeArgumentListOpt> => Ty::Inst(path, type_args),
   "*" <is_mut:IsMut> <ty:TypeName> =>
     Ty::Ptr(is_mut, Box::new(ty)),
   "Function" "(" <params:ParameterListOpt> ")" <ret:ReturnType> =>
@@ -35,6 +35,19 @@ TypeName: Ty = {
     Ty::Arr(Box::new(l), Box::new(t)),
   "(" <params:ParameterListOpt>  ")" =>
     Ty::Tuple(params)
+};
+
+TypeArgumentListOpt: Vec<Ty> = {
+  "<" <list:TypeArgumentList> ">" => list,
+  => vec![],
+};
+
+TypeArgumentList: Vec<Ty> = {
+  TypeName => vec![<>],
+  <mut list:TypeArgumentList> "," <ty:TypeName> => {
+    list.push(ty);
+    list
+  }
 };
 
 ParameterListOpt: Vec<(RefStr, Ty)> = {
@@ -181,7 +194,7 @@ MulExpr: Expr = {
 
 CastExpr: Expr = {
   PreExpr,
-  <e:CastExpr> "as" <t:TypeName> => Expr::Cast(Box::new(e), t),
+  //<expr:CastExpr> "as" <ty:TypeName> => Expr::Cast(Box::new(expr), ty),
 };
 
 PreExpr: Expr = {

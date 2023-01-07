@@ -815,9 +815,27 @@ impl<'a> CheckCtx<'a> {
     }
   }
 
-  fn infer_call(&mut self, arg: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
+  fn infer_call(&mut self, called: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
+    // Check for struct literal
+    if let parse::Expr::Path(path) = called {
+      // FIXME: we might need to infer type arguments
+      if let Ok(ty) = self.inst_as_ty(path, vec![]) {
+        // Infer fields
+        let params = self.get_struct_params(&ty);
+        if params.len() != args.len() {
+          return Err(Box::new(TypeError(format!("Wrong number of fields for {}", path.last().unwrap()))))
+        }
+
+        return Ok(RValue::StructLit {
+          ty,
+          name: *path.last().unwrap(),
+          fields: self.infer_args(&params, args)?
+        })
+      }
+    }
+
     // Infer function type
-    let called_expr = self.infer_rvalue(arg)?;
+    let called_expr = self.infer_rvalue(called)?;
 
     // Find parameter list and return type
     let (params, va, ret_ty) = match called_expr.ty() {
@@ -833,9 +851,29 @@ impl<'a> CheckCtx<'a> {
       return Err(Box::new(TypeError(format!("Too many arguments for {:?}", called_expr.ty()))))
     }
 
-    // Type check call arguments
-    let mut nargs = vec![];
+    let args = self.infer_args(params, args)?;
 
+    Ok(RValue::Call {
+      ty: ret_ty.clone(),
+      arg: Box::new(called_expr),
+      args
+    })
+  }
+
+  fn get_struct_params(&self, ty: &Ty) -> Vec<(RefStr, Ty)> {
+    if let Ty::Inst(_, id) = ty {
+      if let Inst::Struct { params, .. } = self.insts.get(id).unwrap() {
+        params.as_ref().unwrap().clone()
+      } else {
+        unreachable!()
+      }
+    } else {
+      unreachable!()
+    }
+  }
+
+  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, parse::Expr)]) -> MRes<Vec<(RefStr, RValue)>> {
+    let mut nargs = vec![];
     let mut params_iter = params.iter();
 
     for (arg_name, arg_val) in args.iter() {
@@ -852,7 +890,7 @@ impl<'a> CheckCtx<'a> {
       nargs.push((*arg_name, arg_val));
     }
 
-    Ok(RValue::Call { ty: ret_ty.clone(), arg: Box::new(called_expr), args: nargs })
+    Ok(nargs)
   }
 
   fn infer_un(&mut self, op: UnOp, arg: &Ty) -> MRes<Ty> {
