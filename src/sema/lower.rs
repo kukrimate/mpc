@@ -25,9 +25,13 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::Str { val, .. } => {
       ctx.build_string_lit(val)
     }
-    LValue::Dot { arg, idx, .. } => {
+    LValue::StruDot { arg, idx, .. } => {
       let addr = lower_const_lvalue(arg, ctx);
-      ctx.build_const_dot(addr, *idx)
+      ctx.build_const_gep(addr, *idx)
+    }
+    LValue::UnionDot { ty, arg, .. } => {
+      let addr = lower_const_lvalue(arg, ctx);
+      ctx.build_const_bitcast(ty, addr)
     }
     LValue::Index { arg, idx, .. } => {
       let addr = lower_const_lvalue(arg, ctx);
@@ -111,9 +115,13 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::Str { val, .. } => {
       ctx.build_string_lit(val)
     }
-    LValue::Dot { arg, idx, .. } => {
+    LValue::StruDot { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
-      ctx.build_dot(addr, *idx)
+      ctx.build_gep(addr, *idx)
+    }
+    LValue::UnionDot { ty, arg, .. } => {
+      let addr = lower_lvalue(arg, ctx);
+      ctx.build_bitcast(ty, addr)
     }
     LValue::Index { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -661,7 +669,7 @@ impl<'a> LowerCtx<'a> {
     LLVMConstReal(self.lower_ty(ty), val)
   }
 
-  unsafe fn build_const_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+  unsafe fn build_const_gep(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
       // NOTE: this is not documented in many places, but struct field
@@ -672,6 +680,11 @@ impl<'a> LowerCtx<'a> {
       &mut indices as *mut LLVMValueRef,
       indices.len() as u32)
 
+  }
+
+  unsafe fn build_const_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
+    let l_type = LLVMPointerType(self.lower_ty(ty), 0);
+    LLVMConstBitCast(l_addr, l_type)
   }
 
   unsafe fn build_const_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
@@ -885,7 +898,7 @@ impl<'a> LowerCtx<'a> {
     let elem_ty = if let Ty::Arr(_cnt, elem_ty) =
       self.tctx.lit_ty(ty) { *elem_ty } else { unreachable!() };
     for (idx, l_val) in elements.iter().enumerate() {
-      let l_addr = self.build_dot(l_storage, idx);
+      let l_addr = self.build_gep(l_storage, idx);
       self.build_store(&elem_ty, l_addr, *l_val);
     }
     l_storage
@@ -894,13 +907,13 @@ impl<'a> LowerCtx<'a> {
   unsafe fn build_struct(&mut self, ty: &Ty, fields: &[(Ty, LLVMValueRef)]) -> LLVMValueRef {
     let l_storage = self.build_alloca(RefStr::new(""), ty);
     for (idx, (ty, l_val)) in fields.iter().enumerate() {
-      let l_addr = self.build_dot(l_storage, idx);
+      let l_addr = self.build_gep(l_storage, idx);
       self.build_store(ty, l_addr, *l_val);
     }
     l_storage
   }
 
-  unsafe fn build_dot(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+  unsafe fn build_gep(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
       // NOTE: this is not documented in many places, but struct field
@@ -911,6 +924,11 @@ impl<'a> LowerCtx<'a> {
       &mut indices as *mut LLVMValueRef,
       indices.len() as u32,
       empty_cstr())
+  }
+
+  unsafe fn build_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
+    let l_type = LLVMPointerType(self.lower_ty(ty), 0);
+    LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
   }
 
   unsafe fn build_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {

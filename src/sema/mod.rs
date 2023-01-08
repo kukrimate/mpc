@@ -147,7 +147,8 @@ enum LValue {
   ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
   LetRef    { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
   Str       { ty: Ty, is_mut: IsMut, val: Vec<u8> },
-  Dot       { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
+  StruDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
+  UnionDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
   Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
 }
@@ -190,7 +191,8 @@ impl LValue {
       LValue::ParamRef  { ty, .. } => ty,
       LValue::LetRef    { ty, .. } => ty,
       LValue::Str       { ty, .. } => ty,
-      LValue::Dot       { ty, .. } => ty,
+      LValue::StruDot   { ty, .. } => ty,
+      LValue::UnionDot   { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
       LValue::Ind       { ty, .. } => ty,
     }
@@ -202,7 +204,8 @@ impl LValue {
       LValue::ParamRef  { is_mut, .. }  => *is_mut,
       LValue::LetRef    { is_mut, .. }  => *is_mut,
       LValue::Str       { is_mut, .. }  => *is_mut,
-      LValue::Dot       { is_mut, .. }  => *is_mut,
+      LValue::StruDot   { is_mut, .. }  => *is_mut,
+      LValue::UnionDot  { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
       LValue::Ind       { is_mut, .. }  => *is_mut,
     }
@@ -255,7 +258,8 @@ impl fmt::Debug for LValue {
       LValue::Str { val, .. } => {
         write!(f, "s{:?}", val)
       }
-      LValue::Dot { arg, name, .. } => {
+      LValue::StruDot { arg, name, .. } |
+      LValue::UnionDot { arg, name, .. } => {
         write!(f, ".{} {:?}", name, arg)
       }
       LValue::Index { arg, idx, .. } => {

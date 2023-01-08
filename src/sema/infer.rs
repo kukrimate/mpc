@@ -455,13 +455,14 @@ impl<'a> CheckCtx<'a> {
     'error: loop {
       // Find parameter list
       let ty = self.tctx.lit_ty(arg.ty());
-      let params = match &ty {
+
+      let (is_stru, params) = match &ty {
         Ty::Inst(_, id) => match self.inst(id) {
-          Inst::Struct { params: Some(params), .. } => params,
-          Inst::Union { params: Some(params), .. } => params,
+          Inst::Struct { params: Some(params), .. } => (true, params),
+          Inst::Union { params: Some(params), .. } => (false, params),
           _ => break 'error
         },
-        Ty::Tuple(params) => params,
+        Ty::Tuple(params) => (true, params),
         _ => break 'error
       };
 
@@ -471,13 +472,22 @@ impl<'a> CheckCtx<'a> {
         None => break 'error
       };
 
-      return Ok(LValue::Dot {
-        ty: param_ty.clone(),
-        is_mut: arg.is_mut(),
-        arg: Box::new(arg),
-        name: name,
-        idx: idx
-      });
+      return if is_stru {
+        Ok(LValue::StruDot {
+          ty: param_ty.clone(),
+          is_mut: arg.is_mut(),
+          arg: Box::new(arg),
+          name,
+          idx
+        })
+      } else {
+        Ok(LValue::UnionDot {
+          ty: param_ty.clone(),
+          is_mut: arg.is_mut(),
+          arg: Box::new(arg),
+          name
+        })
+      }
     }
 
     Err(Box::new(TypeError(format!("Type {:?} has no field named {}", arg.ty(), name))))
