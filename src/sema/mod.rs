@@ -177,7 +177,7 @@ enum RValue {
   Continue  { ty: Ty },
   Break     { ty: Ty, arg: Box<RValue> },
   Return    { ty: Ty, arg: Box<RValue> },
-  Let       { ty: Ty, id: LocalId, init: Box<RValue> },
+  Let       { ty: Ty, id: LocalId, init: Option<Box<RValue>> },
   If        { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While     { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop      { ty: Ty, body: Box<RValue> },

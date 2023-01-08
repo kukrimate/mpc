@@ -235,11 +235,12 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_void()
     }
     RValue::Let { id, init, .. } => {
-      // Store initializer
-      let l_local = ctx.get_local(*id);
-      let l_init = lower_rvalue(init, ctx);
-      ctx.build_store(init.ty(), l_local, l_init);
-
+      if let Some(init) = init {
+        // Store initializer
+        let l_local = ctx.get_local(*id);
+        let l_init = lower_rvalue(init, ctx);
+        ctx.build_store(init.ty(), l_local, l_init);
+      }
       // Void value
       ctx.build_void()
     }

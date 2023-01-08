@@ -701,24 +701,30 @@ impl<'a> CheckCtx<'a> {
         RValue::Return { ty: self.tctx.tvar(Ty::BoundAny), arg: Box::new(arg) }
       }
       Let(name, is_mut, ty, init) => {
-        // Check initializer
-        let init = self.infer_rvalue(init)?;
-
-        // Unify type annotation with initializer type
-        if let Some(ty) = ty {
-          let ty = self.infer_ty(ty)?;
-          self.tctx.unify(&ty, init.ty())?;
-        }
+        let (ty, init) = if let Some(init) = init {
+          // Check initializer
+          let init = self.infer_rvalue(init)?;
+          // Unify type annotation with initializer type
+          if let Some(ty) = ty {
+            let ty = self.infer_ty(ty)?;
+            self.tctx.unify(&ty, init.ty())?;
+          }
+          (init.ty().clone(), Some(Box::new(init)))
+        } else if let Some(ty) = ty {
+          (self.infer_ty(ty)?, None)
+        } else {
+          (self.tctx.tvar(Ty::BoundAny), None)
+        };
 
         // Add local definition
         let id = self.newlocal(LocalDef::Let {
           name: *name,
           is_mut: *is_mut,
-          ty: init.ty().clone()
+          ty: ty
         });
 
         // Add let expression
-        RValue::Let { ty: Ty::Tuple(vec![]), id, init: Box::new(init) }
+        RValue::Let { ty: Ty::Tuple(vec![]), id, init }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;

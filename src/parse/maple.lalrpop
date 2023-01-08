@@ -95,7 +95,9 @@ BlockItemList: Vec<Expr> = {
 BlockItem: Expr = {
   Expr,
   "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" <init:Expr> =>
-    Expr::Let(name, is_mut, ty, Box::new(init)),
+    Expr::Let(name, is_mut, ty, Some(Box::new(init))),
+  "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" "!" =>
+    Expr::Let(name, is_mut, ty, None),
   "continue" => Expr::Continue,
   "break" <e:ExprOpt> => Expr::Break(Box::new(e)),
   "return" <e:ExprOpt> => Expr::Return(Box::new(e)),

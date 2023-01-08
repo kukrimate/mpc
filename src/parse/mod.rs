@@ -84,7 +84,7 @@ pub enum Expr {
   Continue,
   Break(Box<Expr>),
   Return(Box<Expr>),
-  Let(RefStr, IsMut, Option<Ty>, Box<Expr>),
+  Let(RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
