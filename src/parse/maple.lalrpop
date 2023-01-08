@@ -101,7 +101,6 @@ BlockItem: Expr = {
   "continue" => Expr::Continue,
   "break" <e:ExprOpt> => Expr::Break(Box::new(e)),
   "return" <e:ExprOpt> => Expr::Return(Box::new(e)),
-  "if" <e:Expr> <b:Block> => Expr::If(Box::new(e), Box::new(b), Box::new(Expr::Null)),
   "while" <e:Expr> <b:Block> => Expr::While(Box::new(e), Box::new(b)),
 
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
@@ -136,6 +135,7 @@ Expr: Expr = {
 };
 
 IfExpr: Expr = {
+  "if" <c:Expr> <t:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Null)),
   "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
   "if" <c:Expr> <t:Block> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
 };
