@@ -454,7 +454,8 @@ impl<'a> CheckCtx<'a> {
 
     'error: loop {
       // Find parameter list
-      let params = match arg.ty() {
+      let ty = self.tctx.lit_ty(arg.ty());
+      let params = match &ty {
         Ty::Inst(_, id) => match self.inst(id) {
           Inst::Struct { params: Some(params), .. } => params,
           Inst::Union { params: Some(params), .. } => params,
