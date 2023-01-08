@@ -224,10 +224,22 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_void()
     }
     RValue::Continue { .. } => {
-      todo!() // TODO
+      // Jump to continue point
+      ctx.exit_block_br(*ctx.continue_to.last().unwrap());
+      // Throw away code until next useful location
+      let dead_block = ctx.new_block();
+      ctx.enter_block(dead_block);
+      // Void value
+      ctx.build_void()
     }
     RValue::Break { .. } => {
-      todo!() // TODO
+      // Jump to break point
+      ctx.exit_block_br(*ctx.break_to.last().unwrap());
+      // Throw away code until next useful location
+      let dead_block = ctx.new_block();
+      ctx.enter_block(dead_block);
+      // Void value
+      ctx.build_void()
     }
     RValue::Return { arg, .. } => {
       let l_retval = lower_rvalue(&*arg, ctx);
@@ -259,7 +271,10 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       lower_rvalue(ebody, ctx);
       ctx.exit_block_br(end_block);
 
+      // End of if statement
       ctx.enter_block(end_block);
+
+      // Void value
       ctx.build_void()
     }
     RValue::While { cond, body, .. } => {
@@ -275,7 +290,11 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 
       // Next block is the loop body
       ctx.enter_block(body_block);
+      ctx.continue_to.push(test_block);
+      ctx.break_to.push(end_block);
       lower_rvalue(body, ctx);
+      ctx.continue_to.pop();
+      ctx.break_to.pop();
       ctx.exit_block_br(test_block);
 
       // End of the loop
@@ -286,13 +305,21 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Loop { body, .. } => {
       let body_block = ctx.new_block();
+      let end_block = ctx.new_block();
 
       ctx.exit_block_br(body_block);
 
       // Loop body in one block
       ctx.enter_block(body_block);
+      ctx.continue_to.push(body_block);
+      ctx.break_to.push(end_block);
       lower_rvalue(body, ctx);
+      ctx.continue_to.pop();
+      ctx.break_to.pop();
       ctx.exit_block_br(body_block);
+
+      // End of the loop
+      ctx.enter_block(end_block);
 
       // Void value
       ctx.build_void()
@@ -346,6 +373,10 @@ struct LowerCtx<'a> {
 
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
+
+  // Break and continue blocks
+  break_to: Vec<LLVMBasicBlockRef>,
+  continue_to: Vec<LLVMBasicBlockRef>
 }
 
 impl<'a> LowerCtx<'a> {
@@ -402,7 +433,10 @@ impl<'a> LowerCtx<'a> {
       types: HashMap::new(),
       values: HashMap::new(),
       locals: HashMap::new(),
-      string_lits: HashMap::new()
+      string_lits: HashMap::new(),
+
+      break_to: Vec::new(),
+      continue_to: Vec::new()
     }
   }
 
@@ -562,7 +596,7 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
-    assert!(self.l_func != std::ptr::null_mut());
+    assert!(!self.l_func.is_null());
     LLVMAppendBasicBlock(self.l_func, empty_cstr())
   }
 
