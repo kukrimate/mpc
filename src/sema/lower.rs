@@ -229,8 +229,10 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Break { .. } => {
       todo!() // TODO
     }
-    RValue::Return { .. } => {
-      todo!() // TODO
+    RValue::Return { arg, .. } => {
+      let l_retval = lower_rvalue(&*arg, ctx);
+      ctx.build_ret(l_retval);
+      ctx.build_void()
     }
     RValue::Let { id, init, .. } => {
       // Store initializer
@@ -1048,6 +1050,10 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
+  unsafe fn build_ret(&mut self, val: LLVMValueRef) {
+    LLVMBuildRet(self.l_builder, val);
+  }
+
   unsafe fn lower_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
     // Pass 1: Create LLVM values for each definition
     for (id, def) in insts.iter() {
@@ -1103,7 +1109,8 @@ impl<'a> LowerCtx<'a> {
             self.locals.insert(*id, l_value);
           }
 
-          LLVMBuildRet(self.l_builder, lower_rvalue(body, self));
+          let l_retval = lower_rvalue(body, self);
+          self.build_ret(l_retval);
         }
         _ => ()
       }
