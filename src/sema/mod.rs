@@ -24,7 +24,6 @@ enum Inst {
   Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
-  Const       { name: RefStr, ty: Ty, val: RValue },
   Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: RValue },
   ExternFunc  { name: RefStr, ty: Ty },
@@ -155,7 +154,6 @@ enum LValue {
 
 enum RValue {
   Null      { ty: Ty },
-  ConstRef  { ty: Ty, name: RefStr, id: DefId },
   FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
   ArrayLit  { ty: Ty, elements: Vec<RValue> },
@@ -215,7 +213,6 @@ impl RValue {
   fn ty(&self) -> &Ty {
     match self {
       RValue::Null      { ty, .. } => ty,
-      RValue::ConstRef  { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
       RValue::CStr      { ty, .. } => ty,
       RValue::ArrayLit  { ty, .. } => ty,
@@ -276,9 +273,6 @@ impl fmt::Debug for RValue {
     match self {
       RValue::Null { .. } => {
         write!(f, "Null")
-      }
-      RValue::ConstRef { name, .. } => {
-        write!(f, "{}", name)
       }
       RValue::FuncRef { name, .. } => {
         write!(f, "{}", name)

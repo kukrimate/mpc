@@ -4,5 +4,7 @@ extern {
   function memset(dest: *Uint8, src: *Uint8, len: Uintn) -> *Uint8
   function printf(fmt: *Int8, ...) -> Int32
   function puts(str: *Uint8) -> Int32
+  function srand(seed: Uint32)
+  function rand() -> Int32
   data errno: Int32
 }

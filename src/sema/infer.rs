@@ -147,15 +147,6 @@ impl<'a> CheckCtx<'a> {
     Ok(result)
   }
 
-  fn inst_const(&mut self, id: DefId, def: &parse::ConstDef) -> MRes<RValue> {
-    let ty = self.infer_ty(&def.ty)?;
-    let val = self.infer_rvalue(&def.val)?;
-    self.tctx.unify(&ty, val.ty())?;
-    self.insts.insert((id, vec![]), Inst::Const { name: def.name, ty: ty.clone(), val });
-
-    Ok(RValue::ConstRef { ty, name: def.name, id })
-  }
-
   fn inst_data(&mut self, id: DefId, def: &parse::DataDef) -> MRes<LValue> {
     let ty = self.infer_ty(&def.ty)?;
     let init = self.infer_rvalue(&def.init)?;
@@ -786,7 +777,7 @@ impl<'a> CheckCtx<'a> {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Const(def) => {
-            self.inst_const(def_id, def)
+            self.infer_rvalue(&def.val)
           }
           parse::Def::Func(def) => {
             let targs = def.type_params

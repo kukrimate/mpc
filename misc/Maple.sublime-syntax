@@ -1,0 +1,77 @@
+%YAML 1.2
+---
+
+file_extensions:
+  - m
+
+scope: source.m
+
+variables:
+  keywords: 'as|let|mut|continue|break|return|if|else|while|loop|true|false|struct|union|enum|function|const|data|import|extern'
+  basic_types: 'Bool|Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double|Function'
+
+contexts:
+  main:
+    # Character literals
+    - match: "'"
+      scope: punctuation.definition.string.begin.m
+      push: single_quoted_char
+
+    # String literals
+    - match: '"'
+      scope: punctuation.definition.string.begin.m
+      push: double_quoted_string
+
+    # Line comments begin with '//' and finish at the end of the line (or file)
+    - match: '//'
+      scope: punctuation.definition.comment.m
+      push: line_comment
+
+    # Block comments begin with '/*' and finish with '*/'
+    - match: '/\*'
+      scope: punctuation.definition.comment.m
+      push: block_comment
+
+    # (Primitive) type names
+    - match: '\b({{basic_types}})\b'
+      scope: storage.type.m
+
+    # Keywords
+    - match: '\b({{keywords}})\b'
+      scope: keyword.control.m
+
+    # Numeric literals
+    - match: '\b[0-9]+\b'
+      scope: constant.numeric.m
+    - match: '\b0[xX][a-fA-F0-9]+\b'
+      scope: constant.numeric.m
+    - match: '\b0[oO][0-7]+\b'
+      scope: constant.numeric.m
+    - match: '\b0[bB][0-1]+\b'
+      scope: constant.numeric.m
+
+  single_quoted_char:
+    - meta_scope: string.quoted.double.m
+    - match: '\\.'
+      scope: constant.character.escape.m
+    - match: "'"
+      scope: punctuation.definition.string.end.m
+      pop: true
+
+  double_quoted_string:
+    - meta_scope: string.quoted.double.m
+    - match: '\\.'
+      scope: constant.character.escape.m
+    - match: '"'
+      scope: punctuation.definition.string.end.m
+      pop: true
+
+  line_comment:
+    - meta_scope: comment.line.m
+    - match: $
+      pop: true
+
+  block_comment:
+    - meta_scope: comment.block.m
+    - match: '\*/'
+      pop: true

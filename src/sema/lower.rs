@@ -45,9 +45,6 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Null { .. } => {
       ctx.build_void()
     }
-    RValue::ConstRef { id, .. } => {
-      ctx.get_value(&(*id, vec![]))
-    }
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
     }
@@ -133,9 +130,6 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
     RValue::Null { .. } => {
       ctx.build_void()
-    }
-    RValue::ConstRef { id, .. } => {
-      ctx.get_value(&(*id, vec![]))
     }
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
@@ -1058,9 +1052,6 @@ impl<'a> LowerCtx<'a> {
     // Pass 1: Create LLVM values for each definition
     for (id, def) in insts.iter() {
       let l_value = match def {
-        Inst::Const { val, .. } => {
-          lower_const_rvalue(val, self)
-        }
         Inst::Data { name, ty, .. } |
         Inst::ExternData { name, ty, .. } => {
           LLVMAddGlobal(self.l_module, self.lower_ty(ty), name.borrow_c())
