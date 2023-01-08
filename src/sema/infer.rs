@@ -764,7 +764,6 @@ impl<'a> CheckCtx<'a> {
 
   /// Lookup a definition and instantiate it as an rvalue
   fn inst_as_rvalue(&mut self, path: &parse::Path) -> MRes<RValue> {
-
     /// Convert an lvalue to an rvalue by loading it
     fn lvalue_to_rvalue(lvalue: LValue) -> RValue {
       RValue::Load {

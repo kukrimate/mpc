@@ -131,7 +131,12 @@ function create_random() -> Brick {
 */
 
 function main() -> Int32 {
-  let err = sdl2::SDL_Init(sdl2::SDL_INIT_EVERYTHING) != 0;
+  if sdl2::SDL_Init(sdl2::SDL_INIT_EVERYTHING) != 0 {
+    libc::fprintf(libc::stderr,
+                  c"Failed to initialze SDL2: %s\n",
+                  sdl2::SDL_GetError());
+    return 1;
+  };
 
 
   0

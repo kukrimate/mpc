@@ -889,7 +889,7 @@ impl<'a> LowerCtx<'a> {
 
   unsafe fn build_call(&mut self, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
     LLVMBuildCall(self.l_builder, l_func,
-                  &mut l_args[0] as *mut Val,
+                  l_args.get_unchecked_mut(0) as _,
                   l_args.len() as u32,
                   empty_cstr())
   }

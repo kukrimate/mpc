@@ -40,7 +40,7 @@ struct SDL_Rect()
 extern {
   function SDL_Init(flags: Uint32) -> Int32
   function SDL_Quit()
-  function SDL_GetError(fmt: *Int8, ...)
+  function SDL_GetError() -> *Int8
 
   function SDL_CreateWindow(title: *Int8,
                             x: Int32,
