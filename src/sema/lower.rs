@@ -127,16 +127,20 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_string_lit(val)
     }
     LValue::ArrayLit { ty, elements, .. } => {
-      let elements: Vec<LLVMValueRef> = elements.iter()
-        .map(|element| lower_rvalue(element, ctx))
+      let l_storage = ctx.build_alloca(RefStr::new(""), ty);
+      let elements: Vec<(Ty, LLVMValueRef)> = elements.iter()
+        .map(|element| (element.ty().clone(), lower_rvalue(element, ctx)))
         .collect();
-      ctx.build_array_lit(ty, &elements)
+      ctx.build_aggregate_inplace(l_storage, &elements);
+      l_storage
     }
     LValue::StructLit { ty, fields, .. } => {
+      let l_storage = ctx.build_alloca(RefStr::new(""), ty);
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
         .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
         .collect();
-      ctx.build_struct_lit(ty, &fields)
+      ctx.build_aggregate_inplace(l_storage, &fields);
+      l_storage
     }
     LValue::StruDot { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -273,10 +277,9 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Let { id, init, .. } => {
       if let Some(init) = init {
-        // Store initializer
+        // Generate initializer in-place
         let l_local = ctx.get_local(*id);
-        let l_init = lower_rvalue(init, ctx);
-        ctx.build_store(init.ty(), l_local, l_init);
+        lower_inplace_initializer(init, ctx, l_local);
       }
       // Void value
       ctx.build_void()
@@ -372,6 +375,35 @@ unsafe fn lower_bool(rvalue: &RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) 
     _ => {
       let cond = lower_rvalue(rvalue, ctx);
       ctx.exit_block_cond_br(cond, next1, next2);
+    }
+  }
+}
+
+unsafe fn lower_inplace_initializer(rvalue: &RValue, ctx: &mut LowerCtx, l_dest: LLVMValueRef) {
+  match rvalue {
+    RValue::Load { arg, .. } => {
+      match &**arg {
+        LValue::ArrayLit { elements, .. } => {
+          let elements: Vec<(Ty, LLVMValueRef)> = elements.iter()
+            .map(|element| (element.ty().clone(), lower_rvalue(element, ctx)))
+            .collect();
+          ctx.build_aggregate_inplace(l_dest, &elements);
+        }
+        LValue::StructLit { fields, .. } => {
+          let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
+            .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
+            .collect();
+          ctx.build_aggregate_inplace(l_dest, &fields);
+        }
+        _ => {
+          let l_src = lower_rvalue(rvalue, ctx);
+          ctx.build_store(rvalue.ty(), l_dest, l_src);
+        }
+      }
+    }
+    _ => {
+      let l_src = lower_rvalue(rvalue, ctx);
+      ctx.build_store(rvalue.ty(), l_dest, l_src);
     }
   }
 }
@@ -987,24 +1019,11 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn build_array_lit(&mut self, ty: &Ty, elements: &[LLVMValueRef]) -> LLVMValueRef {
-    let l_storage = self.build_alloca(RefStr::new(""), ty);
-    let elem_ty = if let Ty::Arr(_cnt, elem_ty) =
-      self.tctx.lit_ty(ty) { *elem_ty } else { unreachable!() };
-    for (idx, l_val) in elements.iter().enumerate() {
-      let l_addr = self.build_gep(l_storage, idx);
-      self.build_store(&elem_ty, l_addr, *l_val);
-    }
-    l_storage
-  }
-
-  unsafe fn build_struct_lit(&mut self, ty: &Ty, fields: &[(Ty, LLVMValueRef)]) -> LLVMValueRef {
-    let l_storage = self.build_alloca(RefStr::new(""), ty);
+  unsafe fn build_aggregate_inplace(&mut self, l_storage: LLVMValueRef, fields: &[(Ty, LLVMValueRef)]) {
     for (idx, (ty, l_val)) in fields.iter().enumerate() {
       let l_addr = self.build_gep(l_storage, idx);
       self.build_store(ty, l_addr, *l_val);
     }
-    l_storage
   }
 
   unsafe fn build_gep(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
