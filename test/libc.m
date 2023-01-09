@@ -8,7 +8,8 @@ extern {
 
   // string.h
   function memcpy(dest: *Uint8, src: *Uint8, len: Uintn) -> *Uint8
-  function memset(dest: *Uint8, src: *Uint8, len: Uintn) -> *Uint8
+  function memset(dest: *Uint8, c: Int32, len: Uintn) -> *Uint8
+  function memmove(dest: *Uint8, src: *Uint8, len: Uintn) -> *Uint8
 
   // errno.h
   data errno: Int32
