@@ -1,4 +1,3 @@
-
 use super::*;
 
 #[derive(Debug)]
@@ -99,8 +98,10 @@ impl TVarCtx {
           }
           Func(par, *va1,Box::new(self.unify(ret1, ret2)?))
         }
-        (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) if is_mut1 == is_mut2 => {
-          Ptr(*is_mut1, Box::new(self.unify(base1, base2)?))
+        (Ptr(is_mut1, base1), Ptr(is_mut2, base2)) => {
+          let is_mut = if *is_mut1 == IsMut::Yes
+              && *is_mut2 == IsMut::Yes { IsMut::Yes } else { IsMut::No };
+          Ptr(is_mut, Box::new(self.unify(base1, base2)?))
         }
         (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
           Arr(*siz1, Box::new(self.unify(elem1, elem2)?))
