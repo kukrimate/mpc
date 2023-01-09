@@ -11,6 +11,13 @@ use llvm_sys::target_machine::*;
 type BB = LLVMBasicBlockRef;
 type Val = LLVMValueRef;
 
+/// Semantics of a type
+enum Semantics {
+  Void,
+  Value,
+  Addr
+}
+
 /// Constant expressions
 
 unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
@@ -175,12 +182,12 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Char { .. } => {
       todo!() // TODO
     }
-    RValue::Call { arg, args, .. } => {
+    RValue::Call { ty, arg, args, .. } => {
       let arg = lower_rvalue(arg, ctx);
       let args = args.iter()
         .map(|(_, arg)| lower_rvalue(arg, ctx))
         .collect();
-      ctx.build_call(arg, args)
+      ctx.build_call(ty, arg, args)
     }
     RValue::Adr { arg, .. } => {
       lower_lvalue(arg, ctx)
@@ -254,7 +261,7 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     }
     RValue::Return { arg, .. } => {
       let l_retval = lower_rvalue(&*arg, ctx);
-      ctx.build_ret(l_retval);
+      ctx.exit_block_ret(arg.ty(), l_retval);
       // Throw away code until next useful location
       let dead_block = ctx.new_block();
       ctx.enter_block(dead_block);
@@ -488,6 +495,12 @@ impl<'a> LowerCtx<'a> {
   unsafe fn lower_ty(&mut self, ty: &Ty) -> LLVMTypeRef {
     use Ty::*;
 
+    // Void semantic types are special
+    match self.ty_semantics(ty) {
+      Semantics::Void => return LLVMVoidTypeInContext(self.l_context),
+      Semantics::Addr | Semantics::Value => (),
+    }
+
     match &self.tctx.lit_ty(ty) {
       Bool => LLVMInt1TypeInContext(self.l_context),
       Uint8 | Int8 => LLVMInt8TypeInContext(self.l_context),
@@ -520,11 +533,23 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn lower_func_ty(&mut self, params: &Vec<(RefStr, Ty)>, va: bool, ret_ty: &Ty) -> LLVMTypeRef {
-    let mut l_params = self.lower_params(params);
-    LLVMFunctionType(self.lower_ty(ret_ty),
-                                  l_params.get_unchecked_mut(0) as _,
-                                  l_params.len() as u32,
-                                  va as _)
+    match self.ty_semantics(ret_ty) {
+      Semantics::Void | Semantics::Value => {
+        let mut l_params = self.lower_params(params);
+        LLVMFunctionType(self.lower_ty(ret_ty),
+                         l_params.get_unchecked_mut(0) as _,
+                         l_params.len() as u32,
+                         va as _)
+      }
+      Semantics::Addr => {
+        let mut l_params = vec![ LLVMPointerType(self.lower_ty(ret_ty), 0) ];
+        l_params.extend(self.lower_params(params));
+        LLVMFunctionType(LLVMVoidTypeInContext(self.l_context),
+                         l_params.get_unchecked_mut(0) as _,
+                         l_params.len() as u32,
+                         va as _)
+      }
+    }
   }
 
   unsafe fn lower_union(&mut self, l_params: Vec<LLVMTypeRef>) -> Vec<LLVMTypeRef> {
@@ -614,28 +639,8 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
-    assert!(!self.l_func.is_null());
-    LLVMAppendBasicBlock(self.l_func, empty_cstr())
-  }
-
-  unsafe fn enter_block(&mut self, block: LLVMBasicBlockRef) {
-    LLVMPositionBuilderAtEnd(self.l_builder, block);
-  }
-
-  unsafe fn exit_block_br(&mut self, dest: LLVMBasicBlockRef) {
-    LLVMBuildBr(self.l_builder, dest);
-  }
-
-  unsafe fn exit_block_cond_br(&mut self, cond: LLVMValueRef,
-                                dest1: LLVMBasicBlockRef,
-                                dest2: LLVMBasicBlockRef) {
-    LLVMBuildCondBr(self.l_builder, cond, dest1, dest2);
-  }
-
   unsafe fn build_void(&mut self) -> LLVMValueRef {
-    LLVMConstNull(LLVMStructTypeInContext(
-      self.l_context, std::ptr::null_mut(), 0, 0))
+    std::ptr::null_mut()
   }
 
   unsafe fn build_string_lit(&mut self, data: &[u8]) -> LLVMValueRef {
@@ -872,41 +877,110 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  /// Determine if a type should use value or pointer semantics
+  unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
+    assert!(!self.l_func.is_null());
+    LLVMAppendBasicBlock(self.l_func, empty_cstr())
+  }
 
-  fn backend_value_semantics(&mut self, ty: &Ty) -> bool {
-    use Ty::*;
-    match self.tctx.lit_ty(ty) {
-      Bool | Uint8 | Int8 | Uint16 |
-      Int16 |Uint32 | Int32 | Uint64 |
-      Int64 | Uintn | Intn | Float |
-      Double | Ptr(..) | Func(..) => true,
-      Inst(..) | Arr(..) | Tuple(..) => false,
-      _ => unreachable!()
+  unsafe fn enter_block(&mut self, block: LLVMBasicBlockRef) {
+    LLVMPositionBuilderAtEnd(self.l_builder, block);
+  }
+
+  unsafe fn exit_block_br(&mut self, dest: LLVMBasicBlockRef) {
+    LLVMBuildBr(self.l_builder, dest);
+  }
+
+  unsafe fn exit_block_cond_br(&mut self, cond: LLVMValueRef,
+                               dest1: LLVMBasicBlockRef,
+                               dest2: LLVMBasicBlockRef) {
+    LLVMBuildCondBr(self.l_builder, cond, dest1, dest2);
+  }
+
+  unsafe fn exit_block_ret(&mut self, ty: &Ty, val: LLVMValueRef) {
+    match self.ty_semantics(ty) {
+      Semantics::Void => {
+        LLVMBuildRetVoid(self.l_builder);
+      }
+      Semantics::Value => {
+        LLVMBuildRet(self.l_builder, val);
+      }
+      Semantics::Addr => {
+        self.build_store(ty, LLVMGetParam(self.l_func, 0), val);
+        LLVMBuildRetVoid(self.l_builder);
+      }
     }
   }
 
   unsafe fn build_alloca(&mut self, name: RefStr, ty: &Ty) -> LLVMValueRef {
-    LLVMBuildAlloca(self.l_builder, self.lower_ty(ty), name.borrow_c())
+    match self.ty_semantics(ty) {
+      Semantics::Void => std::ptr::null_mut(),
+      Semantics::Addr | Semantics::Value => {
+        LLVMBuildAlloca(self.l_builder, self.lower_ty(ty), name.borrow_c())
+      }
+    }
   }
 
   unsafe fn build_load(&mut self, ty: &Ty, l_src: LLVMValueRef) -> LLVMValueRef {
-    if self.backend_value_semantics(ty) {
-      LLVMBuildLoad(self.l_builder, l_src, empty_cstr())
-    } else {
-      l_src
+    match self.ty_semantics(ty) {
+      Semantics::Void => std::ptr::null_mut(),
+      Semantics::Addr => l_src,
+      Semantics::Value => LLVMBuildLoad(self.l_builder, l_src, empty_cstr())
     }
   }
 
   unsafe fn build_store(&mut self, ty: &Ty, l_dest: LLVMValueRef, l_src: LLVMValueRef) {
-    if self.backend_value_semantics(ty) {
-      LLVMBuildStore(self.l_builder, l_src, l_dest);
-    } else {
-      let l_type = self.lower_ty(ty);
-      let align = self.align_of(l_type) as u32;
-      let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
+    match self.ty_semantics(ty) {
+      Semantics::Void => {}
+      Semantics::Addr => {
+        let l_type = self.lower_ty(ty);
+        let align = self.align_of(l_type) as u32;
+        let size = LLVMConstInt(LLVMInt32TypeInContext(self.l_context),
                                 self.size_of(l_type) as u64, 0);
-      LLVMBuildMemCpy(self.l_builder, l_dest, align, l_src, align, size);
+        LLVMBuildMemCpy(self.l_builder, l_dest, align, l_src, align, size);
+      }
+      Semantics::Value => {
+        LLVMBuildStore(self.l_builder, l_src, l_dest);
+      }
+    }
+  }
+
+  unsafe fn ty_semantics(&mut self, ty: &Ty) -> Semantics {
+    use Ty::*;
+
+    // Get literal type
+    let ty = self.tctx.lit_ty(ty);
+
+    // Choose semantics
+    match self.tctx.lit_ty(&ty) {
+      Bool | Uint8 | Int8 | Uint16 |
+      Int16 |Uint32 | Int32 | Uint64 |
+      Int64 | Uintn | Intn | Float |
+      Double | Ptr(..) | Func(..) => Semantics::Value,
+      Arr(elem_cnt, elem_ty) => {
+        // Check for zero sized array
+        if elem_cnt == 0 {
+          return Semantics::Void
+        }
+        if let Semantics::Void = self.ty_semantics(&*elem_ty) {
+          return Semantics::Void
+        }
+        // Arrays follow address semantics normally
+        Semantics::Addr
+      }
+      Tuple(params) => {
+        // If any field has non-void semantics, it's non-void
+        for (_, ty) in params.iter() {
+          match self.ty_semantics(ty) {
+            Semantics::Void => (),
+            _ => return Semantics::Addr
+          }
+        }
+        // Otherwise this is an empty tuple
+        Semantics::Void
+      }
+      // NOTE: empty structs and unions still follow address semantics
+      Inst(..) => Semantics::Addr,
+      _ => unreachable!()
     }
   }
 
@@ -964,11 +1038,25 @@ impl<'a> LowerCtx<'a> {
       empty_cstr())
   }
 
-  unsafe fn build_call(&mut self, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
-    LLVMBuildCall(self.l_builder, l_func,
-                  l_args.get_unchecked_mut(0) as _,
-                  l_args.len() as u32,
-                  empty_cstr())
+  unsafe fn build_call(&mut self, ty: &Ty, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
+    match self.ty_semantics(ty) {
+      Semantics::Addr => {
+        let l_tmp = self.build_alloca(RefStr::new(""), ty);
+        let mut real_args = vec![l_tmp];
+        real_args.extend(l_args);
+        LLVMBuildCall(self.l_builder, l_func,
+                      real_args.get_unchecked_mut(0) as _,
+                      real_args.len() as u32,
+                      empty_cstr());
+        l_tmp
+      }
+      _ => {
+        LLVMBuildCall(self.l_builder, l_func,
+                      l_args.get_unchecked_mut(0) as _,
+                      l_args.len() as u32,
+                      empty_cstr())
+      }
+    }
   }
 
   unsafe fn build_lnot(&mut self, l_arg: LLVMValueRef) -> LLVMValueRef {
@@ -1192,10 +1280,6 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn build_ret(&mut self, val: LLVMValueRef) {
-    LLVMBuildRet(self.l_builder, val);
-  }
-
   unsafe fn lower_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
     // Pass 1: Create LLVM values for each definition
     for (id, def) in insts.iter() {
@@ -1238,13 +1322,16 @@ impl<'a> LowerCtx<'a> {
           // Allocate locals
           self.locals.clear();
 
+          // Calculate parameter base index
+          let pbase = if let Semantics::Addr = self.ty_semantics(body.ty()) { 1 } else { 0 };
+
           for (id, local) in locals.iter() {
             let l_value = match local {
               // Parameter
               LocalDef::Param { name, ty, index, .. } => {
                 let l_alloca = self.build_alloca(*name, ty);
-                let l_param = LLVMGetParam(self.l_func, *index as u32);
-                // self.build_store(ty, l_alloca, l_param);
+                let l_param = LLVMGetParam(self.l_func, pbase + *index as u32);
+                self.build_store(ty, l_alloca, l_param);
                 l_alloca
               }
 
@@ -1258,7 +1345,7 @@ impl<'a> LowerCtx<'a> {
           }
 
           let l_retval = lower_rvalue(body, self);
-          self.build_ret(l_retval);
+          self.exit_block_ret(body.ty(), l_retval);
         }
         _ => ()
       }
