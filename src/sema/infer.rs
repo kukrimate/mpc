@@ -505,6 +505,9 @@ impl<'a> CheckCtx<'a> {
     match self.lookup(path)? {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
+          parse::Def::Const(def) => {
+            self.infer_lvalue(&def.val)
+          }
           parse::Def::Data(def) => {
             self.inst_data(def_id, def)
           }
