@@ -68,17 +68,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
-name = "bootstrap"
-version = "0.1.0"
-dependencies = [
- "clap",
- "lalrpop",
- "lalrpop-util",
- "llvm-sys",
- "regex",
-]
-
-[[package]]
 name = "cc"
 version = "1.0.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -285,6 +274,17 @@ name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+
+[[package]]
+name = "mpc"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "lalrpop",
+ "lalrpop-util",
+ "llvm-sys",
+ "regex",
+]
 
 [[package]]
 name = "new_debug_unreachable"
