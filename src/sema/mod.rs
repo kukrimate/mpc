@@ -143,9 +143,9 @@ impl fmt::Debug for Ty {
 /// Expressions
 
 enum LValue {
-  DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, id: DefId },
-  ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
-  LetRef    { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
+  DataRef   { ty: Ty, is_mut: IsMut, id: DefId },
+  ParamRef  { ty: Ty, is_mut: IsMut, id: LocalId },
+  LetRef    { ty: Ty, is_mut: IsMut, id: LocalId },
   StrLit    { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit  { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, name: RefStr, fields: Vec<RValue> },
@@ -157,7 +157,7 @@ enum LValue {
 
 enum RValue {
   Null      { ty: Ty },
-  FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
+  FuncRef   { ty: Ty, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
@@ -250,10 +250,12 @@ impl RValue {
 impl fmt::Debug for LValue {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      LValue::DataRef { name, .. } |
-      LValue::ParamRef { name, .. } |
-      LValue::LetRef { name, .. } => {
-        write!(f, "{}", name)
+      LValue::DataRef { id, .. } => {
+        write!(f, "{:?}", id)
+      }
+      LValue::ParamRef { id, .. } |
+      LValue::LetRef { id, .. } => {
+        write!(f, "{:?}", id)
       }
       LValue::StructLit { name, fields, .. } => {
         write!(f, "{}", name)?;
@@ -291,8 +293,8 @@ impl fmt::Debug for RValue {
       RValue::Null { .. } => {
         write!(f, "Null")
       }
-      RValue::FuncRef { name, .. } => {
-        write!(f, "{}", name)
+      RValue::FuncRef { id, .. } => {
+        write!(f, "{:?}", id)
       }
       RValue::CStr { val, .. } => {
         write!(f, "c{:?}", val)

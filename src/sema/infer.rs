@@ -158,13 +158,13 @@ impl<'a> CheckCtx<'a> {
       init
     });
 
-    Ok(LValue::DataRef { ty, is_mut: def.is_mut, name: def.name, id })
+    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
   fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<RValue> {
     // Try to find exisiting instance first
-    if let Some(Inst::Func { name, ty, .. }) = self.insts.get(&id) {
-      return Ok(RValue::FuncRef { ty: ty.clone(), name: *name, id })
+    if let Some(Inst::Func { ty, .. }) = self.insts.get(&id) {
+      return Ok(RValue::FuncRef { ty: ty.clone(), id })
     }
 
     self.newscope();
@@ -199,7 +199,6 @@ impl<'a> CheckCtx<'a> {
     // Return reference to signature
     Ok(RValue::FuncRef {
       ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-      name: def.name,
       id
     })
   }
@@ -252,7 +251,7 @@ impl<'a> CheckCtx<'a> {
     let ty = self.infer_ty(&def.ty)?;
     self.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
 
-    Ok(LValue::DataRef { ty, is_mut: def.is_mut, name: def.name, id })
+    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
   fn inst_extern_func(&mut self, id: DefId, def: &parse::ExternFuncDef) -> MRes<RValue> {
@@ -261,7 +260,7 @@ impl<'a> CheckCtx<'a> {
                       Box::new(self.infer_ty(&def.ret_ty)?));
     self.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
 
-    Ok(RValue::FuncRef { ty, name: def.name, id: (id, vec![]) })
+    Ok(RValue::FuncRef { ty, id: (id, vec![]) })
   }
 
   /// Lookup a parsed definition by its id
@@ -518,10 +517,10 @@ impl<'a> CheckCtx<'a> {
       Sym::Local(id) => {
         match self.local_def(id) {
           LocalDef::Param { ty, is_mut, .. } => {
-            Ok(LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, name: path[0], id })
+            Ok(LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, id })
           },
           LocalDef::Let { ty, is_mut, .. } => {
-            Ok(LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, name: path[0], id })
+            Ok(LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, id })
           },
         }
       }
@@ -928,11 +927,11 @@ impl<'a> CheckCtx<'a> {
       Sym::Local(id) => {
         match self.local_def(id) {
           LocalDef::Param { ty, is_mut, .. } => {
-            let lvalue = LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, name: path[0], id };
+            let lvalue = LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, id };
             Ok(lvalue_to_rvalue(lvalue))
           },
           LocalDef::Let { ty, is_mut, .. } => {
-            let lvalue = LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, name: path[0], id };
+            let lvalue = LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, id };
             Ok(lvalue_to_rvalue(lvalue))
           }
         }
