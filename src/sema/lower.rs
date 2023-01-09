@@ -75,9 +75,6 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Flt { ty, val, .. } => {
       ctx.build_flt(ty, *val)
     }
-    RValue::Char { .. } => {
-      todo!() // TODO
-    }
     RValue::Adr { arg, .. } => {
       lower_const_lvalue(arg, ctx)
     }
@@ -137,7 +134,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::StructLit { ty, fields, .. } => {
       let l_storage = ctx.build_alloca(RefStr::new(""), ty);
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
-        .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
+        .map(|field| (field.ty().clone(), lower_rvalue(field, ctx)))
         .collect();
       ctx.build_aggregate_inplace(l_storage, &fields);
       l_storage
@@ -186,13 +183,10 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Flt { ty, val, .. } => {
       ctx.build_flt(ty, *val)
     }
-    RValue::Char { .. } => {
-      todo!() // TODO
-    }
     RValue::Call { ty, arg, args, .. } => {
       let arg = lower_rvalue(arg, ctx);
       let args = args.iter()
-        .map(|(_, arg)| lower_rvalue(arg, ctx))
+        .map(|arg| lower_rvalue(arg, ctx))
         .collect();
       ctx.build_call(ty, arg, args)
     }
@@ -391,7 +385,7 @@ unsafe fn lower_inplace_initializer(rvalue: &RValue, ctx: &mut LowerCtx, l_dest:
         }
         LValue::StructLit { fields, .. } => {
           let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
-            .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
+            .map(|field| (field.ty().clone(), lower_rvalue(field, ctx)))
             .collect();
           ctx.build_aggregate_inplace(l_dest, &fields);
         }

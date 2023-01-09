@@ -243,7 +243,6 @@ PrimExpr: Expr = {
   "false" => Expr::Bool(false),
   Integer => Expr::Int(<>),
   Float => Expr::Flt(<>),
-  Character => Expr::Char(<>),
   String => Expr::Str(<>),
   CString => Expr::CStr(<>),
 };
@@ -388,7 +387,6 @@ extern {
     Identifier => lexer::Token::Ident(<RefStr>),
     Integer => lexer::Token::IntLit(<usize>),
     Float => lexer::Token::FltLit(<f64>),
-    Character => lexer::Token::CharLit(<Vec<u8>>),
     String => lexer::Token::StrLit(<Vec<u8>>),
     CString => lexer::Token::CStrLit(<Vec<u8>>),
     "Bool" => lexer::Token::TyBool,

@@ -670,9 +670,6 @@ impl<'a> CheckCtx<'a> {
       Flt(val) => {
         RValue::Flt { ty: self.tctx.tvar(Ty::BoundFlt), val: *val }
       }
-      Char(val) => {
-        RValue::Char { ty: self.tctx.tvar(Ty::BoundInt), val: val.clone() }
-      }
       Call(called, args) => {
         if let Some((name, ty, params)) = self.check_struct_ctor(called) {
           let fields = self.infer_args(&params, args)?;
@@ -974,7 +971,7 @@ impl<'a> CheckCtx<'a> {
     })
   }
 
-  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, parse::Expr)]) -> MRes<Vec<(RefStr, RValue)>> {
+  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, parse::Expr)]) -> MRes<Vec<RValue>> {
     let mut nargs = vec![];
     let mut params_iter = params.iter();
 
@@ -989,7 +986,7 @@ impl<'a> CheckCtx<'a> {
         self.tctx.unify(arg_val.ty(), param_ty)?;
       }
       // Append checked argument
-      nargs.push((*arg_name, arg_val));
+      nargs.push(arg_val);
     }
 
     Ok(nargs)

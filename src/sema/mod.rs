@@ -148,7 +148,7 @@ enum LValue {
   LetRef    { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
   StrLit    { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit  { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
-  StructLit { ty: Ty, is_mut: IsMut, name: RefStr, fields: Vec<(RefStr, RValue)> },
+  StructLit { ty: Ty, is_mut: IsMut, name: RefStr, fields: Vec<RValue> },
   StruDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
   UnionDot  { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -163,8 +163,7 @@ enum RValue {
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
   Flt       { ty: Ty, val: f64 },
-  Char      { ty: Ty, val: Vec<u8> },
-  Call      { ty: Ty, arg: Box<RValue>, args: Vec<(RefStr, RValue)> },
+  Call      { ty: Ty, arg: Box<RValue>, args: Vec<RValue> },
   Adr       { ty: Ty, arg: Box<LValue> },
   Un        { ty: Ty, op: UnOp, arg: Box<RValue> },
   LNot      { ty: Ty, arg: Box<RValue> },
@@ -226,7 +225,6 @@ impl RValue {
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
       RValue::Flt       { ty, .. } => ty,
-      RValue::Char      { ty, .. } => ty,
       RValue::Call      { ty, .. } => ty,
       RValue::Adr       { ty, .. } => ty,
       RValue::Un        { ty, .. } => ty,
@@ -311,12 +309,9 @@ impl fmt::Debug for RValue {
       RValue::Flt { val, .. } => {
         write!(f, "{}", val)
       }
-      RValue::Char { val, .. } => {
-        write!(f, "c{:?}", val)
-      }
       RValue::Call { arg, args, .. } => {
         write_comma_separated(f, args.iter(),
-          |f, (name, arg)| write!(f, "{}: {:?}", name, arg))?;
+          |f, arg| arg.fmt(f))?;
         write!(f, " {:?}", arg)
       }
       RValue::Adr { arg, .. } => {

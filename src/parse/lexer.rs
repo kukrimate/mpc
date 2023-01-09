@@ -20,7 +20,6 @@ pub enum Token {
                     // 0[oO][0-7]+
                     // 0[bB][0-1]+
   FltLit(f64),      // [0-9]*[.][0-9]+([eE][+-]?[0-9]+)?
-  CharLit(Vec<u8>), // '([^']|\')*'
   StrLit(Vec<u8>),  // "([^"]|\")*"
   CStrLit(Vec<u8>), // c"([^"]|\")*"
   TyBool,           // Bool
@@ -242,8 +241,15 @@ impl<'input> Lexer<'input> {
             Some(b'\'') => {
               let s = self.slice();
               match unescape(start_loc, &s[1..s.len() - 1]) {
-                Ok(v) => break Token::CharLit(v),
-                Err(err) => return Some(Err(err)),
+                Ok(v) if v.len() != 1 => {
+                  break Token::IntLit(v[0] as usize)
+                }
+                Ok(_) => {
+                  return Some(Err(Error::InvalidChar(start_loc)))
+                }
+                Err(err) => {
+                  return Some(Err(err))
+                }
               }
             },
             Some(_) => (),

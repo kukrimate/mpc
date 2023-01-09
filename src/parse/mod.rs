@@ -63,7 +63,6 @@ pub enum Expr {
   Bool(bool),
   Int(usize),
   Flt(f64),
-  Char(Vec<u8>),
   Str(Vec<u8>),
   CStr(Vec<u8>),
   Arr(Vec<Expr>),
@@ -169,21 +168,6 @@ pub struct ExternFuncDef {
   pub ret_ty: Ty
 }
 
-impl Def {
-  pub fn name(&self) -> RefStr {
-    match self {
-      Def::Struct(def) => def.name,
-      Def::Union(def) => def.name,
-      Def::Enum(def) => def.name,
-      Def::Const(def) => def.name,
-      Def::Data(def) => def.name,
-      Def::Func(def) => def.name,
-      Def::ExternData(def) => def.name,
-      Def::ExternFunc(def) => def.name,
-    }
-  }
-}
-
 #[derive(Debug)]
 pub enum Variant {
   Unit,
@@ -280,6 +264,7 @@ pub enum Error {
   UnterminatedStr(Location),
   UnterminatedChar(Location),
   UnterminatedComment(Location),
+  InvalidChar(Location),
   UnexpectedToken(Location),
   UnexpectedEndOfFile(Location)
 }
@@ -314,6 +299,7 @@ impl fmt::Display for Error {
       Error::UnterminatedStr(location) => write!(fmt, "Error at {}: Unterminated string literal", location),
       Error::UnterminatedChar(location) => write!(fmt, "Error at {}: Unterminated character literal", location),
       Error::UnterminatedComment(location) => write!(fmt, "Error at {}: Unterminated block comment", location),
+      Error::InvalidChar(location) => write!(fmt, "Error at {}: Invalid char literal", location),
       Error::UnexpectedToken(location) => write!(fmt, "Error at {}: Unexpected token", location),
       Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location)
     }
