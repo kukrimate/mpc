@@ -456,15 +456,42 @@ impl<'a> CheckCtx<'a> {
       Path(path) => {
         self.inst_as_lvalue(path)?
       }
+      Arr(elements) => {
+        let elem_ty = self.tctx.tvar(Ty::BoundAny);
+        let elements = elements.iter()
+          .map(|element| self.infer_rvalue(element))
+          .monadic_collect()?;
+        for element in elements.iter() {
+          self.tctx.unify(&elem_ty, element.ty())?;
+        }
+        LValue::ArrayLit {
+          ty: Ty::Arr(elements.len(), Box::new(elem_ty)),
+          is_mut: IsMut::No,
+          elements
+        }
+      }
       Str(val) => {
         let ty = Ty::Arr(val.len(), Box::new(self.tctx.tvar(Ty::BoundInt)));
-        LValue::Str { ty, is_mut: IsMut::No, val: val.clone() }
+        LValue::StrLit { ty, is_mut: IsMut::No, val: val.clone() }
       }
       Dot(arg, name) => {
         self.infer_dot(arg, *name)?
       }
       Index(arg, idx) => {
         self.infer_index(arg, idx)?
+      }
+      Call(called, args) => {
+        if let Some((name, ty, params)) = self.check_struct_ctor(called) {
+          let fields = self.infer_args(&params, args)?;
+          LValue::StructLit {
+            ty,
+            is_mut: IsMut::No,
+            name,
+            fields
+          }
+        } else {
+          return Err(Box::new(TypeError(format!("Expected lvalue instead of {:?}", expr))))
+        }
       }
       Ind(arg) => {
         self.infer_ind(arg)?
@@ -504,6 +531,7 @@ impl<'a> CheckCtx<'a> {
     }
   }
 
+  /// Infer the type of a member access expression
   fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValue> {
     // Infer argument type
     let arg = self.infer_lvalue(arg)?;
@@ -549,6 +577,7 @@ impl<'a> CheckCtx<'a> {
     Err(Box::new(TypeError(format!("Type {:?} has no field named {}", arg.ty(), name))))
   }
 
+  /// Infer the type of an array index expression
   fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValue> {
     // Infer array type
     let arg = self.infer_lvalue(arg)?;
@@ -572,6 +601,7 @@ impl<'a> CheckCtx<'a> {
     })
   }
 
+  /// Infer the type of a pointer indirection expression
   fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<LValue> {
     // Infer pointer type
     let arg = self.infer_rvalue(arg)?;
@@ -591,6 +621,25 @@ impl<'a> CheckCtx<'a> {
     })
   }
 
+  /// Check whether or not `expr` is a struct constructor in the current context
+  fn check_struct_ctor(&mut self, expr: &parse::Expr) -> Option<(RefStr, Ty, Vec<(RefStr, Ty)>)> {
+    if let parse::Expr::Path(path) = expr {
+      // FIXME: we might need to infer type arguments
+      if let Ok(ty) = self.inst_as_ty(path, vec![]) {
+        if let Ty::Inst(name, id) = &ty {
+          if let Inst::Struct { params, .. } = self.insts.get(id).unwrap() {
+            return Some((*name, ty, params.clone().unwrap()))
+          } else {
+            unreachable!()
+          }
+        } else {
+          unreachable!()
+        }
+      }
+    }
+    None
+  }
+
   /// Infer the semantic form of an expression in an rvalue context
   fn infer_rvalue(&mut self, expr: &parse::Expr) -> MRes<RValue> {
     use parse::Expr::*;
@@ -602,7 +651,7 @@ impl<'a> CheckCtx<'a> {
       Path(path) => {
         self.inst_as_rvalue(path)?
       }
-      Str(..) | Dot(..) | Index(..) | Ind(..) => {
+      Arr(..) | Str(..) | Dot(..) | Index(..) | Ind(..) => {
         let arg = self.infer_lvalue(expr)?;
         RValue::Load {
           ty: arg.ty().clone(),
@@ -611,19 +660,6 @@ impl<'a> CheckCtx<'a> {
       }
       CStr(val) => {
         RValue::CStr { ty: Ty::Ptr(IsMut::No, Box::new(Ty::Int8)), val: val.clone() }
-      }
-      Arr(elements) => {
-        let elem_ty = self.tctx.tvar(Ty::BoundAny);
-        let elements = elements.iter()
-          .map(|element| self.infer_rvalue(element))
-          .monadic_collect()?;
-        for element in elements.iter() {
-          self.tctx.unify(&elem_ty, element.ty())?;
-        }
-        RValue::ArrayLit {
-          ty: Ty::Arr(elements.len(), Box::new(elem_ty)),
-          elements
-        }
       }
       Bool(val) => {
         RValue::Bool { ty: Ty::Bool, val: *val }
@@ -637,8 +673,22 @@ impl<'a> CheckCtx<'a> {
       Char(val) => {
         RValue::Char { ty: self.tctx.tvar(Ty::BoundInt), val: val.clone() }
       }
-      Call(arg, args) => {
-        self.infer_call(arg, args)?
+      Call(called, args) => {
+        if let Some((name, ty, params)) = self.check_struct_ctor(called) {
+          let fields = self.infer_args(&params, args)?;
+          let arg = LValue::StructLit {
+            ty,
+            is_mut: IsMut::No,
+            name,
+            fields
+          };
+          RValue::Load {
+            ty: arg.ty().clone(),
+            arg: Box::new(arg)
+          }
+        } else {
+          self.infer_call(called, args) ?
+        }
       }
       Adr(arg) => {
         let arg = self.infer_lvalue(arg)?;
@@ -897,24 +947,6 @@ impl<'a> CheckCtx<'a> {
   }
 
   fn infer_call(&mut self, called: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
-    // Check for struct literal
-    if let parse::Expr::Path(path) = called {
-      // FIXME: we might need to infer type arguments
-      if let Ok(ty) = self.inst_as_ty(path, vec![]) {
-        // Infer fields
-        let params = self.get_struct_params(&ty);
-        if params.len() != args.len() {
-          return Err(Box::new(TypeError(format!("Wrong number of fields for {}", path.last().unwrap()))))
-        }
-
-        return Ok(RValue::StructLit {
-          ty,
-          name: *path.last().unwrap(),
-          fields: self.infer_args(&params, args)?
-        })
-      }
-    }
-
     // Infer function type
     let called_expr = self.infer_rvalue(called)?;
 
@@ -940,18 +972,6 @@ impl<'a> CheckCtx<'a> {
       arg: Box::new(called_expr),
       args
     })
-  }
-
-  fn get_struct_params(&self, ty: &Ty) -> Vec<(RefStr, Ty)> {
-    if let Ty::Inst(_, id) = ty {
-      if let Inst::Struct { params, .. } = self.insts.get(id).unwrap() {
-        params.as_ref().unwrap().clone()
-      } else {
-        unreachable!()
-      }
-    } else {
-      unreachable!()
-    }
   }
 
   fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, parse::Expr)]) -> MRes<Vec<(RefStr, RValue)>> {

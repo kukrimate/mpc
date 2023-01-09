@@ -146,9 +146,11 @@ enum LValue {
   DataRef   { ty: Ty, is_mut: IsMut, name: RefStr, id: DefId },
   ParamRef  { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
   LetRef    { ty: Ty, is_mut: IsMut, name: RefStr, id: LocalId },
-  Str       { ty: Ty, is_mut: IsMut, val: Vec<u8> },
+  StrLit    { ty: Ty, is_mut: IsMut, val: Vec<u8> },
+  ArrayLit  { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
+  StructLit { ty: Ty, is_mut: IsMut, name: RefStr, fields: Vec<(RefStr, RValue)> },
   StruDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
-  UnionDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr },
+  UnionDot  { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
   Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
 }
@@ -157,8 +159,6 @@ enum RValue {
   Null      { ty: Ty },
   FuncRef   { ty: Ty, name: RefStr, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
-  ArrayLit  { ty: Ty, elements: Vec<RValue> },
-  StructLit { ty: Ty, name: RefStr, fields: Vec<(RefStr, RValue)> },
   Load      { ty: Ty, arg: Box<LValue> },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
@@ -190,9 +190,11 @@ impl LValue {
       LValue::DataRef   { ty, .. } => ty,
       LValue::ParamRef  { ty, .. } => ty,
       LValue::LetRef    { ty, .. } => ty,
-      LValue::Str       { ty, .. } => ty,
+      LValue::StrLit    { ty, .. } => ty,
+      LValue::ArrayLit  { ty, .. } => ty,
+      LValue::StructLit { ty, .. } => ty,
       LValue::StruDot   { ty, .. } => ty,
-      LValue::UnionDot   { ty, .. } => ty,
+      LValue::UnionDot  { ty, .. } => ty,
       LValue::Index     { ty, .. } => ty,
       LValue::Ind       { ty, .. } => ty,
     }
@@ -203,7 +205,9 @@ impl LValue {
       LValue::DataRef   { is_mut, .. }  => *is_mut,
       LValue::ParamRef  { is_mut, .. }  => *is_mut,
       LValue::LetRef    { is_mut, .. }  => *is_mut,
-      LValue::Str       { is_mut, .. }  => *is_mut,
+      LValue::StrLit    { is_mut, .. }  => *is_mut,
+      LValue::ArrayLit  { is_mut, .. }  => *is_mut,
+      LValue::StructLit { is_mut, .. }  => *is_mut,
       LValue::StruDot   { is_mut, .. }  => *is_mut,
       LValue::UnionDot  { is_mut, .. }  => *is_mut,
       LValue::Index     { is_mut, .. }  => *is_mut,
@@ -218,8 +222,6 @@ impl RValue {
       RValue::Null      { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
       RValue::CStr      { ty, .. } => ty,
-      RValue::ArrayLit  { ty, .. } => ty,
-      RValue::StructLit { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
@@ -255,7 +257,20 @@ impl fmt::Debug for LValue {
       LValue::LetRef { name, .. } => {
         write!(f, "{}", name)
       }
-      LValue::Str { val, .. } => {
+      LValue::StructLit { name, fields, .. } => {
+        write!(f, "{}", name)?;
+        write_comma_separated(f, fields.iter(), |f, field| {
+          write!(f, "{:?}", field)
+        })
+      }
+      LValue::ArrayLit { elements, .. } => {
+        write!(f, "[")?;
+        write_comma_separated(f, elements.iter(), |f, element| {
+          write!(f, "{:?}", element)
+        })?;
+        write!(f, "]")
+      }
+      LValue::StrLit { val, .. } => {
         write!(f, "s{:?}", val)
       }
       LValue::StruDot { arg, name, .. } |
@@ -283,19 +298,6 @@ impl fmt::Debug for RValue {
       }
       RValue::CStr { val, .. } => {
         write!(f, "c{:?}", val)
-      }
-      RValue::StructLit { name, fields, .. } => {
-        write!(f, "{}", name)?;
-        write_comma_separated(f, fields.iter(), |f, field| {
-          write!(f, "{:?}", field)
-        })
-      }
-      RValue::ArrayLit { elements, .. } => {
-        write!(f, "[")?;
-        write_comma_separated(f, elements.iter(), |f, element| {
-          write!(f, "{:?}", element)
-        })?;
-        write!(f, "]")
       }
       RValue::Load { arg, .. } => {
         write!(f, "{:?}", arg)

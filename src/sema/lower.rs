@@ -29,7 +29,7 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::LetRef { id, .. } => {
       ctx.get_local(*id)
     }
-    LValue::Str { val, .. } => {
+    LValue::StrLit { val, .. } => {
       ctx.build_string_lit(val)
     }
     LValue::StruDot { arg, idx, .. } => {
@@ -47,6 +47,9 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     }
     LValue::Ind { arg, .. } => {
       lower_const_rvalue(arg, ctx)
+    }
+    _ => {
+      unreachable!()
     }
   }
 }
@@ -120,8 +123,20 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::LetRef { id, .. }   => {
       ctx.get_local(*id)
     }
-    LValue::Str { val, .. } => {
+    LValue::StrLit { val, .. } => {
       ctx.build_string_lit(val)
+    }
+    LValue::ArrayLit { ty, elements, .. } => {
+      let elements: Vec<LLVMValueRef> = elements.iter()
+        .map(|element| lower_rvalue(element, ctx))
+        .collect();
+      ctx.build_array_lit(ty, &elements)
+    }
+    LValue::StructLit { ty, fields, .. } => {
+      let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
+        .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
+        .collect();
+      ctx.build_struct_lit(ty, &fields)
     }
     LValue::StruDot { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -153,18 +168,6 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::CStr { ty,  val } => {
       let l_addr = ctx.build_string_lit(val);
       ctx.build_bitcast(ty, l_addr)
-    }
-    RValue::ArrayLit { ty, elements } => {
-      let elements: Vec<LLVMValueRef> = elements.iter()
-        .map(|element| lower_rvalue(element, ctx))
-        .collect();
-      ctx.build_array_lit(ty, &elements)
-    }
-    RValue::StructLit { ty, fields, .. } => {
-      let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
-        .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
-        .collect();
-      ctx.build_struct_lit(ty, &fields)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
