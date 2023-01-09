@@ -196,7 +196,7 @@ MulExpr: Expr = {
 
 CastExpr: Expr = {
   PreExpr,
-  //<expr:CastExpr> "as" <ty:TypeName> => Expr::Cast(Box::new(expr), ty),
+  <expr:CastExpr> "as" "<" <ty:TypeName> ">" => Expr::Cast(Box::new(expr), ty),
 };
 
 PreExpr: Expr = {

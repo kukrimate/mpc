@@ -554,7 +554,8 @@ impl<'a> CheckCtx<'a> {
     let arg = self.infer_lvalue(arg)?;
 
     // Find element type
-    let elem_ty = match arg.ty() {
+    let ty = self.tctx.lit_ty(arg.ty());
+    let elem_ty = match &ty {
       Ty::Arr(_, elem_ty) => &**elem_ty,
       _ => return Err(Box::new(TypeError(format!("Cannot index type {:?}", arg.ty()))))
     };
@@ -576,7 +577,8 @@ impl<'a> CheckCtx<'a> {
     let arg = self.infer_rvalue(arg)?;
 
     // Find base type
-    let (is_mut, base_ty) = match arg.ty() {
+    let ty = self.tctx.lit_ty(arg.ty());
+    let (is_mut, base_ty) = match &ty {
       Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
       _ => return Err(Box::new(
         TypeError(format!("Cannot dereference type {:?}", arg.ty()))))
@@ -658,8 +660,11 @@ impl<'a> CheckCtx<'a> {
         self.tctx.unify(&Ty::Bool, arg.ty())?;
         RValue::LNot { ty: Ty::Bool, arg: Box::new(arg) }
       }
-      Cast(..) => {
-        todo!()
+      Cast(arg, ty) => {
+        let arg = self.infer_rvalue(arg)?;
+        let ty = self.infer_ty(ty)?;
+        // FIXME: actually check if the type conversion is valid or not
+        RValue::Cast { ty, arg: Box::new(arg) }
       }
       Bin(op, lhs, rhs) => {
         let lhs = self.infer_rvalue(lhs)?;
@@ -914,7 +919,8 @@ impl<'a> CheckCtx<'a> {
     let called_expr = self.infer_rvalue(called)?;
 
     // Find parameter list and return type
-    let (params, va, ret_ty) = match called_expr.ty() {
+    let called_ty = self.tctx.lit_ty(called_expr.ty());
+    let (params, va, ret_ty) = match &called_ty {
       Ty::Func(params, va, ret_ty) => (params, *va, &**ret_ty),
       _ => return Err(Box::new(TypeError(format!("Cannot call type {:?}", called_expr.ty()))))
     };

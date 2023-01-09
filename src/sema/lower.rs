@@ -31,7 +31,7 @@ unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     }
     LValue::UnionDot { ty, arg, .. } => {
       let addr = lower_const_lvalue(arg, ctx);
-      ctx.build_const_bitcast(ty, addr)
+      ctx.build_const_ptrbitcast(ty, addr)
     }
     LValue::Index { arg, idx, .. } => {
       let addr = lower_const_lvalue(arg, ctx);
@@ -52,8 +52,9 @@ unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
     }
-    RValue::CStr { val, .. } => {
-      ctx.build_string_lit(val)
+    RValue::CStr { ty, val } => {
+      let l_addr = ctx.build_string_lit(val);
+      ctx.build_const_bitcast(ty, l_addr)
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)
@@ -121,7 +122,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     }
     LValue::UnionDot { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
-      ctx.build_bitcast(ty, addr)
+      ctx.build_ptrbitcast(ty, addr)
     }
     LValue::Index { arg, idx, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -142,20 +143,21 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
     }
-    RValue::CStr { val, .. } => {
-      ctx.build_string_lit(val)
+    RValue::CStr { ty,  val } => {
+      let l_addr = ctx.build_string_lit(val);
+      ctx.build_bitcast(ty, l_addr)
     }
     RValue::ArrayLit { ty, elements } => {
       let elements: Vec<LLVMValueRef> = elements.iter()
         .map(|element| lower_rvalue(element, ctx))
         .collect();
-      ctx.build_array(ty, &elements)
+      ctx.build_array_lit(ty, &elements)
     }
     RValue::StructLit { ty, fields, .. } => {
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
         .map(|(_, field)| (field.ty().clone(), lower_rvalue(field, ctx)))
         .collect();
-      ctx.build_struct(ty, &fields)
+      ctx.build_struct_lit(ty, &fields)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -191,8 +193,9 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let arg = lower_rvalue(arg, ctx);
       ctx.build_lnot(arg)
     }
-    RValue::Cast { .. } => {
-      todo!() // TODO
+    RValue::Cast { ty, arg } => {
+      let l_arg = lower_rvalue(arg, ctx);
+      ctx.build_cast(ty, arg.ty(), l_arg)
     }
     RValue::Bin { op, lhs, rhs, .. } => {
       let l_lhs = lower_rvalue(lhs, ctx);
@@ -252,6 +255,10 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Return { arg, .. } => {
       let l_retval = lower_rvalue(&*arg, ctx);
       ctx.build_ret(l_retval);
+      // Throw away code until next useful location
+      let dead_block = ctx.new_block();
+      ctx.enter_block(dead_block);
+      // Void value
       ctx.build_void()
     }
     RValue::Let { id, init, .. } => {
@@ -498,11 +505,7 @@ impl<'a> LowerCtx<'a> {
         LLVMPointerType(self.lower_ty(base_ty), 0)
       }
       Func(params, va, ret_ty) => {
-        let mut l_params = self.lower_params(params);
-        LLVMFunctionType(self.lower_ty(ret_ty),
-                         l_params.get_unchecked_mut(0) as _,
-                         l_params.len() as u32,
-                         *va as _)
+        LLVMPointerType(self.lower_func_ty(params, *va, ret_ty), 0)
       }
       Arr(siz, elem_ty) => {
         LLVMArrayType(self.lower_ty(elem_ty), *siz as u32)
@@ -514,6 +517,14 @@ impl<'a> LowerCtx<'a> {
       }
       _ => unreachable!()
     }
+  }
+
+  unsafe fn lower_func_ty(&mut self, params: &Vec<(RefStr, Ty)>, va: bool, ret_ty: &Ty) -> LLVMTypeRef {
+    let mut l_params = self.lower_params(params);
+    LLVMFunctionType(self.lower_ty(ret_ty),
+                                  l_params.get_unchecked_mut(0) as _,
+                                  l_params.len() as u32,
+                                  va as _)
   }
 
   unsafe fn lower_union(&mut self, l_params: Vec<LLVMTypeRef>) -> Vec<LLVMTypeRef> {
@@ -642,7 +653,8 @@ impl<'a> LowerCtx<'a> {
       let val = LLVMAddGlobal(l_module,
                               LLVMArrayType(
                                 LLVMInt8TypeInContext(l_context),
-                                len),
+                                // NOTE: +1 for NUL terminator
+                                len + 1),
                               name.borrow_c());
 
       // Set initializer
@@ -683,6 +695,11 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn build_const_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
+    let l_type = self.lower_ty(ty);
+    LLVMConstBitCast(l_addr, l_type)
+  }
+
+  unsafe fn build_const_ptrbitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
     let l_type = LLVMPointerType(self.lower_ty(ty), 0);
     LLVMConstBitCast(l_addr, l_type)
   }
@@ -893,7 +910,7 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn build_array(&mut self, ty: &Ty, elements: &[LLVMValueRef]) -> LLVMValueRef {
+  unsafe fn build_array_lit(&mut self, ty: &Ty, elements: &[LLVMValueRef]) -> LLVMValueRef {
     let l_storage = self.build_alloca(RefStr::new(""), ty);
     let elem_ty = if let Ty::Arr(_cnt, elem_ty) =
       self.tctx.lit_ty(ty) { *elem_ty } else { unreachable!() };
@@ -904,7 +921,7 @@ impl<'a> LowerCtx<'a> {
     l_storage
   }
 
-  unsafe fn build_struct(&mut self, ty: &Ty, fields: &[(Ty, LLVMValueRef)]) -> LLVMValueRef {
+  unsafe fn build_struct_lit(&mut self, ty: &Ty, fields: &[(Ty, LLVMValueRef)]) -> LLVMValueRef {
     let l_storage = self.build_alloca(RefStr::new(""), ty);
     for (idx, (ty, l_val)) in fields.iter().enumerate() {
       let l_addr = self.build_gep(l_storage, idx);
@@ -927,6 +944,11 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn build_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
+    let l_type = self.lower_ty(ty);
+    LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
+  }
+
+  unsafe fn build_ptrbitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
     let l_type = LLVMPointerType(self.lower_ty(ty), 0);
     LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
   }
@@ -969,6 +991,73 @@ impl<'a> LowerCtx<'a> {
       }
       (Not, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
         LLVMBuildNot(self.l_builder, l_arg, empty_cstr())
+      }
+      _ => unreachable!()
+    }
+  }
+
+  unsafe fn build_cast(&mut self, dest_ty: &Ty, src_ty: &Ty, l_val: LLVMValueRef) -> LLVMValueRef {
+    use Ty::*;
+
+    let dest_ty = self.tctx.lit_ty(dest_ty);
+    let src_ty = self.tctx.lit_ty(src_ty);
+
+    if dest_ty == src_ty { // Nothing to cast
+      return l_val
+    }
+
+    let l_dest_type = self.lower_ty(&dest_ty);
+    let l_src_type = self.lower_ty(&src_ty);
+
+    match (&dest_ty, &src_ty) {
+      // Pointer to integer
+      (Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn, Ptr(..)) => {
+        LLVMBuildPtrToInt(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // Integer to pointer
+      (Ptr(..), Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn) => {
+        LLVMBuildIntToPtr(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // Truncate double to float
+      (Float, Double) => {
+        LLVMBuildFPTrunc(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // Extend float to double
+      (Double, Float) => {
+        LLVMBuildFPExt(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // unsigned integer to floating point
+      (Float|Double, Uint8|Uint16|Uint32|Uint64|Uintn) => {
+        LLVMBuildUIToFP(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // signed integer to floating point
+      (Float|Double, Int8|Int16|Int32|Int64|Intn) => {
+        LLVMBuildSIToFP(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // floating point to unsigned integer
+      (Uint8|Uint16|Uint32|Uint64|Uintn, Float|Double) => {
+        LLVMBuildFPToUI(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // floating point to signed integer
+      (Int8|Int16|Int32|Int64|Intn, Float|Double) => {
+        LLVMBuildFPToSI(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
+      // integer to integer conversions
+      (Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn,
+          Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn) => {
+        let dest_size = self.size_of(l_dest_type);
+        let src_size = self.size_of(l_src_type);
+        if dest_size == src_size {  // LLVM disregards signedness, so nothing to do
+          return l_val
+        } else if dest_size < src_size {
+          LLVMBuildTrunc(self.l_builder, l_val, l_dest_type, empty_cstr())
+        } else {
+          // Choose sign or zero extension based on destination type
+          match &dest_ty {
+            Int8|Int16|Int32|Int64|Intn => LLVMBuildSExt(self.l_builder, l_val, l_dest_type, empty_cstr()),
+            _ => LLVMBuildZExt(self.l_builder, l_val, l_dest_type, empty_cstr())
+          }
+        }
       }
       _ => unreachable!()
     }
@@ -1117,7 +1206,13 @@ impl<'a> LowerCtx<'a> {
         }
         Inst::Func { name, ty, .. } |
         Inst::ExternFunc { name, ty, .. } => {
-          LLVMAddFunction(self.l_module, name.borrow_c(), self.lower_ty(ty))
+          if let Ty::Func(params, va, ret_ty) = ty {
+            LLVMAddFunction(self.l_module,
+                            name.borrow_c(),
+                            self.lower_func_ty(params, *va, ret_ty))
+          } else {
+            unreachable!()
+          }
         }
         _ => continue
       };
@@ -1149,7 +1244,7 @@ impl<'a> LowerCtx<'a> {
               LocalDef::Param { name, ty, index, .. } => {
                 let l_alloca = self.build_alloca(*name, ty);
                 let l_param = LLVMGetParam(self.l_func, *index as u32);
-                self.build_store(ty, l_alloca, l_param);
+                // self.build_store(ty, l_alloca, l_param);
                 l_alloca
               }
 

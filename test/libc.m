@@ -1,9 +1,10 @@
 extern {
   function atoi(str: *Int8) -> Int32
 
-  // Random generation
-  function srand(seed: Uint32)
+  // stdlib.h
+  function abort()
   function rand() -> Int32
+  function srand(seed: Uint32)
 
   // string.h
   function memcpy(dest: *Uint8, src: *Uint8, len: Uintn) -> *Uint8

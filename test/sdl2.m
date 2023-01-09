@@ -1,5 +1,5 @@
 //
-// (Hackish) SDL2 bindings for Maple
+// (Hackish, incomplete) SDL2 bindings for Maple
 // This is enough to compile the "bricks" example game
 // Copyright (C) Mate Kukri, 2023
 //
@@ -26,6 +26,8 @@ const SDL_INIT_EVERYTHING     : Uint32 =
   sdl2::SDL_INIT_GAMECONTROLLER |
   sdl2::SDL_INIT_SENSOR
 
+const SDL_WINDOWPOS_CENTERED  : Uint32 = 0x2fff0000
+
 const IMG_INIT_JPG            : Int32 = 0x00000001
 const IMG_INIT_PNG            : Int32 = 0x00000002
 const IMG_INIT_TIF            : Int32 = 0x00000004
@@ -34,8 +36,41 @@ const IMG_INIT_WEBP           : Int32 = 0x00000008
 struct SDL_Window()
 struct SDL_Renderer()
 struct SDL_Texture()
-struct SDL_Event()
-struct SDL_Rect()
+
+struct SDL_Rect (
+  x: Int32,
+  y: Int32,
+  w: Int32,
+  h: Int32
+)
+
+const SDL_QUIT                : Int32 = 0x100
+const SDL_KEYDOWN             : Int32 = 0x300
+const SDL_KEYUP               : Int32 = 0x301
+
+union SDL_Event (
+  type: Uint32,
+  key: sdl2::SDL_KeyboardEvent,
+  padding: [56]Uint8
+)
+
+struct SDL_KeyboardEvent (
+  type      : Uint32,
+  timestamp : Uint32,
+  windowID  : Uint32,
+  state     : Uint8,
+  repeat    : Uint8,
+  padding2  : Uint8,
+  padding3  : Uint8,
+  keysym    : sdl2::SDL_Keysym
+)
+
+struct SDL_Keysym (
+  scancode  : Int32,
+  sym       : Int32,
+  mod       : Uint16,
+  unused    : Uint32
+)
 
 extern {
   function SDL_Init(flags: Uint32) -> Int32
@@ -47,20 +82,20 @@ extern {
                             y: Int32,
                             w: Int32,
                             h: Int32,
-                            flags: Uint32) -> *mut SDL_Window
+                            flags: Uint32) -> *mut sdl2::SDL_Window
 
-  function SDL_DestroyWindow(window: *mut SDL_Window)
+  function SDL_DestroyWindow(window: *mut sdl2::SDL_Window)
 
-  function SDL_CreateRenderer(window: *mut SDL_Window,
+  function SDL_CreateRenderer(window: *mut sdl2::SDL_Window,
                               index: Int32,
-                              flags: Uint32) -> *mut SDL_Renderer
+                              flags: Uint32) -> *mut sdl2::SDL_Renderer
 
-  function SDL_DestroyRenderer(renderer: *mut SDL_Renderer)
+  function SDL_DestroyRenderer(renderer: *mut sdl2::SDL_Renderer)
 
   function SDL_GetTicks() -> Uint32
-  function SDL_PollEvent(event: *mut SDL_Event) -> Int32
+  function SDL_PollEvent(event: *mut sdl2::SDL_Event) -> Int32
 
-  function SDL_SetRenderDrawColor(renderer: *mut SDL_Renderer,
+  function SDL_SetRenderDrawColor(renderer: *mut sdl2::SDL_Renderer,
                                   r: Uint8,
                                   g: Uint8,
                                   b: Uint8,
@@ -71,17 +106,17 @@ extern {
                                   g: Uint8,
                                   b: Uint8) -> Int32
 
-  function SDL_RenderClear(renderer: *mut SDL_Renderer) -> Int32
-  function SDL_RenderCopy(renderer: *mut SDL_Renderer,
-                          texture: *mut SDL_Texture,
+  function SDL_RenderClear(renderer: *mut sdl2::SDL_Renderer) -> Int32
+  function SDL_RenderCopy(renderer: *mut sdl2::SDL_Renderer,
+                          texture: *mut sdl2::SDL_Texture,
                           srcrect: *SDL_Rect,
                           dstrect: *SDL_Rect) -> Int32
 
-  function SDL_RenderPresent(renderer: *SDL_Renderer)
+  function SDL_RenderPresent(renderer: *mut sdl2::SDL_Renderer)
 
   function IMG_Init(flags: Int32) -> Int32
   function IMG_Quit()
 
-  function IMG_LoadTexture(renderer: *mut SDL_Renderer,
-                            file: *Int8) -> *mut SDL_Texture
+  function IMG_LoadTexture(renderer: *mut sdl2::SDL_Renderer,
+                            file: *Int8) -> *mut sdl2::SDL_Texture
 }
