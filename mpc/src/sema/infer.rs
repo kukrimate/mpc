@@ -155,7 +155,7 @@ impl<'a> CheckCtx<'a> {
       name: def.name,
       ty: ty.clone(),
       is_mut: def.is_mut,
-      init
+      init: consteval(&init)?
     });
 
     Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
@@ -354,69 +354,14 @@ impl<'a> CheckCtx<'a> {
                  false,Box::new(self.infer_ty(ret_ty)?))
       },
       Arr(elem_cnt_expr, elem_ty) => {
-        let elem_cnt = self.consteval(elem_cnt_expr)?;
-        if elem_cnt < 0 {
-          Err(Box::new(TypeError(format!("Negative array element count {:?}", elem_cnt_expr))))?
-        }
-        Ty::Arr(elem_cnt as usize, Box::new(self.infer_ty(elem_ty)?))
+        let elem_cnt = self.infer_rvalue(elem_cnt_expr)
+          .and_then(|rvalue| consteval_index(&rvalue))?;
+        Ty::Arr(elem_cnt, Box::new(self.infer_ty(elem_ty)?))
       },
       Tuple(params) => {
         Ty::Tuple(self.infer_params(params)?)
       }
     })
-  }
-
-  /// Evaluate a constant expression
-  fn consteval(&self, expr: &parse::Expr) -> MRes<isize> {
-    use parse::Expr::*;
-    'error: loop {
-      return Ok(match expr {
-        Path(path) => {
-          match self.lookup(path)? {
-            Sym::Def(def_id) => {
-              match self.parsed_def(def_id) {
-                parse::Def::Const(def) => {
-                  self.consteval(&def.val)?
-                }
-                _ => break 'error,
-              }
-            }
-            _ => break 'error,
-          }
-        }
-        Int(val) => {
-          *val as isize
-        }
-        Un(op, arg) => {
-          let arg = self.consteval(&*arg)?;
-          match op {
-            UnOp::Not => !arg,
-            UnOp::UMinus => -arg,
-            UnOp::UPlus => arg
-          }
-        }
-        Bin(op, lhs, rhs) => {
-          let lhs = self.consteval(&*lhs)?;
-          let rhs = self.consteval(&*rhs)?;
-          match op {
-            BinOp::Mul => lhs * rhs,
-            BinOp::Div => lhs / rhs,
-            BinOp::Mod => lhs % rhs,
-            BinOp::Add => lhs + rhs,
-            BinOp::Sub => lhs - rhs,
-            BinOp::Lsh => lhs << rhs,
-            BinOp::Rsh => lhs >> rhs,
-            BinOp::And => lhs & rhs,
-            BinOp::Xor => lhs ^ rhs,
-            BinOp::Or => lhs | rhs,
-            _ => break 'error,
-          }
-        }
-        _ => break 'error,
-      })
-    }
-
-    Err(Box::new(TypeError(format!("Invalid array size {:?}", expr))))
   }
 
   /// Lookup a definition and instantiate it as a type

@@ -15,9 +15,9 @@ function fib<T>(n: Uintn) -> T {
 }
 
 function main() -> Int32 {
-  /*let i: Int32 = */ add(a: 1, b: 2);
-//   libc::printf(c"%d\n", i);
-//   let j: Int32 = fib(n: 5);
-//   libc::printf(c"%d\n", j);
+  let i: Int32 = add(a: 1, b: 2);
+  libc::printf(c"%d\n", i);
+  let j: Int32 = fib(n: 5);
+  libc::printf(c"%d\n", j);
   0
 }

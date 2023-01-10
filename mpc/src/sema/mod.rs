@@ -15,7 +15,10 @@ use std::error;
 use std::fmt::{self, Write};
 
 mod tctx;
+mod consteval;
+
 use tctx::*;
+use consteval::*;
 
 /// Definitions
 
@@ -25,7 +28,7 @@ enum Inst {
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
   Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
-  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: RValue },
+  Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: ConstVal },
   ExternFunc  { name: RefStr, ty: Ty },
   ExternData  { name: RefStr, ty: Ty, is_mut: IsMut },
 }
@@ -384,10 +387,10 @@ mod lower;
 pub fn compile(repo: &parse::Repository, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
   let mut tctx = TVarCtx::new();
   let insts = infer::infer(repo, &mut tctx)?;
-  eprintln!("{:#?}", insts);
-  eprintln!("{:#?}", tctx);
-
+  if let Some(_) = option_env!("MPC_SPEW") {
+    eprintln!("{:#?}", insts);
+    eprintln!("{:#?}", tctx);
+  }
   lower::lower_module(&mut tctx, &insts, output_path, compile_to)?;
-
   Ok(())
 }

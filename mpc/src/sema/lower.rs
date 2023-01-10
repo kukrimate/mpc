@@ -18,98 +18,51 @@ enum Semantics {
   Addr
 }
 
-/// Constant expressions
+/// Constant values
 
-unsafe fn lower_const_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
-  match lvalue {
-    LValue::DataRef { id, .. } => {
-      ctx.get_value(&(*id, vec![]))
+unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
+  use ConstVal::*;
+  match val {
+    FuncPtr { id } => ctx.get_value(id),
+    DataPtr { ptr } => lower_const_ptr(ptr, ctx),
+    BoolLit { val } => ctx.build_bool(*val),
+    IntLit { ty, val } => ctx.build_int(ty, *val as usize),
+    FltLit { ty, val } => ctx.build_flt(ty, *val),
+    ArrLit { ty, vals } => {
+      let mut vals: Vec<Val> = vals
+        .iter()
+        .map(|val| lower_const_val(val, ctx))
+        .collect();
+      LLVMConstArray(ctx.lower_ty(ty), vals.as_mut_ptr(), vals.len() as _)
     }
-    LValue::ParamRef { id, .. } |
-    LValue::LetRef { id, .. } => {
-      ctx.get_local(*id)
+    StructLit { ty, vals } => {
+      let mut vals: Vec<Val> = vals
+        .iter()
+        .map(|val| lower_const_val(val, ctx))
+        .collect();
+      LLVMConstNamedStruct(ctx.lower_ty(ty), vals.as_mut_ptr(), vals.len() as _)
     }
-    LValue::StrLit { val, .. } => {
-      ctx.build_string_lit(val)
-    }
-    LValue::StruDot { arg, idx, .. } => {
-      let addr = lower_const_lvalue(arg, ctx);
-      ctx.build_const_gep(addr, *idx)
-    }
-    LValue::UnionDot { ty, arg, .. } => {
-      let addr = lower_const_lvalue(arg, ctx);
-      ctx.build_const_ptrbitcast(ty, addr)
-    }
-    LValue::Index { arg, idx, .. } => {
-      let addr = lower_const_lvalue(arg, ctx);
-      let idx = lower_const_rvalue(idx, ctx);
-      ctx.build_const_index(addr, idx)
-    }
-    LValue::Ind { arg, .. } => {
-      lower_const_rvalue(arg, ctx)
-    }
-    _ => {
-      unreachable!()
+    CStrLit { val } => {
+      let ty = Ty::Ptr(IsMut::No, Box::new(Ty::Int8));
+      let val = ctx.build_string_lit(val);
+      ctx.build_const_bitcast(&ty, val)
     }
   }
 }
 
-unsafe fn lower_const_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
-  match rvalue {
-    RValue::Null { .. } => {
-      ctx.build_void()
-    }
-    RValue::FuncRef { id, .. } => {
-      ctx.get_value(id)
-    }
-    RValue::CStr { ty, val } => {
-      let l_addr = ctx.build_string_lit(val);
-      ctx.build_const_bitcast(ty, l_addr)
-    }
-    RValue::Bool { val, .. } => {
-      ctx.build_bool(*val)
-    }
-    RValue::Int { ty, val, .. } => {
-      ctx.build_int(ty, *val)
-    }
-    RValue::Flt { ty, val, .. } => {
-      ctx.build_flt(ty, *val)
-    }
-    RValue::Adr { arg, .. } => {
-      lower_const_lvalue(arg, ctx)
-    }
-    RValue::Un { op, arg, .. } => {
-      let l_arg = lower_const_rvalue(arg, ctx);
-      ctx.build_const_un(arg.ty(), *op, l_arg)
-    }
-    RValue::LNot { arg, .. } => {
-      let arg = lower_const_rvalue(arg, ctx);
-      ctx.build_const_lnot(arg)
-    }
-    RValue::Cast { .. } => {
-      todo!()
-    }
-    RValue::Bin { op, lhs, rhs, .. } => {
-      let l_lhs = lower_const_rvalue(lhs, ctx);
-      let l_rhs = lower_const_rvalue(rhs, ctx);
-      ctx.build_const_bin(lhs.ty(), *op, l_lhs, l_rhs)
-    }
-    RValue::LAnd { .. } => {
-      todo!() // TODO
-    }
-    RValue::LOr { .. } => {
-      todo!() // TODO
-    }
-    RValue::If { .. } => {
-      todo!() // TODO
-    }
-    _ => {
-      unreachable!()
+unsafe fn lower_const_ptr(ptr: &ConstPtr, ctx: &mut LowerCtx) -> Val {
+  match ptr {
+    ConstPtr::Data(id) => ctx.get_value(&(*id, vec![])),
+    ConstPtr::StrLit(val) => ctx.build_string_lit(val),
+    ConstPtr::ArrayElement(base, index) |
+    ConstPtr::StructField(base, index)=> {
+      let base_ptr = lower_const_ptr(base, ctx);
+      ctx.build_const_gep(base_ptr, *index)
     }
   }
 }
 
-/// Runtime expressions
+/// Expressions
 
 unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
@@ -733,179 +686,6 @@ impl<'a> LowerCtx<'a> {
     LLVMConstBitCast(l_addr, l_type)
   }
 
-  unsafe fn build_const_ptrbitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
-    let l_type = LLVMPointerType(self.lower_ty(ty), 0);
-    LLVMConstBitCast(l_addr, l_type)
-  }
-
-  unsafe fn build_const_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
-    let mut indices = [
-      LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
-      l_idx
-    ];
-    LLVMConstInBoundsGEP(l_addr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32)
-  }
-
-  unsafe fn build_const_un(&mut self, ty: &Ty, op: UnOp, arg: LLVMValueRef) -> LLVMValueRef {
-    use Ty::*;
-    use UnOp::*;
-
-    match (op, self.tctx.lit_ty(ty)) {
-      (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
-        arg
-      }
-      (UMinus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstNeg(arg)
-      }
-      (UMinus, Float | Double) => {
-        LLVMConstFNeg(arg)
-      }
-      (Not, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstNot(arg)
-      }
-      _ => unreachable!()
-    }
-  }
-
-  unsafe fn build_const_lnot(&mut self, l_arg: LLVMValueRef) -> LLVMValueRef {
-    if LLVMIsNull(l_arg) == 1 {
-      self.build_bool(true)
-    } else {
-      self.build_bool(false)
-    }
-  }
-
-  unsafe fn build_const_bin(&mut self, ty: &Ty, op: BinOp, lhs: LLVMValueRef, rhs: LLVMValueRef) -> LLVMValueRef {
-    use Ty::*;
-    use BinOp::*;
-
-    match (op, self.tctx.lit_ty(ty)) {
-      // Integer multiply
-      (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstMul(lhs, rhs)
-      }
-      // Floating point multiply
-      (Mul, Float | Double) => {
-        LLVMConstFMul(lhs, rhs)
-      }
-      // Unsigned integer divide
-      (Div, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstUDiv(lhs, rhs)
-      }
-      // Signed integer divide
-      (Div, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstSDiv(lhs, rhs)
-      }
-      // Floating point divide
-      (Div, Float | Double) => {
-        LLVMConstFDiv(lhs, rhs)
-      }
-      // Unsigned integer modulo
-      (Mod, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstURem(lhs, rhs)
-      }
-      // Signed integer modulo
-      (Mod, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstSRem(lhs, rhs)
-      }
-      // Integer addition
-      (Add, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstAdd(lhs, rhs)
-      }
-      // Floating point addition
-      (Add, Float | Double) => {
-        LLVMConstFAdd(lhs, rhs)
-      }
-      // Integer substraction
-      (Sub, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstSub(lhs, rhs)
-      }
-      // Floating point substraction
-      (Sub, Float | Double) => {
-        LLVMConstFSub(lhs, rhs)
-      }
-      // Left shift
-      (Lsh, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstShl(lhs, rhs)
-      }
-      // Unsigned (logical) right shift
-      (Rsh, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstLShr(lhs, rhs)
-      }
-      // Signed (arithmetic) right shift
-      (Rsh, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstAShr(lhs, rhs)
-      }
-      // Bitwise and
-      (And, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstAnd(lhs, rhs)
-      }
-      // Bitwise xor
-      (Xor, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstXor(lhs, rhs)
-      }
-      // Bitwise or
-      (Or, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstOr(lhs, rhs)
-      }
-      // Integer equality and inequality
-      (Eq, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstICmp(LLVMIntEQ, lhs, rhs)
-      }
-      (Ne, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
-        LLVMConstICmp(LLVMIntNE, lhs, rhs)
-      }
-      // Unsigned integer comparisons
-      (Lt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstICmp(LLVMIntULT, lhs, rhs)
-      }
-      (Gt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstICmp(LLVMIntUGT, lhs, rhs)
-      }
-      (Le, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstICmp(LLVMIntULE, lhs, rhs)
-      }
-      (Ge, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {
-        LLVMConstICmp(LLVMIntUGE, lhs, rhs)
-      }
-      // Signed integer comparisons
-      (Lt, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstICmp(LLVMIntSLT, lhs, rhs)
-      }
-      (Gt, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstICmp(LLVMIntSGT, lhs, rhs)
-      }
-      (Le, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstICmp(LLVMIntSLE, lhs, rhs)
-      }
-      (Ge, Int8 | Int16 | Int32 | Int64 | Intn) => {
-        LLVMConstICmp(LLVMIntSGE, lhs, rhs)
-      }
-      // Float Comparisons
-      (Eq, Float | Double) => {
-        LLVMConstFCmp(LLVMRealOEQ, lhs, rhs)
-      }
-      (Ne, Float | Double) => {
-        LLVMConstFCmp(LLVMRealONE, lhs, rhs)
-      }
-      (Lt, Float | Double) => {
-        LLVMConstFCmp(LLVMRealOLT, lhs, rhs)
-      }
-      (Gt, Float | Double) => {
-        LLVMConstFCmp(LLVMRealOGT, lhs, rhs)
-      }
-      (Le, Float | Double) => {
-        LLVMConstFCmp(LLVMRealOLE, lhs, rhs)
-      }
-      (Ge, Float | Double) => {
-        LLVMConstFCmp(LLVMRealOGE, lhs, rhs)
-      }
-      _ => unreachable!()
-    }
-  }
-
   unsafe fn new_block(&mut self) -> LLVMBasicBlockRef {
     assert!(!self.l_func.is_null());
     LLVMAppendBasicBlock(self.l_func, empty_cstr())
@@ -1326,7 +1106,7 @@ impl<'a> LowerCtx<'a> {
           let l_value = self.get_value(id);
 
           // Create LLVM initializer
-          LLVMSetInitializer(l_value, lower_const_rvalue(init, self));
+          LLVMSetInitializer(l_value, lower_const_val(init, self));
         }
         Inst::Func { locals, body: Some(body), .. } => {
           self.l_func = self.get_value(id);
@@ -1441,7 +1221,9 @@ pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>),
     let mut ctx = LowerCtx::new(tctx, RefStr::new(""));
     ctx.lower_ty_defs(insts);
     ctx.lower_defs(insts);
-    ctx.dump();
+    if let Some(_) = option_env!("MPC_SPEW") {
+      ctx.dump();
+    }
     match compile_to {
       CompileTo::LLVMIr => ctx.write_llvm_ir(path)?,
       CompileTo::Assembly => ctx.write_machine_code(true, path)?,
