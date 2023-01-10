@@ -1,3 +1,9 @@
+/*
+STDOUT
+11.100000
+END
+*/
+
 import libc
 
 function main() -> Int32 {

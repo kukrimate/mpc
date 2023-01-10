@@ -290,6 +290,7 @@ name = "mpc_test"
 version = "0.1.0"
 dependencies = [
  "mpc",
+ "regex",
 ]
 
 [[package]]

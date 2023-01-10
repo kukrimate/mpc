@@ -1,3 +1,9 @@
+/*
+STDOUT
+1 2
+END
+*/
+
 import libc
 
 struct Foo (i: Intn, j: Intn)

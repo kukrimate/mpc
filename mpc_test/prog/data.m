@@ -1,3 +1,11 @@
+/*
+STDOUT
+100 100
+4 4
+0
+END
+*/
+
 import libc
 
 data num: Int32 = 100

@@ -1,3 +1,9 @@
+/*STDOUT
+3
+5
+END
+*/
+
 import libc
 
 function add<T>(a: T, b: Int32) -> Int32 {

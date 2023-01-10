@@ -1,3 +1,9 @@
+/*
+STDOUT
+Hello World!
+END
+*/
+
 import libc
 
 function main() -> Int32 {
