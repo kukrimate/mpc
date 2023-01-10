@@ -162,7 +162,7 @@ impl<'a> CheckCtx<'a> {
   }
 
   fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<RValue> {
-    // Try to find exisiting instance first
+    // Try to find existing instance first
     if let Some(Inst::Func { ty, .. }) = self.insts.get(&id) {
       return Ok(RValue::FuncRef { ty: ty.clone(), id })
     }
@@ -540,7 +540,7 @@ impl<'a> CheckCtx<'a> {
 
     'error: loop {
       // Find parameter list
-      let ty = self.tctx.lit_ty(arg.ty());
+      let ty = self.tctx.lit_ty_nonrecusrive(arg.ty());
 
       let (is_stru, params) = match &ty {
         Ty::Inst(_, id) => match self.inst(id) {
@@ -585,7 +585,7 @@ impl<'a> CheckCtx<'a> {
     let arg = self.infer_lvalue(arg)?;
 
     // Find element type
-    let ty = self.tctx.lit_ty(arg.ty());
+    let ty = self.tctx.lit_ty_nonrecusrive(arg.ty());
     let elem_ty = match &ty {
       Ty::Arr(_, elem_ty) => &**elem_ty,
       _ => return Err(Box::new(TypeError(format!("Cannot index type {:?}", arg.ty()))))
@@ -609,7 +609,7 @@ impl<'a> CheckCtx<'a> {
     let arg = self.infer_rvalue(arg)?;
 
     // Find base type
-    let ty = self.tctx.lit_ty(arg.ty());
+    let ty = self.tctx.lit_ty_nonrecusrive(arg.ty());
     let (is_mut, base_ty) = match &ty {
       Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
       _ => return Err(Box::new(
@@ -950,7 +950,7 @@ impl<'a> CheckCtx<'a> {
     let called_expr = self.infer_rvalue(called)?;
 
     // Find parameter list and return type
-    let called_ty = self.tctx.lit_ty(called_expr.ty());
+    let called_ty = self.tctx.lit_ty_nonrecusrive(called_expr.ty());
     let (params, va, ret_ty) = match &called_ty {
       Ty::Func(params, va, ret_ty) => (params, *va, &**ret_ty),
       _ => return Err(Box::new(TypeError(format!("Cannot call type {:?}", called_expr.ty()))))

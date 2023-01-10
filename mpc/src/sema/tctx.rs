@@ -226,12 +226,26 @@ impl TVarCtx {
         // Obtain real type from its bound
         self.lit_ty(&self.tvars[root].clone())
       }
-      BoundAny => Ty::Tuple(vec![]),
-      BoundNum => Ty::Int32,
-      BoundInt => Ty::Int32,
-      BoundFlt => Ty::Float,
+      BoundAny => Tuple(vec![]),
+      BoundNum => Int32,
+      BoundInt => Int32,
+      BoundFlt => Float,
     }
   }
+
+  /// Literalize the outermost part of a type expression
+  pub(super) fn lit_ty_nonrecusrive(&mut self, ty: &Ty) -> Ty {
+    match ty {
+      Ty::TVar(idx) => {
+        // Find root element
+        let root = self.root(*idx);
+        // Obtain real type from its bound
+        self.lit_ty(&self.tvars[root].clone())
+      }
+      _ => ty.clone()
+    }
+  }
+
 
   pub(super) fn root_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
     type_args.iter().map(|ty| self.root_ty(ty)).collect()
