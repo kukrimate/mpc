@@ -231,26 +231,44 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       // Void value
       ctx.build_void()
     }
-    RValue::If { cond, tbody, ebody, .. } => {
-      let then_block = ctx.new_block();
-      let else_block = ctx.new_block();
+    RValue::If { ty, cond, tbody, ebody, .. } => {
+      let mut then_block = ctx.new_block();
+      let mut else_block = ctx.new_block();
       let end_block = ctx.new_block();
 
       lower_bool(cond, ctx, then_block, else_block);
 
       ctx.enter_block(then_block);
-      lower_rvalue(tbody, ctx);
+      let l_then = lower_rvalue(tbody, ctx);
+      // NOTE: we need to save the final blocks for the phi
+      then_block = LLVMGetInsertBlock(ctx.l_builder);
       ctx.exit_block_br(end_block);
 
       ctx.enter_block(else_block);
-      lower_rvalue(ebody, ctx);
+      let l_else = lower_rvalue(ebody, ctx);
+      else_block = LLVMGetInsertBlock(ctx.l_builder);
       ctx.exit_block_br(end_block);
 
       // End of if statement
       ctx.enter_block(end_block);
 
-      // Void value
-      ctx.build_void()
+      // Create phi node
+      if l_then.is_null() || l_else.is_null() {
+        ctx.build_void()
+      } else {
+        let l_phi = LLVMBuildPhi(
+          ctx.l_builder,
+          ctx.lower_ty(ty),
+          empty_cstr());
+
+        LLVMAddIncoming(
+          l_phi,
+          [ l_then, l_else ].as_mut_ptr() as _,
+          [ then_block, else_block ].as_mut_ptr() as _,
+          2);
+
+        l_phi
+      }
     }
     RValue::While { cond, body, .. } => {
       let test_block = ctx.new_block();

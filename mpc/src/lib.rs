@@ -3,7 +3,7 @@
 
 mod parse;
 mod sema;
-mod util;
+pub mod util;
 
 use crate::util::*;
 use std::path::Path;
