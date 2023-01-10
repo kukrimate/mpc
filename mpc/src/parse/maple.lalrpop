@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2022-2023, Mate Kukri
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
 use crate::parse::*;
 
 grammar(module_id: DefId, repo: &mut Repository);

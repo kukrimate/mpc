@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2022-2023, Mate Kukri
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
 use crate::util::RefStr;
 use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};

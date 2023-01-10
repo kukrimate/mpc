@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2022-2023, Mate Kukri
+ * SPDX-License-Identifier: GPL-2.0-only
+ */
+
 #![feature(hash_set_entry)]
 #![feature(hash_raw_entry)]
 
