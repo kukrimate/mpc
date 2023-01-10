@@ -176,8 +176,7 @@ impl TVarCtx {
     }
 
     // Types cannot unify
-    panic!("Cannot unify types {:?} and {:?}", ty1, ty2)
-    // Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
+    Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
   }
 
   /// Obtain the literal type for a type expression

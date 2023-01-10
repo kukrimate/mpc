@@ -1,6 +1,6 @@
 use crate::parse::*;
 
-grammar(module_id: DefId, search_dir: &std::path::Path, repo: &mut Repository);
+grammar(module_id: DefId, repo: &mut Repository);
 
 Path: Path = {
   Identifier  => vec![<>],
@@ -340,13 +340,12 @@ ParameterDefinitionList: Vec<(RefStr, IsMut, Ty)> = {
   },
 };
 
-ImportDefinition: () = "import" <name:Identifier> => {
-  let imported_module_path = search_dir
-    .with_file_name(name.borrow_rs())
-    .with_extension("m");
-  // FIXME: propagate errors
-  let imported_module_id = parse_module(repo, &imported_module_path).unwrap();
-  repo.sym(module_id, name, imported_module_id);
+ImportDefinition: () = "import" <name:Identifier> =>? {
+  // FIXME: obtain proper error location
+  find_module(repo, Location { line: 1, column: 1 }, name)
+    .and_then(|imported_module_path| parse_module(repo, &imported_module_path))
+    .and_then(|imported_module_id| Ok(repo.sym(module_id, name, imported_module_id)))
+    .map_err(|error| lalrpop_util::ParseError::User { error })
 };
 
 ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";

@@ -1,8 +1,9 @@
-use crate::util::*;
+use crate::util::RefStr;
 use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashMap;
-use std::{error,fs,fmt};
+use std::{error, fs, fmt, io};
+use std::path::PathBuf;
 
 mod lexer;
 
@@ -176,25 +177,41 @@ pub enum Variant {
 
 /// Parser API
 
-pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
+pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, Error> {
   let mut repo = Repository::new();
   repo.root_module_id = parse_module(&mut repo, path)?;
   Ok(repo)
 }
 
-fn parse_module(repo: &mut Repository, path: &std::path::Path) -> MRes<DefId> {
-  let input = fs::read_to_string(path)?;
-  let module_id = repo.new_id();
-  match maple::ModuleParser::new().parse(module_id, path,
-                                         repo, lexer::Lexer::new(&input)) {
-    Ok(()) => Ok(module_id),
-    Err(err) => Err(Box::new(Error::from_lalrpop(err)))
+fn find_module(repo: &Repository, location: Location, name: RefStr) -> Result<PathBuf, Error> {
+  for dir in repo.search_dirs.iter().rev() {
+    let path = dir
+      .join(std::path::Path::new(name.borrow_rs()))
+      .with_extension("m");
+    if path.is_file() { return Ok(path) }
   }
+  Err(Error::UnknownModule(location, name))
+}
+
+fn parse_module(repo: &mut Repository, path: &std::path::Path) -> Result<DefId, Error> {
+  let input = fs::read_to_string(path)
+    .map_err(|error| Error::IoError(path.to_path_buf(), error))?;
+  let lexer = lexer::Lexer::new(&input);
+  let parser = maple::ModuleParser::new();
+  let module_id = repo.new_id();
+  repo.search_dirs.push(path.parent().unwrap().to_path_buf());
+  let result = match parser.parse(module_id, repo, lexer) {
+    Ok(()) => Ok(module_id),
+    Err(err) => Err(Error::from_lalrpop(err))
+  };
+  repo.search_dirs.pop();
+  result
 }
 
 #[derive(Debug)]
 pub struct Repository {
   def_cnt: usize,
+  search_dirs: Vec<PathBuf>,
   pub root_module_id: DefId,
   pub defs: HashMap<DefId, Def>,
   pub syms: HashMap<DefId, HashMap<RefStr, DefId>>
@@ -202,8 +219,10 @@ pub struct Repository {
 
 impl Repository {
   pub fn new() -> Repository {
+    // Crate repository
     Repository {
       def_cnt: 0,
+      search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
       root_module_id: DefId(0),
       defs: HashMap::new(),
       syms: HashMap::new()
@@ -244,7 +263,6 @@ impl Repository {
   }
 }
 
-
 #[derive(Clone,Copy,Default,Debug)]
 pub struct Location {
   pub line: usize,
@@ -259,6 +277,7 @@ impl fmt::Display for Location {
 
 #[derive(Debug)]
 pub enum Error {
+  IoError(PathBuf, io::Error),
   UnknownToken(Location),
   UnknownEscape(Location),
   UnterminatedStr(Location),
@@ -266,7 +285,8 @@ pub enum Error {
   UnterminatedComment(Location),
   InvalidChar(Location),
   UnexpectedToken(Location),
-  UnexpectedEndOfFile(Location)
+  UnexpectedEndOfFile(Location),
+  UnknownModule(Location, RefStr)
 }
 
 impl Error {
@@ -294,6 +314,7 @@ impl Error {
 impl fmt::Display for Error {
   fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
     match self {
+      Error::IoError(path, error) => write!(fmt, "{}: {}", path.to_string_lossy(), error),
       Error::UnknownToken(location) => write!(fmt, "Error at {}: Unknown token", location),
       Error::UnknownEscape(location) => write!(fmt, "Error at {}: Unknown escape sequence", location),
       Error::UnterminatedStr(location) => write!(fmt, "Error at {}: Unterminated string literal", location),
@@ -301,7 +322,8 @@ impl fmt::Display for Error {
       Error::UnterminatedComment(location) => write!(fmt, "Error at {}: Unterminated block comment", location),
       Error::InvalidChar(location) => write!(fmt, "Error at {}: Invalid char literal", location),
       Error::UnexpectedToken(location) => write!(fmt, "Error at {}: Unexpected token", location),
-      Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location)
+      Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location),
+      Error::UnknownModule(location, name) => write!(fmt, "Error at {}: Unknown module {}", location, name)
     }
   }
 }

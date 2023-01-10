@@ -13,11 +13,13 @@ function fib(mut n: Int32) {
   }
 }
 
-function main(argc: Int32, argv: *[0]*Int8) {
+function main(argc: Int32, argv: *[1]*Int8) -> Int32 {
   if argc < 2 {
     libc::printf(c"Usage: fib N\n");
+    1
   } else {
     let n = libc::atoi((*argv)[1]);
     fib(n);
+    0
   }
 }

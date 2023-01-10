@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
-use std::mem::MaybeUninit;
 use std::os::raw::c_char;
 
 /// Same thing std uses for pretty printing
@@ -50,20 +49,16 @@ pub type MRes<T> = Result<T, Box<dyn Error>>;
 
 /// Globally de-duped strings
 
-static mut STRING_TABLE: MaybeUninit<HashSet<String>> = MaybeUninit::uninit();
+static mut STRING_TABLE: Option<HashSet<String>> = None;
 
-pub fn init() {
-  unsafe { STRING_TABLE.write(HashSet::new()); }
-}
-
-pub fn uninit() {
-  unsafe { STRING_TABLE.assume_init_drop(); }
-}
-
-fn to_owned_c(s: &str) -> String {
-  let mut s = str::to_owned(s);
-  s.push('\0');
-  s
+fn string_table_mut() -> &'static mut HashSet<String> {
+  unsafe {
+    if let Some(val) = STRING_TABLE.as_mut() {
+      val
+    } else {
+      STRING_TABLE.insert(HashSet::new())
+    }
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -74,10 +69,8 @@ pub struct RefStr {
 impl RefStr {
   pub fn new(s: &str) -> RefStr {
     let s = to_owned_c(s);
-    unsafe {
-      RefStr {
-        s: STRING_TABLE.assume_init_mut().get_or_insert(s)
-      }
+    RefStr {
+      s: string_table_mut().get_or_insert(s)
     }
   }
 
@@ -88,6 +81,12 @@ impl RefStr {
   pub fn borrow_c(&self) -> *const i8 {
     self.s.as_ptr() as _
   }
+}
+
+fn to_owned_c(s: &str) -> String {
+  let mut s = str::to_owned(s);
+  s.push('\0');
+  s
 }
 
 impl std::fmt::Display for RefStr {

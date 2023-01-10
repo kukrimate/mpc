@@ -1,13 +1,6 @@
-[package]
-name = "mpc"
-version = "0.1.0"
-edition = "2018"
+[workspace]
 
-[build-dependencies]
-lalrpop = "0.19.8"
-
-[dependencies]
-clap = "2.33.3"
-lalrpop-util = "0.19.8"
-llvm-sys = "130"
-regex = "1"
+members = [
+  "mpc",
+  "mpc_test"
+]

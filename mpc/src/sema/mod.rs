@@ -384,8 +384,8 @@ mod lower;
 pub fn compile(repo: &parse::Repository, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
   let mut tctx = TVarCtx::new();
   let insts = infer::infer(repo, &mut tctx)?;
-  println!("{:#?}", insts);
-  println!("{:#?}", tctx);
+  eprintln!("{:#?}", insts);
+  eprintln!("{:#?}", tctx);
 
   lower::lower_module(&mut tctx, &insts, output_path, compile_to)?;
 

@@ -458,7 +458,7 @@ impl<'a> LowerCtx<'a> {
 
     let l_layout = LLVMCreateTargetDataLayout(l_machine);
 
-    let l_context = LLVMGetGlobalContext();
+    let l_context = LLVMContextCreate();
     let l_builder = LLVMCreateBuilderInContext(l_context);
     let l_module = LLVMModuleCreateWithNameInContext(module_id.borrow_c(), l_context);
 
