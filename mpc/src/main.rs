@@ -35,10 +35,15 @@ fn main() {
     mpc::CompileTo::Object
   };
 
-  match compile(Path::new(args.value_of_os("input").unwrap()),
+  let status = match compile(Path::new(args.value_of_os("input").unwrap()),
                   Path::new(args.value_of_os("output").unwrap()),
                   compile_to) {
-    Ok(()) => eprintln!("ok :)"),
-    Err(error) => eprintln!("{} :(", error),
-  }
+    Ok(()) => 0,
+    Err(error) => {
+      eprintln!("{} :(", error);
+      1
+    }
+  };
+
+  std::process::exit(status);
 }
