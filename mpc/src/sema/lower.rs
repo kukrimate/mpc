@@ -643,7 +643,7 @@ impl<'a> LowerCtx<'a> {
 
           // Convert struct-like variants into LLVM types
           let mut l_variant_types = vec![];
-          for (_, variant) in variants {
+          for variant in variants {
             match variant {
               Variant::Unit(_) => (),
               Variant::Struct(_, params) => {

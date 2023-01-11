@@ -133,7 +133,7 @@ pub struct UnionDef {
 pub struct EnumDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub variants: Vec<(RefStr, Variant)>
+  pub variants: Vec<Variant>
 }
 
 #[derive(Debug)]
@@ -177,8 +177,8 @@ pub struct ExternFuncDef {
 
 #[derive(Debug)]
 pub enum Variant {
-  Unit,
-  Struct(Vec<(RefStr, Ty)>),
+  Unit(RefStr),
+  Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
 /// Parser API

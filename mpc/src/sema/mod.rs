@@ -29,7 +29,7 @@ use consteval::*;
 enum Inst {
   Struct      { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union       { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
-  Enum        { name: RefStr, variants: Option<Vec<(RefStr, Variant)>> },
+  Enum        { name: RefStr, variants: Option<Vec<Variant>> },
   Func        { name: RefStr, ty: Ty, locals: HashMap<LocalId, LocalDef>, body: Option<RValue> },
   Data        { name: RefStr, ty: Ty, is_mut: IsMut, init: ConstVal },
   ExternFunc  { name: RefStr, ty: Ty },
@@ -155,9 +155,9 @@ enum LValue {
   LetRef    { ty: Ty, is_mut: IsMut, id: LocalId },
   StrLit    { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit  { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
-  StructLit { ty: Ty, is_mut: IsMut, name: RefStr, fields: Vec<RValue> },
-  StruDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr, idx: usize },
-  UnionDot  { ty: Ty, is_mut: IsMut, arg: Box<LValue>, name: RefStr },
+  StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
+  StruDot   { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: usize },
+  UnionDot  { ty: Ty, is_mut: IsMut, arg: Box<LValue> },
   Index     { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
   Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
 }

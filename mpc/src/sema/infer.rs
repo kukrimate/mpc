@@ -135,17 +135,17 @@ impl<'a> CheckCtx<'a> {
     Ok(result)
   }
 
-  fn infer_variants(&mut self, variants: &Vec<(RefStr, parse::Variant)>) -> MRes<Vec<(RefStr, Variant)>> {
+  fn infer_variants(&mut self, variants: &Vec<parse::Variant>) -> MRes<Vec<Variant>> {
     let mut result = vec![];
-    for (name, variant) in variants {
-      result.push((*name, match variant {
-        parse::Variant::Unit => {
+    for variant in variants.iter() {
+      result.push(match variant {
+        parse::Variant::Unit(name) => {
           Variant::Unit(*name)
         }
-        parse::Variant::Struct(params) => {
+        parse::Variant::Struct(name, params) => {
           Variant::Struct(*name, self.infer_params(params)?)
         }
-      }));
+      })
     }
     Ok(result)
   }
@@ -428,12 +428,11 @@ impl<'a> CheckCtx<'a> {
         self.infer_index(arg, idx)?
       }
       Call(called, args) => {
-        if let Some((name, ty, params)) = self.check_struct_ctor(called) {
+        if let Some((ty, params)) = self.check_struct_ctor(called) {
           let fields = self.infer_args(&params, args)?;
           LValue::StructLit {
             ty,
             is_mut: IsMut::No,
-            name,
             fields
           }
         } else {
@@ -511,15 +510,13 @@ impl<'a> CheckCtx<'a> {
           ty: param_ty.clone(),
           is_mut: arg.is_mut(),
           arg: Box::new(arg),
-          name,
           idx
         })
       } else {
         Ok(LValue::UnionDot {
           ty: param_ty.clone(),
           is_mut: arg.is_mut(),
-          arg: Box::new(arg),
-          name
+          arg: Box::new(arg)
         })
       }
     }
@@ -572,13 +569,13 @@ impl<'a> CheckCtx<'a> {
   }
 
   /// Check whether or not `expr` is a struct constructor in the current context
-  fn check_struct_ctor(&mut self, expr: &parse::Expr) -> Option<(RefStr, Ty, Vec<(RefStr, Ty)>)> {
+  fn check_struct_ctor(&mut self, expr: &parse::Expr) -> Option<(Ty, Vec<(RefStr, Ty)>)> {
     if let parse::Expr::Path(path) = expr {
       // FIXME: we might need to infer type arguments
       if let Ok(ty) = self.inst_as_ty(path, vec![]) {
-        if let Ty::Inst(name, id) = &ty {
+        if let Ty::Inst(_, id) = &ty {
           if let Inst::Struct { params, .. } = self.insts.get(id).unwrap() {
-            return Some((*name, ty, params.clone().unwrap()))
+            return Some((ty, params.clone().unwrap()))
           } else {
             unreachable!()
           }
@@ -624,12 +621,11 @@ impl<'a> CheckCtx<'a> {
         RValue::Flt { ty: self.tctx.tvar(Ty::BoundFlt), val: *val }
       }
       Call(called, args) => {
-        if let Some((name, ty, params)) = self.check_struct_ctor(called) {
+        if let Some((ty, params)) = self.check_struct_ctor(called) {
           let fields = self.infer_args(&params, args)?;
           let arg = LValue::StructLit {
             ty,
             is_mut: IsMut::No,
-            name,
             fields
           };
           RValue::Load {
@@ -792,7 +788,7 @@ impl<'a> CheckCtx<'a> {
         let id = self.newlocal(LocalDef::Let {
           name: *name,
           is_mut: *is_mut,
-          ty: ty
+          ty
         });
 
         // Add let expression

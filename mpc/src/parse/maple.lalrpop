@@ -300,22 +300,22 @@ IdentifierList: Vec<RefStr> = {
   }
 };
 
-VariantListOpt: Vec<(RefStr, Variant)> = {
+VariantListOpt: Vec<Variant> = {
   VariantList,
   => vec![],
 };
 
-VariantList: Vec<(RefStr, Variant)> = {
-  <v:Variant> => vec![ (v.0, v.1) ],
+VariantList: Vec<Variant> = {
+  Variant => vec![<>],
   <mut l:VariantList> "," <v:Variant> => {
-    l.push((v.0, v.1));
+    l.push(v);
     l
   },
 };
 
-Variant: (RefStr, Variant) = {
-  Identifier => (<>, Variant::Unit),
-  <name:Identifier> "(" <params:ParameterListOpt> ")" => (name, Variant::Struct(params)),
+Variant: Variant = {
+  Identifier => Variant::Unit(<>),
+  <name:Identifier> "(" <params:ParameterListOpt> ")" => Variant::Struct(name, params),
 };
 
 ConstDefinition: () = {
