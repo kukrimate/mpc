@@ -64,8 +64,9 @@ pub enum BinOp {
 
 #[derive(Debug)]
 pub enum Expr {
-  Null,
+  Empty,
   Path(Path),
+  Nil,
   Bool(bool),
   Int(usize),
   Flt(f64),

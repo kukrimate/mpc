@@ -595,8 +595,8 @@ impl<'a> CheckCtx<'a> {
     use parse::Expr::*;
 
     Ok(match expr {
-      Null => {
-        RValue::Null { ty: Ty::Tuple(vec![]) }
+      Empty => {
+        RValue::Empty { ty: Ty::Tuple(vec![]) }
       }
       Path(path) => {
         self.inst_as_rvalue(path)?
@@ -610,6 +610,9 @@ impl<'a> CheckCtx<'a> {
       }
       CStr(val) => {
         RValue::CStr { ty: Ty::Ptr(IsMut::No, Box::new(Ty::Int8)), val: val.clone() }
+      }
+      Nil => {
+        RValue::Nil { ty: Ty::Ptr(IsMut::Yes, Box::new(self.tctx.tvar(Ty::BoundAny))) }
       }
       Bool(val) => {
         RValue::Bool { ty: Ty::Bool, val: *val }

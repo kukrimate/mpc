@@ -88,7 +88,7 @@ Expr: Expr = {
 };
 
 BlockExpr: Expr = {
-  "{" "}" => Expr::Null,
+  "{" "}" => Expr::Empty,
   "{" <OpenItemList> "}" => Expr::Block(<>),
   "{" <ClosedItemList> "}" => Expr::Block(<>),
 };
@@ -104,7 +104,7 @@ OpenItemList: Vec<Expr> = {
 ClosedItemList: Vec<Expr> = {
   ClosedItem => vec![<>],
   <mut list:OpenItemList> ";" => {
-    list.push(Expr::Null);
+    list.push(Expr::Empty);
     list
   },
   <mut list:ClosedItemList> <item:ClosedItem> => {
@@ -119,8 +119,8 @@ OpenItem: Expr = {
   "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" "!" =>
     Expr::Let(name, is_mut, ty, None),
   "continue" => Expr::Continue,
-  "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Null))),
-  "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Null))),
+  "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Empty))),
+  "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Empty))),
 
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
   <l:Expr> "*=" <r:Expr> => Expr::Rmw(BinOp::Mul, Box::new(l), Box::new(r)),
@@ -141,11 +141,11 @@ ClosedItem: Expr = {
   BlockExpr,
   IfExpr,
   LoopExpr,
-  ";" => Expr::Null
+  ";" => Expr::Empty
 };
 
 IfExpr: Expr = {
-  "if" <c:Expr> <t:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Null)),
+  "if" <c:Expr> <t:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Empty)),
   "if" <c:Expr> <t:BlockExpr> "else" <e:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
   "if" <c:Expr> <t:BlockExpr> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
 };
@@ -253,6 +253,7 @@ PrimExpr: Expr = {
   "(" <e:Expr> ")" => e,
    "[" <list:ArrayExprList> "]" => Expr::Arr(list),
   <p:Path> => Expr::Path(p),
+  "nil" => Expr::Nil,
   "true" => Expr::Bool(true),
   "false" => Expr::Bool(false),
   Integer => Expr::Int(<>),
@@ -426,6 +427,7 @@ extern {
     "else" => lexer::Token::KwElse,
     "while" => lexer::Token::KwWhile,
     "loop" => lexer::Token::KwLoop,
+    "nil" => lexer::Token::KwNil,
     "true" => lexer::Token::KwTrue,
     "false" => lexer::Token::KwFalse,
     "struct" => lexer::Token::KwStruct,

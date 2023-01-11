@@ -51,6 +51,7 @@ pub enum Token {
   KwElse,           // else
   KwWhile,          // while
   KwLoop,           // loop
+  KwNil,            // nil
   KwTrue,           // true
   KwFalse,          // false
   KwStruct,         // struct
@@ -142,6 +143,7 @@ impl<'input> Lexer<'input> {
       ("else", Token::KwElse),
       ("while", Token::KwWhile),
       ("loop", Token::KwLoop),
+      ("nil", Token::KwNil),
       ("true", Token::KwTrue),
       ("false", Token::KwFalse),
       ("struct", Token::KwStruct),

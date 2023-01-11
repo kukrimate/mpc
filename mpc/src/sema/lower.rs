@@ -116,7 +116,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
-    RValue::Null { .. } => {
+    RValue::Empty { .. } => {
       ctx.build_void()
     }
     RValue::FuncRef { id, .. } => {
@@ -129,6 +129,9 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
       ctx.build_load(ty, addr)
+    }
+    RValue::Nil { ty, .. } => {
+      LLVMConstNull(ctx.lower_ty(ty))
     }
     RValue::Bool { val, .. } => {
       ctx.build_bool(*val)

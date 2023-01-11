@@ -164,10 +164,11 @@ enum LValue {
 
 #[derive(Debug)]
 enum RValue {
-  Null      { ty: Ty },
+  Empty     { ty: Ty },
   FuncRef   { ty: Ty, id: (DefId, Vec<Ty>) },
   CStr      { ty: Ty, val: Vec<u8> },
   Load      { ty: Ty, arg: Box<LValue> },
+  Nil       { ty: Ty },
   Bool      { ty: Ty, val: bool },
   Int       { ty: Ty, val: usize },
   Flt       { ty: Ty, val: f64 },
@@ -226,10 +227,11 @@ impl LValue {
 impl RValue {
   fn ty(&self) -> &Ty {
     match self {
-      RValue::Null      { ty, .. } => ty,
+      RValue::Empty     { ty, .. } => ty,
       RValue::FuncRef   { ty, .. } => ty,
       RValue::CStr      { ty, .. } => ty,
       RValue::Load      { ty, .. } => ty,
+      RValue::Nil       { ty, .. } => ty,
       RValue::Bool      { ty, .. } => ty,
       RValue::Int       { ty, .. } => ty,
       RValue::Flt       { ty, .. } => ty,
