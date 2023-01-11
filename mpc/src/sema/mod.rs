@@ -15,7 +15,7 @@ use crate::parse::{self,IsMut,UnOp,BinOp,DefId};
 use crate::util::*;
 use std::collections::HashMap;
 use std::error;
-use std::fmt::{self, Write};
+use std::fmt;
 
 mod tctx;
 mod consteval;
@@ -148,6 +148,7 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 
+#[derive(Debug)]
 enum LValue {
   DataRef   { ty: Ty, is_mut: IsMut, id: DefId },
   ParamRef  { ty: Ty, is_mut: IsMut, id: LocalId },
@@ -161,6 +162,7 @@ enum LValue {
   Ind       { ty: Ty, is_mut: IsMut, arg: Box<RValue> },
 }
 
+#[derive(Debug)]
 enum RValue {
   Null      { ty: Ty },
   FuncRef   { ty: Ty, id: (DefId, Vec<Ty>) },
@@ -249,135 +251,6 @@ impl RValue {
       RValue::If        { ty, .. } => ty,
       RValue::While     { ty, .. } => ty,
       RValue::Loop      { ty, .. } => ty,
-    }
-  }
-}
-
-impl fmt::Debug for LValue {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      LValue::DataRef { id, .. } => {
-        write!(f, "{:?}", id)
-      }
-      LValue::ParamRef { id, .. } |
-      LValue::LetRef { id, .. } => {
-        write!(f, "{:?}", id)
-      }
-      LValue::StructLit { name, fields, .. } => {
-        write!(f, "{}", name)?;
-        write_comma_separated(f, fields.iter(), |f, field| {
-          write!(f, "{:?}", field)
-        })
-      }
-      LValue::ArrayLit { elements, .. } => {
-        write!(f, "[")?;
-        write_comma_separated(f, elements.iter(), |f, element| {
-          write!(f, "{:?}", element)
-        })?;
-        write!(f, "]")
-      }
-      LValue::StrLit { val, .. } => {
-        write!(f, "s{:?}", val)
-      }
-      LValue::StruDot { arg, name, .. } |
-      LValue::UnionDot { arg, name, .. } => {
-        write!(f, ".{} {:?}", name, arg)
-      }
-      LValue::Index { arg, idx, .. } => {
-        write!(f, "[{:?}] {:?}", idx, arg)
-      }
-      LValue::Ind { arg, .. } => {
-        write!(f, "Ind {:?}", arg)
-      }
-    }
-  }
-}
-
-impl fmt::Debug for RValue {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      RValue::Null { .. } => {
-        write!(f, "Null")
-      }
-      RValue::FuncRef { id, .. } => {
-        write!(f, "{:?}", id)
-      }
-      RValue::CStr { val, .. } => {
-        write!(f, "c{:?}", val)
-      }
-      RValue::Load { arg, .. } => {
-        write!(f, "{:?}", arg)
-      }
-      RValue::Bool { val, .. } => {
-        write!(f, "{}", val)
-      }
-      RValue::Int { val, .. } => {
-        write!(f, "{}", val)
-      }
-      RValue::Flt { val, .. } => {
-        write!(f, "{}", val)
-      }
-      RValue::Call { arg, args, .. } => {
-        write_comma_separated(f, args.iter(),
-          |f, arg| arg.fmt(f))?;
-        write!(f, " {:?}", arg)
-      }
-      RValue::Adr { arg, .. } => {
-        write!(f, "Adr {:?}", arg)
-      }
-      RValue::Un { op, arg, .. } => {
-        write!(f, "{:?} {:?}", op, arg)
-      }
-      RValue::LNot { arg, .. } => {
-        write!(f, "LNot {:?}", arg)
-      }
-      RValue::Cast { ty, arg } => {
-        write!(f, "Cast {:?} {:?}", arg, ty)
-      }
-      RValue::Bin { op, lhs, rhs, .. } => {
-        write!(f, "{:?} {:?} {:?}", op, lhs, rhs)
-      }
-      RValue::LAnd { lhs, rhs, .. } => {
-        write!(f, "LAnd {:?} {:?}", lhs, rhs)
-      }
-      RValue::LOr { lhs, rhs, .. } => {
-        write!(f, "LOr {:?} {:?}", lhs, rhs)
-      }
-      RValue::Block { body, .. } => {
-        write!(f, "{{\n")?;
-        let mut pf = PadAdapter::wrap(f);
-        for expr in body {
-          write!(&mut pf, "{:?};\n", expr)?;
-        }
-        write!(f, "}}")
-      }
-      RValue::As { lhs, rhs, .. } => {
-        write!(f, "As {:?} {:?}", lhs, rhs)
-      }
-      RValue::Rmw { op, lhs, rhs, .. } => {
-        write!(f, "{:?}As {:?} {:?}", op, lhs, rhs)
-      }
-      RValue::Continue { .. } => {
-        write!(f, "continue")
-      }
-      RValue::Break { arg, .. } => {
-        write!(f, "break {:?}", arg)
-      }
-      RValue::Return { arg, .. } => {
-        write!(f, "return {:?}", arg)
-      }
-      RValue::Let { id, init, .. } => {
-        write!(f, "let {:?} = {:?}", id, init)
-      }
-      RValue::If { cond, tbody, ebody, .. } => {
-        write!(f, "if {:?} {:?} else {:?}", cond, tbody, ebody)
-      }
-      RValue::While { cond, body, .. } => {
-        write!(f, "while {:?} {:?}", cond, body)
-      }
-      RValue::Loop { body, .. } => {
-        write!(f, "loop {:?}", body)
-      }
     }
   }
 }
