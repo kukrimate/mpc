@@ -156,10 +156,6 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let l_arg = lower_rvalue(arg, ctx);
       ctx.build_un(arg.ty(), *op, l_arg)
     }
-    RValue::LNot { arg, .. } => {
-      let arg = lower_rvalue(arg, ctx);
-      ctx.build_lnot(arg)
-    }
     RValue::Cast { ty, arg } => {
       let l_arg = lower_rvalue(arg, ctx);
       ctx.build_cast(ty, arg.ty(), l_arg)
@@ -169,11 +165,40 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let l_rhs = lower_rvalue(rhs, ctx);
       ctx.build_bin(lhs.ty(), *op, l_lhs, l_rhs)
     }
-    RValue::LAnd { .. } => {
-      todo!() // TODO
-    }
+    RValue::LNot { .. } |
+    RValue::LAnd { .. } |
     RValue::LOr { .. } => {
-      todo!() // TODO
+      // Split based on the boolean value
+      let true_block = ctx.new_block();
+      let false_block = ctx.new_block();
+      lower_bool(rvalue, ctx, true_block, false_block);
+
+      // Both paths will merge in this block
+      let phi_block = ctx.new_block();
+
+      // Jump from true branch to phi block
+      ctx.enter_block(true_block);
+      ctx.exit_block_br(phi_block);
+
+      // Jump from false branch to phi block
+      ctx.enter_block(false_block);
+      ctx.exit_block_br(phi_block);
+
+      // Create phi to choose value
+      ctx.enter_block(phi_block);
+
+      let l_phi = LLVMBuildPhi(
+        ctx.l_builder,
+        LLVMInt1TypeInContext(ctx.l_context),
+        empty_cstr());
+
+      LLVMAddIncoming(
+        l_phi,
+        [ ctx.build_bool(true), ctx.build_bool(false) ].as_mut_ptr() as _,
+        [ true_block, false_block ].as_mut_ptr() as _,
+        2);
+
+      l_phi
     }
     RValue::Block { body, .. } => {
       let mut val = ctx.build_void();
@@ -877,10 +902,6 @@ impl<'a> LowerCtx<'a> {
                       empty_cstr())
       }
     }
-  }
-
-  unsafe fn build_lnot(&mut self, l_arg: LLVMValueRef) -> LLVMValueRef {
-    LLVMBuildIsNull(self.l_builder, l_arg, empty_cstr())
   }
 
   unsafe fn build_un(&mut self, ty: &Ty, op: UnOp, l_arg: LLVMValueRef) -> LLVMValueRef {
