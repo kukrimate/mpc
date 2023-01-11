@@ -355,11 +355,11 @@ ParameterDefinitionList: Vec<(RefStr, IsMut, Ty)> = {
   },
 };
 
-ImportDefinition: () = "import" <name:Identifier> =>? {
-  // FIXME: obtain proper error location
-  find_module(repo, Location { line: 1, column: 1 }, name)
-    .and_then(|imported_module_path| parse_module(repo, &imported_module_path))
-    .and_then(|imported_module_id| Ok(repo.sym(module_id, name, imported_module_id)))
+ImportDefinition: () = <location:@L> "import" <name:Identifier> =>? {
+  repo.find_module(name)
+    .ok_or_else(|| Error::UnknownModule(location, name))
+    .and_then(|path| repo.parse_module(&path))
+    .and_then(|id| Ok(repo.sym(module_id, name, id)))
     .map_err(|error| lalrpop_util::ParseError::User { error })
 };
 
@@ -386,7 +386,7 @@ GlobalDefinition: () = {
   DataDefinition,
   FunctionDefinition,
   ImportDefinition,
-  ExternBlock,
+  ExternBlock
 };
 
 pub Module: () = Seq<GlobalDefinition>;

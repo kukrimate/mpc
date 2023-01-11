@@ -185,33 +185,8 @@ pub enum Variant {
 
 pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, Error> {
   let mut repo = Repository::new();
-  repo.root_module_id = parse_module(&mut repo, path)?;
+  repo.root_module_id = repo.parse_module(path)?;
   Ok(repo)
-}
-
-fn find_module(repo: &Repository, location: Location, name: RefStr) -> Result<PathBuf, Error> {
-  for dir in repo.search_dirs.iter().rev() {
-    let path = dir
-      .join(std::path::Path::new(name.borrow_rs()))
-      .with_extension("m");
-    if path.is_file() { return Ok(path) }
-  }
-  Err(Error::UnknownModule(location, name))
-}
-
-fn parse_module(repo: &mut Repository, path: &std::path::Path) -> Result<DefId, Error> {
-  let input = fs::read_to_string(path)
-    .map_err(|error| Error::IoError(path.to_path_buf(), error))?;
-  let lexer = lexer::Lexer::new(&input);
-  let parser = maple::ModuleParser::new();
-  let module_id = repo.new_id();
-  repo.search_dirs.push(path.parent().unwrap().to_path_buf());
-  let result = match parser.parse(module_id, repo, lexer) {
-    Ok(()) => Ok(module_id),
-    Err(err) => Err(Error::from_lalrpop(err))
-  };
-  repo.search_dirs.pop();
-  result
 }
 
 #[derive(Debug)]
@@ -266,6 +241,31 @@ impl Repository {
       }
     }
     Some(cur_id)
+  }
+
+  fn find_module(&mut self, name: RefStr) -> Option<PathBuf> {
+    for dir in self.search_dirs.iter().rev() {
+      let path = dir
+        .join(std::path::Path::new(name.borrow_rs()))
+        .with_extension("m");
+      if path.is_file() { return Some(path) }
+    }
+    None
+  }
+
+  fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, Error> {
+    let input = fs::read_to_string(path)
+      .map_err(|error| Error::IoError(path.to_path_buf(), error))?;
+    let lexer = lexer::Lexer::new(&input);
+    let parser = maple::ModuleParser::new();
+    let module_id = self.new_id();
+    self.search_dirs.push(path.parent().unwrap().to_path_buf());
+    let result = match parser.parse(module_id, self, lexer) {
+      Ok(()) => Ok(module_id),
+      Err(err) => Err(Error::from_lalrpop(err))
+    };
+    self.search_dirs.pop();
+    result
   }
 }
 
