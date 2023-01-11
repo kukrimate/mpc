@@ -78,35 +78,49 @@ IsMut: IsMut = {
         => IsMut::No
 };
 
-// Blocks
+// Expressions
 
-Block: Expr = {
+Expr: Expr = {
+  BlockExpr,
+  IfExpr,
+  LoopExpr,
+  LOrExpr
+};
+
+BlockExpr: Expr = {
   "{" "}" => Expr::Null,
-  "{" <v:BlockItemList> "}" => Expr::Block(v),
-  "{" <mut v:BlockItemList> ";" "}" => {
-    v.push(Expr::Null);
-    Expr::Block(v)
+  "{" <OpenItemList> "}" => Expr::Block(<>),
+  "{" <ClosedItemList> "}" => Expr::Block(<>),
+};
+
+OpenItemList: Vec<Expr> = {
+  OpenItem => vec![<>],
+  <mut list:ClosedItemList> <item:OpenItem> => {
+    list.push(item);
+    list
   }
 };
 
-BlockItemList: Vec<Expr> = {
-  BlockItem => vec![<>],
-  <mut v:BlockItemList> ";" <i:BlockItem> => {
-    v.push(i);
-    v
+ClosedItemList: Vec<Expr> = {
+  ClosedItem => vec![<>],
+  <mut list:OpenItemList> ";" => {
+    list.push(Expr::Null);
+    list
+  },
+  <mut list:ClosedItemList> <item:ClosedItem> => {
+    list.push(item);
+    list
   }
 };
 
-BlockItem: Expr = {
-  Expr,
-  "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" <init:Expr> =>
+OpenItem: Expr = {
+  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" <init:Expr> =>
     Expr::Let(name, is_mut, ty, Some(Box::new(init))),
-  "let" <is_mut:IsMut> <name:Identifier> <ty:LetType> "=" "!" =>
+  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" "!" =>
     Expr::Let(name, is_mut, ty, None),
   "continue" => Expr::Continue,
-  "break" <e:ExprOpt> => Expr::Break(Box::new(e)),
-  "return" <e:ExprOpt> => Expr::Return(Box::new(e)),
-  "while" <e:Expr> <b:Block> => Expr::While(Box::new(e), Box::new(b)),
+  "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Null))),
+  "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Null))),
 
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
   <l:Expr> "*=" <r:Expr> => Expr::Rmw(BinOp::Mul, Box::new(l), Box::new(r)),
@@ -119,30 +133,26 @@ BlockItem: Expr = {
   <l:Expr> "&=" <r:Expr> => Expr::Rmw(BinOp::And, Box::new(l), Box::new(r)),
   <l:Expr> "^=" <r:Expr> => Expr::Rmw(BinOp::Xor, Box::new(l), Box::new(r)),
   <l:Expr> "|=" <r:Expr> => Expr::Rmw(BinOp::Or, Box::new(l), Box::new(r)),
+
+  LOrExpr
 };
 
-ExprOpt: Expr = {
-  <e:Expr>  => e,
-            => Expr::Null
-};
-
-LetType: Option<Ty> = {
-  ":" <ty:TypeName> => Some(ty),
-                    => None,
-};
-
-// Expressions
-
-Expr: Expr = {
-  LOrExpr,
+ClosedItem: Expr = {
+  BlockExpr,
   IfExpr,
-  "loop" <b:Block> => Expr::Loop(Box::new(b))
+  LoopExpr,
+  ";" => Expr::Null
 };
 
 IfExpr: Expr = {
-  "if" <c:Expr> <t:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Null)),
-  "if" <c:Expr> <t:Block> "else" <e:Block> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
-  "if" <c:Expr> <t:Block> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
+  "if" <c:Expr> <t:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Null)),
+  "if" <c:Expr> <t:BlockExpr> "else" <e:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
+  "if" <c:Expr> <t:BlockExpr> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
+};
+
+LoopExpr: Expr = {
+  "loop" <b:BlockExpr> => Expr::Loop(Box::new(b)),
+  "while" <e:Expr> <b:BlockExpr> => Expr::While(Box::new(e), Box::new(b))
 };
 
 LOrExpr: Expr = {
@@ -242,7 +252,6 @@ Argument: (RefStr, Expr) = {
 PrimExpr: Expr = {
   "(" <e:Expr> ")" => e,
    "[" <list:ArrayExprList> "]" => Expr::Arr(list),
-  <b:Block> => b,
   <p:Path> => Expr::Path(p),
   "true" => Expr::Bool(true),
   "false" => Expr::Bool(false),
@@ -324,7 +333,7 @@ DataDefinition: () = {
 
 FunctionDefinition: () = {
   "function" <name:Identifier> <type_params:TypeParameterListOpt>
-      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:Block> => {
+      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:BlockExpr> => {
     let def_id = repo.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
     repo.sym(module_id, name, def_id);
   }
