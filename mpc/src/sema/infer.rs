@@ -14,7 +14,6 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
     insts: HashMap::new(),
     parent_ids: Vec::new(),
     scopes: Vec::new(),
-    local_cnt: 0,
     local_defs: Vec::new(),
     ret_ty: Vec::new(),
     loop_ty: Vec::new(),
@@ -73,8 +72,7 @@ struct CheckCtx<'a> {
   scopes: Vec<HashMap<RefStr, Sym>>,
 
   // Local definition
-  local_cnt: usize,
-  local_defs: Vec<HashMap<LocalId, LocalDef>>,
+  local_defs: Vec<HashMap<DefId, LocalDef>>,
 
   // Function return type
   ret_ty: Vec<Ty>,
@@ -86,7 +84,7 @@ struct CheckCtx<'a> {
 #[derive(Clone)]
 enum Sym {
   Def(DefId),
-  Local(LocalId),
+  Local(DefId),
   TParam(Ty)
 }
 
@@ -195,7 +193,7 @@ impl<'a> CheckCtx<'a> {
 
       // Regular parameters
       let mut param_tys = vec![];
-      for (name, _, ty) in def.params.iter() {
+      for (name, _, _, ty) in def.params.iter() {
         param_tys.push((*name, this.infer_ty(ty)?));
       }
 
@@ -236,10 +234,10 @@ impl<'a> CheckCtx<'a> {
 
       // Regular parameters
       let mut param_tys = vec![];
-      for (index, (name, is_mut, ty)) in def.params.iter().enumerate() {
+      for (index, (name, id, is_mut, ty)) in def.params.iter().enumerate() {
         let ty = this.infer_ty(ty)?;
         param_tys.push((*name, ty.clone()));
-        this.newlocal(LocalDef::Param { name: *name, ty, is_mut: *is_mut, index: index });
+        this.newlocal(*id, LocalDef::Param { name: *name, ty, is_mut: *is_mut, index: index });
       }
 
       // Return type
@@ -300,7 +298,7 @@ impl<'a> CheckCtx<'a> {
   }
 
   /// Lookup a local definition by its id
-  fn local_def(&self, id: LocalId) -> &LocalDef {
+  fn local_def(&self, id: DefId) -> &LocalDef {
     self.local_defs.last().unwrap().get(&id).unwrap()
   }
 
@@ -344,13 +342,9 @@ impl<'a> CheckCtx<'a> {
   }
 
   /// Create local definition with a new id
-  fn newlocal(&mut self, def: LocalDef) -> LocalId {
-    let id = LocalId(self.local_cnt);
-    self.local_cnt += 1;
-
+  fn newlocal(&mut self, id: DefId, def: LocalDef) {
     self.define(def.name(), Sym::Local(id));
     self.local_defs.last_mut().unwrap().insert(id, def);
-    id
   }
 
   /// Infer the semantic form of a type expression
@@ -801,7 +795,7 @@ impl<'a> CheckCtx<'a> {
 
         RValue::Return { ty: self.tctx.tvar(Ty::BoundAny), arg: Box::new(arg) }
       }
-      Let(name, is_mut, ty, init) => {
+      Let(name, id, is_mut, ty, init) => {
         let (ty, init) = if let Some(init) = init {
           // Check initializer
           let init = self.infer_rvalue(init)?;
@@ -818,14 +812,14 @@ impl<'a> CheckCtx<'a> {
         };
 
         // Add local definition
-        let id = self.newlocal(LocalDef::Let {
+        self.newlocal(*id, LocalDef::Let {
           name: *name,
           is_mut: *is_mut,
           ty
         });
 
         // Add let expression
-        RValue::Let { ty: Ty::Tuple(vec![]), id, init }
+        RValue::Let { ty: Ty::Tuple(vec![]), id: *id, init }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;

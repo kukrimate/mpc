@@ -395,7 +395,7 @@ struct LowerCtx<'a> {
 
   // Values
   values: HashMap<(DefId, Vec<Ty>), LLVMValueRef>,
-  locals: HashMap<LocalId, LLVMValueRef>,
+  locals: HashMap<DefId, LLVMValueRef>,
 
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
@@ -478,7 +478,7 @@ impl<'a> LowerCtx<'a> {
     *self.values.get(&tmp).unwrap()
   }
 
-  fn get_local(&self, id: LocalId) -> LLVMValueRef {
+  fn get_local(&self, id: DefId) -> LLVMValueRef {
     *self.locals.get(&id).unwrap()
   }
 

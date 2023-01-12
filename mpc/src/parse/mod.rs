@@ -90,7 +90,7 @@ pub enum Expr {
   Continue,
   Break(Box<Expr>),
   Return(Box<Expr>),
-  Let(RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
+  Let(RefStr, DefId, IsMut, Option<Ty>, Option<Box<Expr>>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -162,7 +162,7 @@ pub struct DataDef {
 pub struct FuncDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub params: Vec<(RefStr, IsMut, Ty)>,
+  pub params: Vec<(RefStr, DefId, IsMut, Ty)>,
   pub ret_ty: Ty,
   pub body: Expr
 }
