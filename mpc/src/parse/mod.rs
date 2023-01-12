@@ -105,6 +105,7 @@ impl fmt::Debug for DefId {
 
 #[derive(Debug)]
 pub enum Def {
+  Type(TypeDef),
   Struct(StructDef),
   Union(UnionDef),
   Enum(EnumDef),
@@ -113,6 +114,12 @@ pub enum Def {
   Func(FuncDef),
   ExternData(ExternDataDef),
   ExternFunc(ExternFuncDef)
+}
+
+#[derive(Debug)]
+pub struct TypeDef {
+  pub name: RefStr,
+  pub ty: Ty
 }
 
 #[derive(Debug)]

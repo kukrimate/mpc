@@ -57,6 +57,7 @@ pub enum Token {
   KwStruct,         // struct
   KwUnion,          // union
   KwEnum,           // enum
+  KwType,           // type
   KwFunction,       // function
   KwConst,          // const
   KwData,           // data
@@ -147,6 +148,7 @@ impl<'input> Lexer<'input> {
       ("true", Token::KwTrue),
       ("false", Token::KwFalse),
       ("struct", Token::KwStruct),
+      ("type", Token::KwType),
       ("union", Token::KwUnion),
       ("enum", Token::KwEnum),
       ("function", Token::KwFunction),

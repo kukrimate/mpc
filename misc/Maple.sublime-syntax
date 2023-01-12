@@ -7,7 +7,7 @@ file_extensions:
 scope: source.m
 
 variables:
-  keywords: 'as|let|mut|continue|break|return|if|else|while|loop|nil|true|false|struct|union|enum|function|const|data|import|extern'
+  keywords: 'as|let|mut|continue|break|return|if|else|while|loop|nil|true|false|type|struct|union|enum|function|const|data|import|extern'
   basic_types: 'Bool|Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double|Function'
 
 contexts:

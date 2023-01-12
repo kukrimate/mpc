@@ -273,6 +273,10 @@ ArrayExprList: Vec<Expr> = {
 // Definitions
 
 TypeDefinition: () = {
+  "type" <name:Identifier> "=" <ty:TypeName> => {
+    let def_id = repo.def(Def::Type(TypeDef { name, ty }));
+    repo.sym(module_id, name, def_id);
+  },
   "struct" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
     let def_id = repo.def(Def::Struct(StructDef { name, type_params, params }));
     repo.sym(module_id, name, def_id);
@@ -430,6 +434,7 @@ extern {
     "nil" => lexer::Token::KwNil,
     "true" => lexer::Token::KwTrue,
     "false" => lexer::Token::KwFalse,
+    "type" => lexer::Token::KwType,
     "struct" => lexer::Token::KwStruct,
     "union" => lexer::Token::KwUnion,
     "enum" => lexer::Token::KwEnum,

@@ -372,6 +372,9 @@ impl<'a> CheckCtx<'a> {
     match self.lookup(path)? {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
+          parse::Def::Type(def) => {
+            self.infer_ty(&def.ty)
+          }
           parse::Def::Struct(def) => {
             self.inst_struct((def_id, targs), def)
           }
