@@ -633,7 +633,7 @@ impl<'a> CheckCtx<'a> {
             arg: Box::new(arg)
           }
         } else {
-          self.infer_call(called, args) ?
+          self.infer_call(called, args)?
         }
       }
       Adr(arg) => {
