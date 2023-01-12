@@ -924,6 +924,10 @@ impl<'a> LowerCtx<'a> {
     let l_src_type = self.lower_ty(&src_ty);
 
     match (&dest_ty, &src_ty) {
+      // Pointer to pointer
+      (Ptr(..), Ptr(..)) => {
+        LLVMBuildBitCast(self.l_builder, l_val, l_dest_type, empty_cstr())
+      }
       // Pointer to integer
       (Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn, Ptr(..)) => {
         LLVMBuildPtrToInt(self.l_builder, l_val, l_dest_type, empty_cstr())
