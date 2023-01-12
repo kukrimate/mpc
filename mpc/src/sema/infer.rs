@@ -12,7 +12,8 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
     repo,
     tctx,
     insts: HashMap::new(),
-    scopes: vec! [],
+    parent_ids: Vec::new(),
+    scopes: Vec::new(),
     local_cnt: 0,
     local_defs: Vec::new(),
     ret_ty: Vec::new(),
@@ -65,6 +66,9 @@ struct CheckCtx<'a> {
   // Checked definitions
   insts: HashMap<(DefId, Vec<Ty>), Inst>,
 
+  // Definitions currently being checked
+  parent_ids: Vec<DefId>,
+
   // Symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
 
@@ -91,40 +95,46 @@ impl<'a> CheckCtx<'a> {
     // Try to find previous matching copy
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
 
-    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
+    self.with_scope_of(id.0, |this| {
+      this.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
 
-    // FIXME: bring type params into scope
-    // if def.type_params.len() != id.1.len() {
-    //   return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-    // }
-    let params = self.infer_params(&def.params)?;
-    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
+      // FIXME: bring type params into scope
+      // if def.type_params.len() != id.1.len() {
+      //   return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      // }
+      let params = this.infer_params(&def.params)?;
+      this.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
 
-    Ok(Ty::Inst(def.name, id))
+      Ok(Ty::Inst(def.name, id))
+    })
   }
 
   fn inst_union(&mut self, id: (DefId, Vec<Ty>), def: &parse::UnionDef) -> MRes<Ty> {
     // Try to find previous matching copy
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
 
-    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
+    self.with_scope_of(id.0, |this| {
+      this.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
 
-    let params = self.infer_params(&def.params)?;
-    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
+      let params = this.infer_params(&def.params)?;
+      this.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
 
-    Ok(Ty::Inst(def.name, id))
+      Ok(Ty::Inst(def.name, id))
+    })
   }
 
   fn inst_enum(&mut self, id: (DefId, Vec<Ty>), def: &parse::EnumDef) -> MRes<Ty> {
     // Try to find previous matching copy
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
 
-    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
+    self.with_scope_of(id.0, |this| {
+      this.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
 
-    let variants = self.infer_variants(&def.variants)?;
-    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
+      let variants = this.infer_variants(&def.variants)?;
+      this.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
 
-    Ok(Ty::Inst(def.name, id))
+      Ok(Ty::Inst(def.name, id))
+    })
   }
 
   fn infer_params(&mut self, params: &Vec<(RefStr, parse::Ty)>) -> MRes<Vec<(RefStr, Ty)>> {
@@ -151,119 +161,137 @@ impl<'a> CheckCtx<'a> {
   }
 
   fn inst_data(&mut self, id: DefId, def: &parse::DataDef) -> MRes<LValue> {
-    let ty = self.infer_ty(&def.ty)?;
-    let init = self.infer_rvalue(&def.init)?;
-    self.tctx.unify(&ty, init.ty())?;
-    self.insts.insert((id, vec![]), Inst::Data {
-      name: def.name,
-      ty: ty.clone(),
-      is_mut: def.is_mut,
-      init: consteval(&init)?
-    });
+    self.with_scope_of(id, |this| {
+      let ty = this.infer_ty(&def.ty)?;
+      let init = this.infer_rvalue(&def.init)?;
+      this.tctx.unify(&ty, init.ty())?;
+      this.insts.insert((id, vec![]), Inst::Data {
+        name: def.name,
+        ty: ty.clone(),
+        is_mut: def.is_mut,
+        init: consteval(&init)?
+      });
 
-    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+      Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+    })
   }
 
   fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<RValue> {
-    // Try to find existing instance first
-    if let Some(Inst::Func { ty, .. }) = self.insts.get(&id) {
-      return Ok(RValue::FuncRef { ty: ty.clone(), id })
-    }
+    self.with_scope_of(id.0, |this| {
+      // Try to find existing instance first
+      if let Some(Inst::Func { ty, .. }) = this.insts.get(&id) {
+        return Ok(RValue::FuncRef { ty: ty.clone(), id })
+      }
 
-    self.newscope();
+      this.newscope();
 
-    // Type params
-    if def.type_params.len() != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-    }
-    for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
-      self.define(*name, Sym::TParam(ty.clone()));
-    }
+      // Type params
+      if def.type_params.len() != id.1.len() {
+        return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      }
+      for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
+        this.define(*name, Sym::TParam(ty.clone()));
+      }
 
-    // Regular parameters
-    let mut param_tys = vec![];
-    for (name, _, ty) in def.params.iter() {
-      param_tys.push((*name, self.infer_ty(ty)?));
-    }
+      // Regular parameters
+      let mut param_tys = vec![];
+      for (name, _, ty) in def.params.iter() {
+        param_tys.push((*name, this.infer_ty(ty)?));
+      }
 
-    // Return type
-    let ret_ty = self.infer_ty(&def.ret_ty)?;
+      // Return type
+      let ret_ty = this.infer_ty(&def.ret_ty)?;
 
-    self.popscope();
+      this.popscope();
 
-    // Insert signature record
-    self.insts.insert(id.clone(), Inst::Func {
-      name: def.name,
-      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-      locals: HashMap::new(),
-      body: None
-    });
+      // Insert signature record
+      this.insts.insert(id.clone(), Inst::Func {
+        name: def.name,
+        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+        locals: HashMap::new(),
+        body: None
+      });
 
-    // Return reference to signature
-    Ok(RValue::FuncRef {
-      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-      id
+      // Return reference to signature
+      Ok(RValue::FuncRef {
+        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+        id
+      })
     })
   }
 
   fn inst_func_body(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<()> {
-    // Create environment
-    self.newscope();
-    self.local_defs.push(HashMap::new());
+    self.with_scope_of(id.0, |this| {
+      // Create environment
+      this.newscope();
+      this.local_defs.push(HashMap::new());
 
-    // Type params
-    if def.type_params.len() != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-    }
-    for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
-      self.define(*name, Sym::TParam(ty.clone()));
-    }
+      // Type params
+      if def.type_params.len() != id.1.len() {
+        return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      }
+      for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
+        this.define(*name, Sym::TParam(ty.clone()));
+      }
 
-    // Regular parameters
-    let mut param_tys = vec![];
-    for (index, (name, is_mut, ty)) in def.params.iter().enumerate() {
-      let ty = self.infer_ty(ty)?;
-      param_tys.push((*name, ty.clone()));
-      self.newlocal(LocalDef::Param { name: *name, ty, is_mut: *is_mut, index: index });
-    }
+      // Regular parameters
+      let mut param_tys = vec![];
+      for (index, (name, is_mut, ty)) in def.params.iter().enumerate() {
+        let ty = this.infer_ty(ty)?;
+        param_tys.push((*name, ty.clone()));
+        this.newlocal(LocalDef::Param { name: *name, ty, is_mut: *is_mut, index: index });
+      }
 
-    // Return type
-    let ret_ty = self.infer_ty(&def.ret_ty)?;
+      // Return type
+      let ret_ty = this.infer_ty(&def.ret_ty)?;
 
-    // Body
-    self.ret_ty.push(ret_ty.clone());
-    let body = self.infer_rvalue(&def.body)?;
-    self.tctx.unify(&ret_ty, body.ty())?;
-    self.ret_ty.pop().unwrap();
+      // Body
+      this.ret_ty.push(ret_ty.clone());
+      let body = this.infer_rvalue(&def.body)?;
+      this.tctx.unify(&ret_ty, body.ty())?;
+      this.ret_ty.pop().unwrap();
 
-    let locals = self.local_defs.pop().unwrap();
-    self.popscope();
+      let locals = this.local_defs.pop().unwrap();
+      this.popscope();
 
-    // Insert body
-    self.insts.insert(id.clone(), Inst::Func {
-      name: def.name,
-      ty: Ty::Func(param_tys.clone(), false,Box::new(ret_ty.clone())),
-      locals,
-      body: Some(body)
-    });
+      // Insert body
+      this.insts.insert(id.clone(), Inst::Func {
+        name: def.name,
+        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+        locals,
+        body: Some(body)
+      });
 
-    Ok(())
+      Ok(())
+    })
   }
 
   fn inst_extern_data(&mut self, id: DefId, def: &parse::ExternDataDef) -> MRes<LValue> {
-    let ty = self.infer_ty(&def.ty)?;
-    self.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
+    self.with_scope_of(id, |this| {
+      let ty = this.infer_ty(&def.ty)?;
+      this.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
 
-    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+      Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+    })
   }
 
   fn inst_extern_func(&mut self, id: DefId, def: &parse::ExternFuncDef) -> MRes<RValue> {
-    let ty = Ty::Func(self.infer_params(&def.params)?,
-                      def.varargs,
-                      Box::new(self.infer_ty(&def.ret_ty)?));
-    self.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
+    self.with_scope_of(id, |this| {
+      let ty = Ty::Func(this.infer_params(&def.params)?,
+                        def.varargs,
+                        Box::new(this.infer_ty(&def.ret_ty)?));
+      this.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
 
-    Ok(RValue::FuncRef { ty, id: (id, vec![]) })
+      Ok(RValue::FuncRef { ty, id: (id, vec![]) })
+    })
+  }
+
+  /// Continue checking with a certain DefId as root
+  fn with_scope_of<F: FnOnce(&mut CheckCtx) -> MRes<R>, R>(&mut self, def_id: DefId, f: F) -> MRes<R> {
+    self.parent_ids.push(self.repo.parent(def_id));
+    let result = f(self);
+    self.parent_ids.pop();
+    result
   }
 
   /// Lookup a parsed definition by its id
@@ -308,7 +336,7 @@ impl<'a> CheckCtx<'a> {
     }
 
     // Otherwise check the global symbol table
-    if let Some(def_id) = self.repo.resolve_global_def(path) {
+    if let Some(def_id) = self.repo.locate(*self.parent_ids.last().unwrap(), path) {
       return Ok(Sym::Def(def_id))
     }
     
@@ -456,7 +484,9 @@ impl<'a> CheckCtx<'a> {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Const(def) => {
-            self.infer_lvalue(&def.val)
+            self.with_scope_of(def_id, |this| {
+              this.infer_lvalue(&def.val)
+            })
           }
           parse::Def::Data(def) => {
             self.inst_data(def_id, def)
@@ -853,7 +883,9 @@ impl<'a> CheckCtx<'a> {
       Sym::Def(def_id) => {
         match self.parsed_def(def_id) {
           parse::Def::Const(def) => {
-            self.infer_rvalue(&def.val)
+            self.with_scope_of(def_id, |this| {
+              this.infer_rvalue(&def.val)
+            })
           }
           parse::Def::Func(def) => {
             let targs = def.type_params

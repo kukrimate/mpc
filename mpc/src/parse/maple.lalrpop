@@ -5,7 +5,7 @@
 
 use crate::parse::*;
 
-grammar(module_id: DefId, repo: &mut Repository);
+grammar(repo: &mut Repository);
 
 Path: Path = {
   Identifier  => vec![<>],
@@ -275,19 +275,19 @@ ArrayExprList: Vec<Expr> = {
 TypeDefinition: () = {
   "type" <name:Identifier> "=" <ty:TypeName> => {
     let def_id = repo.def(Def::Type(TypeDef { name, ty }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
   "struct" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
     let def_id = repo.def(Def::Struct(StructDef { name, type_params, params }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
   "union" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
     let def_id = repo.def(Def::Union(UnionDef { name, type_params, params }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
   "enum" <name:Identifier> <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
     let def_id = repo.def(Def::Enum(EnumDef { name, type_params, variants }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
 };
 
@@ -325,14 +325,14 @@ Variant: Variant = {
 ConstDefinition: () = {
   "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
     let def_id = repo.def(Def::Const(ConstDef { name, ty, val }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   }
 };
 
 DataDefinition: () = {
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
     let def_id = repo.def(Def::Data(DataDef { name, is_mut, ty, init }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   }
 };
 
@@ -340,7 +340,7 @@ FunctionDefinition: () = {
   "function" <name:Identifier> <type_params:TypeParameterListOpt>
       "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:BlockExpr> => {
     let def_id = repo.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   }
 };
 
@@ -363,7 +363,7 @@ ImportDefinition: () = <location:@L> "import" <name:Identifier> =>? {
   repo.find_module(name)
     .ok_or_else(|| Error::UnknownModule(location, name))
     .and_then(|path| repo.parse_module(&path))
-    .and_then(|id| Ok(repo.sym(module_id, name, id)))
+    .and_then(|id| Ok(repo.sym(name, id)))
     .map_err(|error| lalrpop_util::ParseError::User { error })
 };
 
@@ -372,15 +372,15 @@ ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 ExternDefinition: () = {
   "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
     let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: false, ret_ty }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
   "function" <name:Identifier> "(" <params:ParameterList> "," "..." ")" <ret_ty:ReturnType> => {
     let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: true, ret_ty }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   },
   "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
     let def_id = repo.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
-    repo.sym(module_id, name, def_id);
+    repo.sym(name, def_id);
   }
 };
 

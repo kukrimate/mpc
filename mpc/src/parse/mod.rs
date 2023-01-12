@@ -192,7 +192,7 @@ pub enum Variant {
 
 pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, Error> {
   let mut repo = Repository::new();
-  repo.root_module_id = repo.parse_module(path)?;
+  repo.parse_module(path)?;
   Ok(repo)
 }
 
@@ -200,7 +200,8 @@ pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, Error> {
 pub struct Repository {
   def_cnt: usize,
   search_dirs: Vec<PathBuf>,
-  pub root_module_id: DefId,
+  current_scope: Vec<DefId>,
+  parent_scope: HashMap<DefId, DefId>,
   pub defs: HashMap<DefId, Def>,
   pub syms: HashMap<DefId, HashMap<RefStr, DefId>>
 }
@@ -211,10 +212,28 @@ impl Repository {
     Repository {
       def_cnt: 0,
       search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
-      root_module_id: DefId(0),
+      current_scope: Vec::new(),
+      parent_scope: HashMap::new(),
       defs: HashMap::new(),
       syms: HashMap::new()
     }
+  }
+
+  pub fn locate(&self, scope_id: DefId, path: &Path) -> Option<DefId> {
+    let mut cur_id = scope_id;
+    for crumb in path.iter() {
+      let symtab = self.syms.get(&cur_id).unwrap();
+      if let Some(def_id) = symtab.get(crumb) {
+        cur_id = *def_id;
+      } else {
+        return None
+      }
+    }
+    Some(cur_id)
+  }
+
+  pub fn parent(&self, def_id: DefId) -> DefId {
+    *self.parent_scope.get(&def_id).unwrap()
   }
 
   fn new_id(&mut self) -> DefId {
@@ -225,29 +244,19 @@ impl Repository {
 
   fn def(&mut self, def: Def) -> DefId {
     let id = self.new_id();
+    let parent = *self.current_scope.last().unwrap();
     self.defs.insert(id, def);
+    self.parent_scope.insert(id, parent);
     id
   }
 
-  fn sym(&mut self, parent: DefId, name: RefStr, def: DefId) {
+  fn sym(&mut self, name: RefStr, def: DefId) {
+    let parent = *self.current_scope.last().unwrap();
     if let Some(syms) = self.syms.get_mut(&parent) {
       syms.insert(name, def);
     } else {
       self.syms.insert(parent,HashMap::from([ (name, def) ]));
     }
-  }
-
-  pub fn resolve_global_def(&self, path: &Path) -> Option<DefId> {
-    let mut cur_id = self.root_module_id;
-    for crumb in path.iter() {
-      let symtab = self.syms.get(&cur_id).unwrap();
-      if let Some(def_id) = symtab.get(crumb) {
-        cur_id = *def_id;
-      } else {
-        return None
-      }
-    }
-    Some(cur_id)
   }
 
   fn find_module(&mut self, name: RefStr) -> Option<PathBuf> {
@@ -267,10 +276,12 @@ impl Repository {
     let parser = maple::ModuleParser::new();
     let module_id = self.new_id();
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
-    let result = match parser.parse(module_id, self, lexer) {
+    self.current_scope.push(module_id);
+    let result = match parser.parse(self, lexer) {
       Ok(()) => Ok(module_id),
       Err(err) => Err(Error::from_lalrpop(err))
     };
+    self.current_scope.pop();
     self.search_dirs.pop();
     result
   }
