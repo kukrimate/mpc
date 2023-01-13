@@ -90,7 +90,7 @@ pub enum Expr {
   Continue,
   Break(Box<Expr>),
   Return(Box<Expr>),
-  Let(RefStr, DefId, IsMut, Option<Ty>, Option<Box<Expr>>),
+  Let(DefId, Option<Box<Expr>>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -113,7 +113,9 @@ pub enum Def {
   Data(DataDef),
   Func(FuncDef),
   ExternData(ExternDataDef),
-  ExternFunc(ExternFuncDef)
+  ExternFunc(ExternFuncDef),
+  Param(ParamDef),
+  Let(LetDef)
 }
 
 #[derive(Debug)]
@@ -144,6 +146,12 @@ pub struct EnumDef {
 }
 
 #[derive(Debug)]
+pub enum Variant {
+  Unit(RefStr),
+  Struct(RefStr, Vec<(RefStr, Ty)>),
+}
+
+#[derive(Debug)]
 pub struct ConstDef {
   pub name: RefStr,
   pub ty: Ty,
@@ -162,7 +170,7 @@ pub struct DataDef {
 pub struct FuncDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub params: Vec<(RefStr, DefId, IsMut, Ty)>,
+  pub params: Vec<DefId>,
   pub ret_ty: Ty,
   pub body: Expr
 }
@@ -183,9 +191,17 @@ pub struct ExternFuncDef {
 }
 
 #[derive(Debug)]
-pub enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, Ty)>),
+pub struct ParamDef {
+  pub name: RefStr,
+  pub is_mut: IsMut,
+  pub ty: Ty
+}
+
+#[derive(Debug)]
+pub struct LetDef {
+  pub name: RefStr,
+  pub is_mut: IsMut,
+  pub ty: Option<Ty>
 }
 
 /// Parser API
@@ -234,6 +250,20 @@ impl Repository {
 
   pub fn parent(&self, def_id: DefId) -> DefId {
     *self.parent_scope.get(&def_id).unwrap()
+  }
+
+  pub fn param_by_id(&self, def_id: DefId) -> &ParamDef {
+    match self.defs.get(&def_id) {
+      Some(Def::Param(def)) => def,
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn let_by_id(&self, def_id: DefId) -> &LetDef {
+    match self.defs.get(&def_id) {
+      Some(Def::Let(def)) => def,
+      _ => unreachable!(),
+    }
   }
 
   fn new_id(&mut self) -> DefId {

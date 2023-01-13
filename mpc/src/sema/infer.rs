@@ -14,7 +14,6 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
     insts: HashMap::new(),
     parent_ids: Vec::new(),
     scopes: Vec::new(),
-    local_defs: Vec::new(),
     ret_ty: Vec::new(),
     loop_ty: Vec::new(),
   };
@@ -71,9 +70,6 @@ struct CheckCtx<'a> {
   // Symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
 
-  // Local definition
-  local_defs: Vec<HashMap<DefId, LocalDef>>,
-
   // Function return type
   ret_ty: Vec<Ty>,
 
@@ -84,7 +80,6 @@ struct CheckCtx<'a> {
 #[derive(Clone)]
 enum Sym {
   Def(DefId),
-  Local(DefId),
   TParam(Ty)
 }
 
@@ -183,7 +178,7 @@ impl<'a> CheckCtx<'a> {
 
       this.newscope();
 
-      // Type params
+      // Type parameters
       if def.type_params.len() != id.1.len() {
         return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
       }
@@ -191,10 +186,11 @@ impl<'a> CheckCtx<'a> {
         this.define(*name, Sym::TParam(ty.clone()));
       }
 
-      // Regular parameters
+      // Parameters
       let mut param_tys = vec![];
-      for (name, _, _, ty) in def.params.iter() {
-        param_tys.push((*name, this.infer_ty(ty)?));
+      for def_id in def.params.iter() {
+        let def = this.repo.param_by_id(*def_id);
+        param_tys.push((def.name, this.infer_ty(&def.ty)?));
       }
 
       // Return type
@@ -206,7 +202,7 @@ impl<'a> CheckCtx<'a> {
       this.insts.insert(id.clone(), Inst::Func {
         name: def.name,
         ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-        locals: HashMap::new(),
+        params: Vec::new(),
         body: None
       });
 
@@ -222,7 +218,6 @@ impl<'a> CheckCtx<'a> {
     self.with_scope_of(id.0, |this| {
       // Create environment
       this.newscope();
-      this.local_defs.push(HashMap::new());
 
       // Type params
       if def.type_params.len() != id.1.len() {
@@ -233,11 +228,19 @@ impl<'a> CheckCtx<'a> {
       }
 
       // Regular parameters
+      let mut param_ids = vec![];
       let mut param_tys = vec![];
-      for (index, (name, id, is_mut, ty)) in def.params.iter().enumerate() {
-        let ty = this.infer_ty(ty)?;
-        param_tys.push((*name, ty.clone()));
-        this.newlocal(*id, LocalDef::Param { name: *name, ty, is_mut: *is_mut, index: index });
+      for def_id in def.params.iter() {
+        let def = this.repo.param_by_id(*def_id);
+        param_ids.push(*def_id);
+        let ty = this.infer_ty(&def.ty)?;
+        param_tys.push((def.name, ty.clone()));
+        this.insts.insert((*def_id, vec![]), Inst::Param {
+          name: def.name,
+          is_mut: def.is_mut,
+          ty
+        });
+        this.define(def.name, Sym::Def(*def_id));
       }
 
       // Return type
@@ -249,14 +252,13 @@ impl<'a> CheckCtx<'a> {
       this.tctx.unify(&ret_ty, body.ty())?;
       this.ret_ty.pop().unwrap();
 
-      let locals = this.local_defs.pop().unwrap();
       this.popscope();
 
       // Insert body
       this.insts.insert(id.clone(), Inst::Func {
         name: def.name,
         ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-        locals,
+        params: param_ids,
         body: Some(body)
       });
 
@@ -297,11 +299,6 @@ impl<'a> CheckCtx<'a> {
     unsafe { &*(self.repo.defs.get(&id).unwrap() as *const _) }
   }
 
-  /// Lookup a local definition by its id
-  fn local_def(&self, id: DefId) -> &LocalDef {
-    self.local_defs.last().unwrap().get(&id).unwrap()
-  }
-
   /// Lookup an instance by its id
   fn inst(&self, id: &(DefId, Vec<Ty>)) -> &Inst {
     self.insts.get(id).unwrap()
@@ -339,12 +336,6 @@ impl<'a> CheckCtx<'a> {
     }
     
     Err(Box::new(UnresolvedPathError(path.clone())))
-  }
-
-  /// Create local definition with a new id
-  fn newlocal(&mut self, id: DefId, def: LocalDef) {
-    self.define(def.name(), Sym::Local(id));
-    self.local_defs.last_mut().unwrap().insert(id, def);
   }
 
   /// Infer the semantic form of a type expression
@@ -413,9 +404,6 @@ impl<'a> CheckCtx<'a> {
       }
       Sym::TParam(ty) => {
         Ok(ty)
-      }
-      _ => {
-        Err(Box::new(UnresolvedPathError(path.clone())))
       }
     }
   }
@@ -488,17 +476,31 @@ impl<'a> CheckCtx<'a> {
           parse::Def::ExternData(def) => {
             self.inst_extern_data(def_id, def)
           }
+          parse::Def::Param(_) => {
+            let inst = self.insts.get(&(def_id, vec![])).unwrap();
+            if let Inst::Param { ty, is_mut, .. } = inst {
+              Ok(LValue::ParamRef {
+                ty: ty.clone(),
+                is_mut: *is_mut,
+                id: def_id
+              })
+            } else {
+              unreachable!()
+            }
+          }
+          parse::Def::Let(_) => {
+            let inst = self.insts.get(&(def_id, vec![])).unwrap();
+            if let Inst::Let { ty, is_mut, .. } = inst {
+              Ok(LValue::LetRef {
+                ty: ty.clone(),
+                is_mut: *is_mut,
+                id: def_id
+              })
+            } else {
+              unreachable!()
+            }
+          }
           _ => Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path[0]))))
-        }
-      }
-      Sym::Local(id) => {
-        match self.local_def(id) {
-          LocalDef::Param { ty, is_mut, .. } => {
-            Ok(LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, id })
-          },
-          LocalDef::Let { ty, is_mut, .. } => {
-            Ok(LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, id })
-          },
         }
       }
       Sym::TParam(..) => {
@@ -795,31 +797,36 @@ impl<'a> CheckCtx<'a> {
 
         RValue::Return { ty: self.tctx.tvar(Ty::BoundAny), arg: Box::new(arg) }
       }
-      Let(name, id, is_mut, ty, init) => {
+      Let(def_id, init) => {
+        let def = self.repo.let_by_id(*def_id);
+
+        // Add symbol
+        self.define(def.name, Sym::Def(*def_id));
+
+        // Type check initializer
         let (ty, init) = if let Some(init) = init {
           // Check initializer
           let init = self.infer_rvalue(init)?;
           // Unify type annotation with initializer type
-          if let Some(ty) = ty {
+          if let Some(ty) = &def.ty {
             let ty = self.infer_ty(ty)?;
             self.tctx.unify(&ty, init.ty())?;
           }
           (init.ty().clone(), Some(Box::new(init)))
-        } else if let Some(ty) = ty {
+        } else if let Some(ty) = &def.ty {
           (self.infer_ty(ty)?, None)
         } else {
           (self.tctx.tvar(Ty::BoundAny), None)
         };
 
-        // Add local definition
-        self.newlocal(*id, LocalDef::Let {
-          name: *name,
-          is_mut: *is_mut,
+        // Add instance
+        self.insts.insert((*def_id, vec![]), Inst::Let {
+          name: def.name,
+          is_mut: def.is_mut,
           ty
         });
 
-        // Add let expression
-        RValue::Let { ty: Ty::Tuple(vec![]), id: *id, init }
+        RValue::Let { ty: Ty::Tuple(vec![]), id: *def_id, init }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;
@@ -900,19 +907,33 @@ impl<'a> CheckCtx<'a> {
           parse::Def::ExternFunc(def) => {
             self.inst_extern_func(def_id, def)
           }
-          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path[0]))))
-        }
-      }
-      Sym::Local(id) => {
-        match self.local_def(id) {
-          LocalDef::Param { ty, is_mut, .. } => {
-            let lvalue = LValue::ParamRef { ty: ty.clone(), is_mut: *is_mut, id };
-            Ok(lvalue_to_rvalue(lvalue))
-          },
-          LocalDef::Let { ty, is_mut, .. } => {
-            let lvalue = LValue::LetRef { ty: ty.clone(), is_mut: *is_mut, id };
-            Ok(lvalue_to_rvalue(lvalue))
+          parse::Def::Param(_) => {
+            let inst = self.insts.get(&(def_id, vec![])).unwrap();
+            if let Inst::Param { ty, is_mut, .. } = inst {
+              let lvalue = LValue::ParamRef {
+                ty: ty.clone(),
+                is_mut: *is_mut,
+                id: def_id
+              };
+              Ok(lvalue_to_rvalue(lvalue))
+            } else {
+              unreachable!()
+            }
           }
+          parse::Def::Let(_) => {
+            let inst = self.insts.get(&(def_id, vec![])).unwrap();
+            if let Inst::Let { ty, is_mut, .. } = inst {
+              let lvalue = LValue::LetRef {
+                ty: ty.clone(),
+                is_mut: *is_mut,
+                id: def_id
+              };
+              Ok(lvalue_to_rvalue(lvalue))
+            } else {
+              unreachable!()
+            }
+          }
+          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path[0]))))
         }
       }
       Sym::TParam(..) => {

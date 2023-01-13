@@ -69,12 +69,10 @@ unsafe fn lower_const_ptr(ptr: &ConstPtr, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::DataRef { id, .. } => {
-      ctx.get_value(&(*id, vec![]))
-    }
+    LValue::DataRef { id, .. } |
     LValue::ParamRef { id, .. } |
-    LValue::LetRef { id, .. }   => {
-      ctx.get_local(*id)
+    LValue::LetRef { id, .. } => {
+      ctx.get_value(&(*id, vec![]))
     }
     LValue::StrLit { val, .. } => {
       ctx.build_string_lit(val)
@@ -254,14 +252,22 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_void()
     }
     RValue::Let { id, init, .. } => {
-      if let Some(init) = init {
-        // Generate initializer in-place
-        let l_local = ctx.get_local(*id);
-        let l_init = lower_rvalue(init, ctx);
-        ctx.build_store(init.ty(), l_local, l_init);
+      if let Some(Inst::Let { name, ty, .. }) = ctx.insts.get(&(*id, vec![])) {
+        // Allocate variable
+        let l_local = ctx.allocate_local(*name, ty);
+        ctx.values.insert((*id, vec![]), l_local);
+
+        // Generate initializer
+        if let Some(init) = init {
+          let l_init = lower_rvalue(init, ctx);
+          ctx.build_store(init.ty(), l_local, l_init);
+        }
+
+        // Void value
+        ctx.build_void()
+      } else {
+        unreachable!()
       }
-      // Void value
-      ctx.build_void()
     }
     RValue::If { ty, cond, tbody, ebody, .. } => {
       let mut then_block = ctx.new_block();
@@ -378,6 +384,7 @@ unsafe fn lower_bool(rvalue: &RValue, ctx: &mut LowerCtx, next1: BB, next2: BB) 
 
 struct LowerCtx<'a> {
   tctx: &'a mut TVarCtx,
+  insts: &'a HashMap<(DefId, Vec<Ty>), Inst>,
 
   // Target machine
   l_machine: LLVMTargetMachineRef,
@@ -395,7 +402,6 @@ struct LowerCtx<'a> {
 
   // Values
   values: HashMap<(DefId, Vec<Ty>), LLVMValueRef>,
-  locals: HashMap<DefId, LLVMValueRef>,
 
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
@@ -406,7 +412,7 @@ struct LowerCtx<'a> {
 }
 
 impl<'a> LowerCtx<'a> {
-  unsafe fn new(tctx: &'a mut TVarCtx, module_id: RefStr) -> Self {
+  unsafe fn new(tctx: &'a mut TVarCtx, insts: &'a HashMap<(DefId, Vec<Ty>), Inst>, module_id: RefStr) -> Self {
     LLVM_InitializeAllTargetInfos();
     LLVM_InitializeAllTargets();
     LLVM_InitializeAllTargetMCs();
@@ -448,6 +454,7 @@ impl<'a> LowerCtx<'a> {
 
     LowerCtx {
       tctx,
+      insts,
 
       l_machine,
       l_layout,
@@ -460,7 +467,6 @@ impl<'a> LowerCtx<'a> {
 
       types: HashMap::new(),
       values: HashMap::new(),
-      locals: HashMap::new(),
       string_lits: HashMap::new(),
 
       break_to: Vec::new(),
@@ -476,10 +482,6 @@ impl<'a> LowerCtx<'a> {
   fn get_value(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMValueRef {
     let tmp = (id.0, self.tctx.root_type_args(&id.1));
     *self.values.get(&tmp).unwrap()
-  }
-
-  fn get_local(&self, id: DefId) -> LLVMValueRef {
-    *self.locals.get(&id).unwrap()
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
@@ -585,9 +587,9 @@ impl<'a> LowerCtx<'a> {
     l_params
   }
 
-  unsafe fn lower_ty_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
+  unsafe fn lower_ty_defs(&mut self) {
     // Pass 1: Create named LLVM structure for each type definition
-    for (id, def) in insts.iter() {
+    for (id, def) in self.insts.iter() {
       let l_type = match def {
         Inst::Struct { name, .. } |
         Inst::Union { name, .. } |
@@ -601,7 +603,7 @@ impl<'a> LowerCtx<'a> {
     }
 
     // Pass 2: Resolve bodies
-    for (id, def) in insts.iter() {
+    for (id, def) in self.insts.iter() {
       let mut l_params = match def {
         Inst::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
@@ -1110,9 +1112,9 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn lower_defs(&mut self, insts: &HashMap<(DefId, Vec<Ty>), Inst>) {
+  unsafe fn lower_defs(&mut self) {
     // Pass 1: Create LLVM values for each definition
-    for (id, def) in insts.iter() {
+    for (id, def) in self.insts.iter() {
       let l_value = match def {
         Inst::Data { name, ty, .. } |
         Inst::ExternData { name, ty, .. } => {
@@ -1134,7 +1136,7 @@ impl<'a> LowerCtx<'a> {
       self.values.insert(id.clone(), l_value);
     }
     // Pass 2: Lower initializers and function bodies
-    for (id, def) in insts.iter() {
+    for (id, def) in self.insts.iter() {
       match def {
         Inst::Data { init, .. }  => {
           let l_value = self.get_value(id);
@@ -1142,37 +1144,26 @@ impl<'a> LowerCtx<'a> {
           // Create LLVM initializer
           LLVMSetInitializer(l_value, lower_const_val(init, self));
         }
-        Inst::Func { locals, body: Some(body), .. } => {
+        Inst::Func { params, body: Some(body), .. } => {
           self.l_func = self.get_value(id);
 
           // Create prelude block for allocas
           self.l_alloca_block = self.new_block();
           self.enter_block(self.l_alloca_block);
 
-          // Clear locals from previous function
-          self.locals.clear();
-
           // Calculate parameter base index
           let pbase = if let Semantics::Addr = self.ty_semantics(body.ty()) { 1 } else { 0 };
 
-          // Allocate locals
-          for (id, local) in locals.iter() {
-            let l_value = match local {
-              // Parameter
-              LocalDef::Param { name, ty, index, .. } => {
-                let l_alloca = self.allocate_local(*name, ty);
-                let l_param = LLVMGetParam(self.l_func, pbase + *index as u32);
-                self.build_store(ty, l_alloca, l_param);
-                l_alloca
-              }
-
-              // Local variable
-              LocalDef::Let { name, ty, .. } => {
-                self.allocate_local(*name, ty)
-              }
-            };
-
-            self.locals.insert(*id, l_value);
+          // Allocate parameters
+          for (index, def_id) in params.iter().enumerate() {
+            if let Some(Inst::Param { name, ty, .. }) = self.insts.get(&(*def_id, vec![])) {
+              let l_alloca = self.allocate_local(*name, ty);
+              let l_param = LLVMGetParam(self.l_func, pbase + index as u32);
+              self.build_store(ty, l_alloca, l_param);
+              self.values.insert((*def_id, vec![]), l_alloca);
+            } else {
+              unreachable!()
+            }
           }
 
           // Create LLVM function body
@@ -1260,9 +1251,9 @@ impl<'a> Drop for LowerCtx<'a> {
 
 pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>), Inst>, path: &Path, compile_to: CompileTo) -> MRes<()> {
   unsafe {
-    let mut ctx = LowerCtx::new(tctx, RefStr::new(""));
-    ctx.lower_ty_defs(insts);
-    ctx.lower_defs(insts);
+    let mut ctx = LowerCtx::new(tctx, insts, RefStr::new(""));
+    ctx.lower_ty_defs();
+    ctx.lower_defs();
     if let Some(_) = option_env!("MPC_SPEW") {
       ctx.dump();
     }

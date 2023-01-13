@@ -114,10 +114,14 @@ ClosedItemList: Vec<Expr> = {
 };
 
 OpenItem: Expr = {
-  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" <init:Expr> =>
-    Expr::Let(name, repo.new_id(), is_mut, ty, Some(Box::new(init))),
-  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" "!" =>
-    Expr::Let(name, repo.new_id(), is_mut, ty, None),
+  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" <init:Expr> => {
+    let def_id = repo.def(Def::Let(LetDef { name, is_mut, ty }));
+    Expr::Let(def_id, Some(Box::new(init)))
+  },
+  "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" "!" => {
+    let def_id = repo.def(Def::Let(LetDef { name, is_mut, ty }));
+        Expr::Let(def_id, None)
+  },
   "continue" => Expr::Continue,
   "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Empty))),
   "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Empty))),
@@ -344,12 +348,12 @@ FunctionDefinition: () = {
   }
 };
 
-ParameterDefinitionListOpt: Vec<(RefStr, DefId, IsMut, Ty)> = {
+ParameterDefinitionListOpt: Vec<DefId> = {
   ParameterDefinitionList,
   => vec![]
 };
 
-ParameterDefinitionList: Vec<(RefStr, DefId, IsMut, Ty)> = {
+ParameterDefinitionList: Vec<DefId> = {
   ParameterDefinition => vec![<>],
   <mut list:ParameterDefinitionList> "," <param:ParameterDefinition> => {
     list.push(param);
@@ -357,8 +361,8 @@ ParameterDefinitionList: Vec<(RefStr, DefId, IsMut, Ty)> = {
   },
 };
 
-ParameterDefinition: (RefStr, DefId, IsMut, Ty) = <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-  (name, repo.new_id(), is_mut, ty)
+ParameterDefinition: DefId = <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+  repo.def(Def::Param(ParamDef { name, is_mut, ty }))
 };
 
 ImportDefinition: () = <location:@L> "import" <name:Identifier> =>? {

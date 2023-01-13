@@ -29,41 +29,18 @@ enum Inst {
   Struct { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Union { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
   Enum { name: RefStr, variants: Option<Vec<Variant>> },
-  Func { name: RefStr, ty: Ty, locals: HashMap<DefId, LocalDef>, body: Option<RValue> },
+  Func { name: RefStr, ty: Ty, params: Vec<DefId>, body: Option<RValue> },
   Data { name: RefStr, ty: Ty, is_mut: IsMut, init: ConstVal },
   ExternFunc { name: RefStr, ty: Ty },
   ExternData { name: RefStr, ty: Ty, is_mut: IsMut },
+  Param { name: RefStr, ty: Ty, is_mut: IsMut },
+  Let { name: RefStr, ty: Ty, is_mut: IsMut }
 }
 
 #[derive(Debug)]
 enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
-}
-
-/// Local definition
-#[derive(Debug)]
-enum LocalDef {
-  Param {
-    name: RefStr,
-    ty: Ty,
-    is_mut: IsMut,
-    index: usize,
-  },
-  Let {
-    name: RefStr,
-    ty: Ty,
-    is_mut: IsMut,
-  },
-}
-
-impl LocalDef {
-  fn name(&self) -> RefStr {
-    match self {
-      LocalDef::Param { name, .. } => *name,
-      LocalDef::Let { name, .. } => *name
-    }
-  }
 }
 
 /// Types
