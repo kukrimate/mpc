@@ -82,15 +82,29 @@ impl TVarCtx {
         (Intn, Intn) => Intn,
         (Float, Float) => Float,
         (Double, Double) => Double,
-
-        (Inst(name, (def_id, targs1)),
-          Inst(_, (def_id2, targs2))) if def_id == def_id2 => {
+        (StructRef(name, (def_id, targs1)), StructRef(_, (def_id2, targs2))) if def_id == def_id2 => {
           let targs = targs1
             .iter()
             .zip(targs2.iter())
             .map(|(ty1, ty2)| self.unify(ty1, ty2))
             .monadic_collect()?;
-          Inst(*name, (*def_id, targs))
+          StructRef(*name, (*def_id, targs))
+        }
+        (UnionRef(name, (def_id, targs1)), UnionRef(_, (def_id2, targs2))) if def_id == def_id2 => {
+          let targs = targs1
+            .iter()
+            .zip(targs2.iter())
+            .map(|(ty1, ty2)| self.unify(ty1, ty2))
+            .monadic_collect()?;
+          UnionRef(*name, (*def_id, targs))
+        }
+        (EnumRef(name, (def_id, targs1)), EnumRef(_, (def_id2, targs2))) if def_id == def_id2 => {
+          let targs = targs1
+            .iter()
+            .zip(targs2.iter())
+            .map(|(ty1, ty2)| self.unify(ty1, ty2))
+            .monadic_collect()?;
+          EnumRef(*name, (*def_id, targs))
         }
         (Func(par1, va1, ret1),
           Func(par2, va2, ret2)) if par1.len() == par2.len() && va1 == va2 => {
@@ -202,12 +216,26 @@ impl TVarCtx {
       Intn => Intn,
       Float => Float,
       Double => Double,
-      Inst(name, (id, targs)) => {
+      StructRef(name, (id, targs)) => {
         let targs = targs
           .iter()
           .map(|ty| self.lit_ty(ty))
           .collect();
-        Inst(*name, (*id, targs))
+        StructRef(*name, (*id, targs))
+      }
+      UnionRef(name, (id, targs)) => {
+        let targs = targs
+          .iter()
+          .map(|ty| self.lit_ty(ty))
+          .collect();
+        UnionRef(*name, (*id, targs))
+      }
+      EnumRef(name, (id, targs)) => {
+        let targs = targs
+          .iter()
+          .map(|ty| self.lit_ty(ty))
+          .collect();
+        EnumRef(*name, (*id, targs))
       }
       Ptr(is_mut, ty) => Ptr(*is_mut, Box::new(self.lit_ty(&**ty))),
       Func(params, va, ty) => {
@@ -272,8 +300,14 @@ impl TVarCtx {
       Intn => Intn,
       Float => Float,
       Double => Double,
-      Inst(name, (id, type_args)) => {
-        Inst(*name, (*id, self.root_type_args(type_args)))
+      StructRef(name, (id, type_args)) => {
+        StructRef(*name, (*id, self.root_type_args(type_args)))
+      }
+      UnionRef(name, (id, type_args)) => {
+        UnionRef(*name, (*id, self.root_type_args(type_args)))
+      }
+      EnumRef(name, (id, type_args)) => {
+        EnumRef(*name, (*id, self.root_type_args(type_args)))
       }
       Ptr(is_mut, ty) => {
         Ptr(*is_mut, Box::new(self.root_ty(ty)))

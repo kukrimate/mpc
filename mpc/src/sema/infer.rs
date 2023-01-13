@@ -75,11 +75,17 @@ struct CheckCtx<'a> {
 }
 
 impl<'a> CheckCtx<'a> {
+  fn inst_alias(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+    // FIXME: take type arguments into account
+    let def = if let ResolvedDef::Type(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
+    self.infer_ty(&def.ty)
+  }
+
   fn inst_struct(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
     let def = if let ResolvedDef::Struct(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
 
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::StructRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
 
@@ -90,35 +96,35 @@ impl<'a> CheckCtx<'a> {
     let params = self.infer_params(&def.params)?;
     self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
 
-    Ok(Ty::Inst(def.name, id))
+    Ok(Ty::StructRef(def.name, id))
   }
 
   fn inst_union(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
     let def = if let ResolvedDef::Union(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
 
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::UnionRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
 
     let params = self.infer_params(&def.params)?;
     self.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
 
-    Ok(Ty::Inst(def.name, id))
+    Ok(Ty::UnionRef(def.name, id))
   }
 
   fn inst_enum(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
     let def = if let ResolvedDef::Enum(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
 
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::EnumRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
 
     let variants = self.infer_variants(&def.variants)?;
     self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
 
-    Ok(Ty::Inst(def.name, id))
+    Ok(Ty::EnumRef(def.name, id))
   }
 
   fn infer_params(&mut self, params: &Vec<(RefStr, ResolvedTy)>) -> MRes<Vec<(RefStr, Ty)>> {
@@ -260,6 +266,7 @@ impl<'a> CheckCtx<'a> {
     let ty = Ty::Func(self.infer_params(&def.params)?,
                       def.varargs,
                       Box::new(self.infer_ty(&def.ret_ty)?));
+
     self.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
 
     Ok(RValue::FuncRef { ty, id: (id, vec![]) })
@@ -268,11 +275,6 @@ impl<'a> CheckCtx<'a> {
   /// Lookup a parsed definition by its id
   fn resolved_def(&self, id: DefId) -> &'static ResolvedDef {
     unsafe { &*(self.repo.resolved_defs.get(&id).unwrap() as *const _) }
-  }
-
-  /// Lookup an instance by its id
-  fn lookup_inst(&self, id: &(DefId, Vec<Ty>)) -> &Inst {
-    self.insts.get(id).unwrap()
   }
 
   /// Infer the semantic form of a type expression
@@ -295,19 +297,21 @@ impl<'a> CheckCtx<'a> {
       TParam(index) => {
         self.type_args[*index].clone()
       }
-      Inst(def_id, type_args) => {
-        let type_args = type_args
-          .iter()
-          .map(|ty| self.infer_ty(ty))
-          .monadic_collect()?;
-
-        match self.resolved_def(*def_id) {
-          ResolvedDef::Type(def) => self.infer_ty(&def.ty)?,
-          ResolvedDef::Struct(..) => self.inst_struct((*def_id, type_args))?,
-          ResolvedDef::Union(..) => self.inst_union((*def_id, type_args))?,
-          ResolvedDef::Enum(..) => self.inst_enum((*def_id, type_args))?,
-          _ => unreachable!()
-        }
+      AliasRef(def_id, type_args) => {
+        let type_args = self.infer_type_args(type_args)?;
+        self.inst_alias((*def_id, type_args))?
+      }
+      StructRef(def_id, type_args) => {
+        let type_args = self.infer_type_args(type_args)?;
+        self.inst_struct((*def_id, type_args))?
+      }
+      UnionRef(def_id, type_args) => {
+        let type_args = self.infer_type_args(type_args)?;
+        self.inst_union((*def_id, type_args))?
+      }
+      EnumRef(def_id, type_args) => {
+        let type_args = self.infer_type_args(type_args)?;
+        self.inst_enum((*def_id, type_args))?
       }
       Ptr(is_mut, base_ty) => {
         Ty::Ptr(*is_mut, Box::new(self.infer_ty(base_ty)?))
@@ -325,6 +329,13 @@ impl<'a> CheckCtx<'a> {
         Ty::Tuple(self.infer_params(params)?)
       }
     })
+  }
+
+  fn infer_type_args(&mut self, type_args:&Vec<ResolvedTy>) -> MRes<Vec<Ty>> {
+    type_args
+      .iter()
+      .map(|ty| self.infer_ty(ty))
+      .monadic_collect()
   }
 
   /// Infer the semantic form of an expression in an lvalue context
@@ -400,11 +411,14 @@ impl<'a> CheckCtx<'a> {
       let ty = self.tctx.lit_ty_nonrecusrive(arg.ty());
 
       let (is_stru, params) = match &ty {
-        Ty::Inst(_, id) => match self.lookup_inst(id) {
-          Inst::Struct { params: Some(params), .. } => (true, params),
-          Inst::Union { params: Some(params), .. } => (false, params),
-          _ => break 'error
-        },
+        Ty::StructRef(_, id) => {
+          if let Inst::Struct { params: Some(params), .. }
+            = self.insts.get(id).unwrap() { (true, params) } else { unreachable!() }
+        }
+        Ty::UnionRef(_, id) => {
+          if let Inst::Union { params: Some(params), .. }
+            = self.insts.get(id).unwrap() { (false, params) } else { unreachable!() }
+        }
         Ty::Tuple(params) => (true, params),
         _ => break 'error
       };

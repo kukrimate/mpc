@@ -85,7 +85,9 @@ enum Ty {
   Intn,
   Float,
   Double,
-  Inst(RefStr, (DefId, Vec<Ty>)),
+  StructRef(RefStr, (DefId, Vec<Ty>)),
+  UnionRef(RefStr, (DefId, Vec<Ty>)),
+  EnumRef(RefStr, (DefId, Vec<Ty>)),
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, bool, Box<Ty>),
   Arr(usize, Box<Ty>),
@@ -116,7 +118,9 @@ impl fmt::Debug for Ty {
       Intn => write!(f, "Intn"),
       Float => write!(f, "Float"),
       Double => write!(f, "Double"),
-      Inst(name, ..) => write!(f, "{}", name),
+      StructRef(name, ..) => write!(f, "{}", name),
+      UnionRef(name, ..) => write!(f, "{}", name),
+      EnumRef(name, ..) => write!(f, "{}", name),
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Func(params, _va, ty) => {
         write!(f, "Function")?;

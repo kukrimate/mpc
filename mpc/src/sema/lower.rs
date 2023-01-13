@@ -525,7 +525,9 @@ impl<'a> LowerCtx<'a> {
       Uintn | Intn => LLVMInt64TypeInContext(self.l_context),
       Float => LLVMFloatTypeInContext(self.l_context),
       Double => LLVMDoubleTypeInContext(self.l_context),
-      Inst(_, id) => {
+      StructRef(_, id) |
+      UnionRef(_, id) |
+      EnumRef(_, id) => {
         self.get_type(id)
       }
       Ptr(_, base_ty) => {
@@ -829,8 +831,10 @@ impl<'a> LowerCtx<'a> {
         // Otherwise this is an empty tuple
         Semantics::Void
       }
-      // NOTE: empty structs and unions still follow address semantics
-      Inst(..) => Semantics::Addr,
+      // NOTE: empty aggregates and unions still follow address semantics
+      StructRef(..) |
+      UnionRef(..) |
+      EnumRef(..) => Semantics::Addr,
       _ => unreachable!()
     }
   }

@@ -116,7 +116,10 @@ pub enum ResolvedTy {
   Float,
   Double,
   TParam(usize),
-  Inst(DefId, Vec<ResolvedTy>),
+  AliasRef(DefId, Vec<ResolvedTy>),
+  StructRef(DefId, Vec<ResolvedTy>),
+  UnionRef(DefId, Vec<ResolvedTy>),
+  EnumRef(DefId, Vec<ResolvedTy>),
   Ptr(IsMut, Box<ResolvedTy>),
   Func(Vec<(RefStr, ResolvedTy)>, Box<ResolvedTy>),
   Arr(Box<ResolvedExpr>, Box<ResolvedTy>),
@@ -372,17 +375,16 @@ impl<'a> ResolveCtx<'a> {
         match self.lookup(path)? {
           Sym::Def(def_id) => {
             match self.repo.parsed_by_id(def_id) {
-              parse::Def::Type(..) |
-              parse::Def::Struct(..) |
-              parse::Def::Union(..) |
-              parse::Def::Enum(..) => {
-                ResolvedTy::Inst(def_id, type_args)
-              }
+              parse::Def::Type(..) => ResolvedTy::AliasRef(def_id, type_args),
+              parse::Def::Struct(..) => ResolvedTy::StructRef(def_id, type_args),
+              parse::Def::Union(..) => ResolvedTy::UnionRef(def_id, type_args),
+              parse::Def::Enum(..) => ResolvedTy::EnumRef(def_id, type_args),
               _ => Err(ResolveError::ValueInTypeContext(path.clone()))?
             }
           }
-          Sym::Local(..) | Sym::Param(..) => Err(ResolveError::ValueInTypeContext(path.clone()))?,
-          Sym::TParam(index) => ResolvedTy::TParam(index)
+          Sym::TParam(index) => ResolvedTy::TParam(index),
+          Sym::Local(..) |
+          Sym::Param(..) => Err(ResolveError::ValueInTypeContext(path.clone()))?,
         }
       }
       Ptr(is_mut, base_ty) => {
