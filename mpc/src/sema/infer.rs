@@ -19,7 +19,7 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
   };
 
   // Instantiate signatures for non-generic functions
-  for (id, def) in repo.defs.iter() {
+  for (id, def) in repo.parsed_defs.iter() {
     match def {
       parse::Def::Func(def) if def.type_params.len() == 0 => {
         ctx.inst_func_sig((*id, vec![]), def)?;
@@ -296,7 +296,7 @@ impl<'a> CheckCtx<'a> {
 
   /// Lookup a parsed definition by its id
   fn parsed_def(&self, id: DefId) -> &'static parse::Def {
-    unsafe { &*(self.repo.defs.get(&id).unwrap() as *const _) }
+    unsafe { &*(self.repo.parsed_defs.get(&id).unwrap() as *const _) }
   }
 
   /// Lookup an instance by its id
@@ -322,9 +322,9 @@ impl<'a> CheckCtx<'a> {
   /// Resolve symbol by name
   fn lookup(&self, path: &parse::Path) -> MRes<Sym> {
     // Single crumb paths can refer to locals
-    if path.len() == 1 {
+    if path.crumbs().len() == 1 {
       for scope in self.scopes.iter().rev() {
-        if let Some(sym) = scope.get(&path[0]) {
+        if let Some(sym) = scope.get(&path.crumbs()[0]) {
           return Ok(sym.clone());
         }
       }
@@ -500,11 +500,11 @@ impl<'a> CheckCtx<'a> {
               unreachable!()
             }
           }
-          _ => Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path[0]))))
+          _ => Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path))))
         }
       }
       Sym::TParam(..) => {
-        Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path[0]))))
+        Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path))))
       }
     }
   }
@@ -933,11 +933,11 @@ impl<'a> CheckCtx<'a> {
               unreachable!()
             }
           }
-          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path[0]))))
+          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path))))
         }
       }
       Sym::TParam(..) => {
-        Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path[0]))))
+        Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path))))
       }
     }
   }
@@ -1056,13 +1056,7 @@ struct UnresolvedPathError(parse::Path);
 
 impl fmt::Display for UnresolvedPathError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    // There is always at least one crumb
-    write!(f, "Unresolved path {}", self.0[0].borrow_rs())?;
-    // Then the rest can be prefixed with ::
-    for crumb in self.0[1..].iter() {
-      write!(f, "::{}", crumb.borrow_rs())?;
-    }
-    Ok(())
+    write!(f, "Unresolved path {}", self.0)
   }
 }
 

@@ -174,6 +174,22 @@ impl<I, O> MonadicCollect<O> for I
   }
 }
 
+pub trait MonadicCollect2<O, E> {
+  fn monadic_collect2(&mut self) -> Result<Vec<O>, E>;
+}
+
+impl<I, O, E> MonadicCollect2<O, E> for I
+  where I: Iterator<Item=Result<O, E>>
+{
+  fn monadic_collect2(&mut self) -> Result<Vec<O>, E> {
+    let mut vec = Vec::new();
+    for item in self {
+      vec.push(item?);
+    }
+    Ok(vec)
+  }
+}
+
 /// Calculate the length of a C-style string (in bytes)
 
 pub unsafe fn c_strlen(s: *const c_char) -> usize {

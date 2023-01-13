@@ -7,13 +7,15 @@ use crate::parse::*;
 
 grammar(repo: &mut Repository);
 
-Path: Path = {
+Crumbs: Vec<RefStr> = {
   Identifier  => vec![<>],
-  <mut v:Path> "::" <i:Identifier> => {
+  <mut v:Crumbs> "::" <i:Identifier> => {
     v.push(i);
     v
   }
 };
+
+Path: Path = Crumbs => Path(<>);
 
 // Types
 
@@ -115,12 +117,10 @@ ClosedItemList: Vec<Expr> = {
 
 OpenItem: Expr = {
   "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" <init:Expr> => {
-    let def_id = repo.def(Def::Let(LetDef { name, is_mut, ty }));
-    Expr::Let(def_id, Some(Box::new(init)))
+    Expr::Let(name, is_mut, ty, Some(Box::new(init)))
   },
   "let" <is_mut:IsMut> <name:Identifier> <ty:(":" <TypeName>)?> "=" "!" => {
-    let def_id = repo.def(Def::Let(LetDef { name, is_mut, ty }));
-        Expr::Let(def_id, None)
+    Expr::Let(name, is_mut, ty, None)
   },
   "continue" => Expr::Continue,
   "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Empty))),
@@ -348,12 +348,12 @@ FunctionDefinition: () = {
   }
 };
 
-ParameterDefinitionListOpt: Vec<DefId> = {
+ParameterDefinitionListOpt: Vec<ParamDef> = {
   ParameterDefinitionList,
   => vec![]
 };
 
-ParameterDefinitionList: Vec<DefId> = {
+ParameterDefinitionList: Vec<ParamDef> = {
   ParameterDefinition => vec![<>],
   <mut list:ParameterDefinitionList> "," <param:ParameterDefinition> => {
     list.push(param);
@@ -361,8 +361,8 @@ ParameterDefinitionList: Vec<DefId> = {
   },
 };
 
-ParameterDefinition: DefId = <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
-  repo.def(Def::Param(ParamDef { name, is_mut, ty }))
+ParameterDefinition: ParamDef = <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+  (name, is_mut, ty)
 };
 
 ImportDefinition: () = <location:@L> "import" <name:Identifier> =>? {

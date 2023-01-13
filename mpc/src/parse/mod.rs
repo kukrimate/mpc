@@ -3,11 +3,13 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
-use crate::util::RefStr;
+use crate::util::{MRes, RefStr};
+use crate::resolve::{ResolvedDef,resolve_def};
 use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashMap;
 use std::{error, fs, fmt, io};
+use std::fmt::Formatter;
 use std::path::PathBuf;
 
 mod lexer;
@@ -28,7 +30,25 @@ impl fmt::Display for IsMut {
   }
 }
 
-pub type Path = Vec<RefStr>;
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Path(Vec<RefStr>);
+
+impl Path {
+  pub fn crumbs(&self) -> &Vec<RefStr> { &self.0 }
+}
+
+impl fmt::Display for Path {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    // There is always at least one crumb
+    self.crumbs()[0].borrow_rs().fmt(f)?;
+    // Then the rest can be prefixed with ::
+    for crumb in self.crumbs()[1..].iter() {
+      write!(f, "::")?;
+      crumb.borrow_rs().fmt(f)?;
+    }
+    Ok(())
+  }
+}
 
 #[derive(Debug)]
 pub enum Ty {
@@ -90,7 +110,7 @@ pub enum Expr {
   Continue,
   Break(Box<Expr>),
   Return(Box<Expr>),
-  Let(DefId, Option<Box<Expr>>),
+  Let(RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
@@ -113,9 +133,7 @@ pub enum Def {
   Data(DataDef),
   Func(FuncDef),
   ExternData(ExternDataDef),
-  ExternFunc(ExternFuncDef),
-  Param(ParamDef),
-  Let(LetDef)
+  ExternFunc(ExternFuncDef)
 }
 
 #[derive(Debug)]
@@ -170,10 +188,12 @@ pub struct DataDef {
 pub struct FuncDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub params: Vec<DefId>,
+  pub params: Vec<ParamDef>,
   pub ret_ty: Ty,
   pub body: Expr
 }
+
+pub type ParamDef = (RefStr, IsMut, Ty);
 
 #[derive(Debug)]
 pub struct ExternDataDef {
@@ -190,25 +210,15 @@ pub struct ExternFuncDef {
   pub ret_ty: Ty
 }
 
-#[derive(Debug)]
-pub struct ParamDef {
-  pub name: RefStr,
-  pub is_mut: IsMut,
-  pub ty: Ty
-}
-
-#[derive(Debug)]
-pub struct LetDef {
-  pub name: RefStr,
-  pub is_mut: IsMut,
-  pub ty: Option<Ty>
-}
-
 /// Parser API
 
-pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, Error> {
+pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
   let mut repo = Repository::new();
   repo.parse_module(path)?;
+  for (id, _) in &repo.parsed_defs {
+    let resolved_def = resolve_def(&repo, *id)?;
+    repo.resolved_defs.insert(*id, resolved_def);
+  }
   Ok(repo)
 }
 
@@ -218,7 +228,8 @@ pub struct Repository {
   search_dirs: Vec<PathBuf>,
   current_scope: Vec<DefId>,
   parent_scope: HashMap<DefId, DefId>,
-  pub defs: HashMap<DefId, Def>,
+  pub parsed_defs: HashMap<DefId, Def>,
+  pub resolved_defs: HashMap<DefId, ResolvedDef>,
   pub syms: HashMap<DefId, HashMap<RefStr, DefId>>
 }
 
@@ -230,14 +241,15 @@ impl Repository {
       search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
       current_scope: Vec::new(),
       parent_scope: HashMap::new(),
-      defs: HashMap::new(),
+      parsed_defs: HashMap::new(),
+      resolved_defs: HashMap::new(),
       syms: HashMap::new()
     }
   }
 
   pub fn locate(&self, scope_id: DefId, path: &Path) -> Option<DefId> {
     let mut cur_id = scope_id;
-    for crumb in path.iter() {
+    for crumb in path.crumbs().iter() {
       let symtab = self.syms.get(&cur_id).unwrap();
       if let Some(def_id) = symtab.get(crumb) {
         cur_id = *def_id;
@@ -252,18 +264,8 @@ impl Repository {
     *self.parent_scope.get(&def_id).unwrap()
   }
 
-  pub fn param_by_id(&self, def_id: DefId) -> &ParamDef {
-    match self.defs.get(&def_id) {
-      Some(Def::Param(def)) => def,
-      _ => unreachable!(),
-    }
-  }
-
-  pub fn let_by_id(&self, def_id: DefId) -> &LetDef {
-    match self.defs.get(&def_id) {
-      Some(Def::Let(def)) => def,
-      _ => unreachable!(),
-    }
+  pub fn def_by_id(&self, def_id: DefId) -> &Def {
+    self.parsed_defs.get(&def_id).unwrap()
   }
 
   fn new_id(&mut self) -> DefId {
@@ -275,7 +277,7 @@ impl Repository {
   fn def(&mut self, def: Def) -> DefId {
     let id = self.new_id();
     let parent = *self.current_scope.last().unwrap();
-    self.defs.insert(id, def);
+    self.parsed_defs.insert(id, def);
     self.parent_scope.insert(id, parent);
     id
   }
