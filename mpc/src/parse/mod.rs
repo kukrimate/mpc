@@ -22,7 +22,7 @@ lalrpop_mod!(maple, "/parse/maple.rs");
 pub enum IsMut { Yes, No }
 
 impl fmt::Display for IsMut {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     match self {
       IsMut::Yes => write!(f, "mut "),
       IsMut::No => write!(f, ""),
@@ -264,7 +264,7 @@ impl Repository {
     *self.parent_scope.get(&def_id).unwrap()
   }
 
-  pub fn def_by_id(&self, def_id: DefId) -> &Def {
+  pub fn parsed_by_id(&self, def_id: DefId) -> &Def {
     self.parsed_defs.get(&def_id).unwrap()
   }
 

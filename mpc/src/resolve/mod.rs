@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt::{self,Debug,Formatter};
 
 pub fn resolve_def(repo: &Repository, def_id: DefId) -> MRes<ResolvedDef> {
-  Ok(match repo.def_by_id(def_id) {
+  Ok(match repo.parsed_by_id(def_id) {
     parse::Def::Type(def) => {
       let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
       ResolvedDef::Type(ResolvedTypeDef {
@@ -72,8 +72,8 @@ pub fn resolve_def(repo: &Repository, def_id: DefId) -> MRes<ResolvedDef> {
         type_params: def.type_params.len(),
         params: def.params
           .iter()
-          .map(|(_, is_mut, ty)|
-            Ok((*is_mut, ctx.resolve_ty(ty)?)))
+          .map(|(name, is_mut, ty)|
+            Ok((*name, *is_mut, ctx.resolve_ty(ty)?)))
           .monadic_collect()?,
         ret_ty: ctx.resolve_ty(&def.ret_ty)?,
         body: ctx.resolve_expr(&def.body)?,
@@ -141,8 +141,10 @@ pub enum ResolvedExpr {
 
   // References
   FuncRef(DefId),
+  ExternFuncRef(DefId),
   ConstRef(DefId),
   DataRef(DefId),
+  ExternDataRef(DefId),
   ParamRef(usize),
   LetRef(usize),
 
@@ -236,7 +238,7 @@ pub struct ResolvedDataDef {
 pub struct ResolvedFuncDef {
   pub name: RefStr,
   pub type_params: usize,
-  pub params: Vec<(IsMut, ResolvedTy)>,
+  pub params: Vec<(RefStr, IsMut, ResolvedTy)>,
   pub ret_ty: ResolvedTy,
   pub locals: Vec<(IsMut, Option<ResolvedTy>)>,
   pub body: ResolvedExpr
@@ -369,7 +371,7 @@ impl<'a> ResolveCtx<'a> {
         // Resolve path
         match self.lookup(path)? {
           Sym::Def(def_id) => {
-            match self.repo.def_by_id(def_id) {
+            match self.repo.parsed_by_id(def_id) {
               parse::Def::Type(..) |
               parse::Def::Struct(..) |
               parse::Def::Union(..) |
@@ -417,10 +419,12 @@ impl<'a> ResolveCtx<'a> {
       Empty => ResolvedExpr::Empty,
       Path(path) => {
         match self.lookup(path)? {
-          Sym::Def(def_id) => match self.repo.def_by_id(def_id) {
+          Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
             parse::Def::Const(..) => ResolvedExpr::ConstRef(def_id),
-            parse::Def::ExternData(..) | parse::Def::Data(..) => ResolvedExpr::DataRef(def_id),
-            parse::Def::ExternFunc(..) | parse::Def::Func(..) => ResolvedExpr::FuncRef(def_id),
+            parse::Def::ExternData(..) => ResolvedExpr::ExternDataRef(def_id),
+            parse::Def::Data(..) => ResolvedExpr::DataRef(def_id),
+            parse::Def::ExternFunc(..) => ResolvedExpr::ExternFuncRef(def_id),
+            parse::Def::Func(..) => ResolvedExpr::FuncRef(def_id),
             _ => Err(ResolveError::TypeInValueContext(path.clone()))?
           }
           Sym::Local(index) => ResolvedExpr::LetRef(index),
@@ -466,7 +470,7 @@ impl<'a> ResolveCtx<'a> {
           // Check for aggregate constructor
           if let Path(path) = &**called {
             match self.lookup(path)? {
-              Sym::Def(def_id) => match self.repo.def_by_id(def_id) {
+              Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
                 parse::Def::Type(..) => todo!(),
                 parse::Def::Struct(..) => break ResolvedExpr::StructLit(def_id, args),
                 parse::Def::Union(..) => todo!(),

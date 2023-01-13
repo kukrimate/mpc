@@ -4,7 +4,9 @@
  */
 
 use std::fmt::Debug;
+use std::mem::take;
 use crate::parse::Repository;
+use crate::resolve::*;
 use super::*;
 
 pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
@@ -12,17 +14,18 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
     repo,
     tctx,
     insts: HashMap::new(),
-    parent_ids: Vec::new(),
-    scopes: Vec::new(),
+    type_args: Vec::new(),
+    params: Vec::new(),
+    locals: Vec::new(),
     ret_ty: Vec::new(),
     loop_ty: Vec::new(),
   };
 
   // Instantiate signatures for non-generic functions
-  for (id, def) in repo.parsed_defs.iter() {
+  for (id, def) in repo.resolved_defs.iter() {
     match def {
-      parse::Def::Func(def) if def.type_params.len() == 0 => {
-        ctx.inst_func_sig((*id, vec![]), def)?;
+      ResolvedDef::Func(def) if def.type_params == 0 => {
+        ctx.inst_func_sig(*id)?;
       }
       _ => ()
     }
@@ -30,7 +33,7 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
 
   loop {
     // De-duplicate signatures after each pass
-    // TODO: investigate if this can manage to overwrite an instantiated function
+    // TODO: investigate if self can manage to overwrite an instantiated function
     // with just a signature
     for ((def_id, type_args), inst) in std::mem::replace(&mut ctx.insts, HashMap::new()).into_iter() {
       ctx.insts.insert((def_id, ctx.tctx.root_type_args(&type_args)), inst);
@@ -44,11 +47,10 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
       }
     }
 
-    if queue.len() == 0 { break }
+    if queue.len() == 0 { break; }
 
     for (def_id, type_args) in queue.into_iter() {
-      let parsed_func = if let parse::Def::Func(def) = ctx.parsed_def(def_id) { def } else { unreachable!() };
-      ctx.inst_func_body((def_id, type_args), parsed_func)?;
+      ctx.inst_func_body((def_id, type_args))?;
     }
   }
 
@@ -64,73 +66,62 @@ struct CheckCtx<'a> {
   // Checked definitions
   insts: HashMap<(DefId, Vec<Ty>), Inst>,
 
-  // Definitions currently being checked
-  parent_ids: Vec<DefId>,
-
-  // Symbol table
-  scopes: Vec<HashMap<RefStr, Sym>>,
-
-  // Function return type
+  // Current function
+  type_args: Vec<Ty>,
+  params: Vec<(IsMut, Ty)>,
+  locals: Vec<(IsMut, Ty)>,
   ret_ty: Vec<Ty>,
-
-  // Loop types
   loop_ty: Vec<Ty>,
 }
 
-#[derive(Clone)]
-enum Sym {
-  Def(DefId),
-  TParam(Ty)
-}
-
 impl<'a> CheckCtx<'a> {
-  fn inst_struct(&mut self, id: (DefId, Vec<Ty>), def: &parse::StructDef) -> MRes<Ty> {
+  fn inst_struct(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+    let def = if let ResolvedDef::Struct(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
+
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
 
-    self.with_scope_of(id.0, |this| {
-      this.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
+    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
 
-      // FIXME: bring type params into scope
-      // if def.type_params.len() != id.1.len() {
-      //   return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-      // }
-      let params = this.infer_params(&def.params)?;
-      this.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
+    // FIXME: bring type params into scope
+    // if def.type_params != id.1.len() {
+    //   return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+    // }
+    let params = self.infer_params(&def.params)?;
+    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
 
-      Ok(Ty::Inst(def.name, id))
-    })
+    Ok(Ty::Inst(def.name, id))
   }
 
-  fn inst_union(&mut self, id: (DefId, Vec<Ty>), def: &parse::UnionDef) -> MRes<Ty> {
+  fn inst_union(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+    let def = if let ResolvedDef::Union(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
+
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
 
-    self.with_scope_of(id.0, |this| {
-      this.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
+    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
 
-      let params = this.infer_params(&def.params)?;
-      this.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
+    let params = self.infer_params(&def.params)?;
+    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
 
-      Ok(Ty::Inst(def.name, id))
-    })
+    Ok(Ty::Inst(def.name, id))
   }
 
-  fn inst_enum(&mut self, id: (DefId, Vec<Ty>), def: &parse::EnumDef) -> MRes<Ty> {
+  fn inst_enum(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+    let def = if let ResolvedDef::Enum(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
+
     // Try to find previous matching copy
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)) }
+    if let Some(..) = self.insts.get(&id) { return Ok(Ty::Inst(def.name, id)); }
 
-    self.with_scope_of(id.0, |this| {
-      this.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
+    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
 
-      let variants = this.infer_variants(&def.variants)?;
-      this.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
+    let variants = self.infer_variants(&def.variants)?;
+    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
 
-      Ok(Ty::Inst(def.name, id))
-    })
+    Ok(Ty::Inst(def.name, id))
   }
 
-  fn infer_params(&mut self, params: &Vec<(RefStr, parse::Ty)>) -> MRes<Vec<(RefStr, Ty)>> {
+  fn infer_params(&mut self, params: &Vec<(RefStr, ResolvedTy)>) -> MRes<Vec<(RefStr, Ty)>> {
     let mut result = vec![];
     for (name, ty) in params {
       result.push((*name, self.infer_ty(ty)?));
@@ -138,14 +129,14 @@ impl<'a> CheckCtx<'a> {
     Ok(result)
   }
 
-  fn infer_variants(&mut self, variants: &Vec<parse::Variant>) -> MRes<Vec<Variant>> {
+  fn infer_variants(&mut self, variants: &Vec<ResolvedVariant>) -> MRes<Vec<Variant>> {
     let mut result = vec![];
     for variant in variants.iter() {
       result.push(match variant {
-        parse::Variant::Unit(name) => {
+        ResolvedVariant::Unit(name) => {
           Variant::Unit(*name)
         }
-        parse::Variant::Struct(name, params) => {
+        ResolvedVariant::Struct(name, params) => {
           Variant::Struct(*name, self.infer_params(params)?)
         }
       })
@@ -153,194 +144,140 @@ impl<'a> CheckCtx<'a> {
     Ok(result)
   }
 
-  fn inst_data(&mut self, id: DefId, def: &parse::DataDef) -> MRes<LValue> {
-    self.with_scope_of(id, |this| {
-      let ty = this.infer_ty(&def.ty)?;
-      let init = this.infer_rvalue(&def.init)?;
-      this.tctx.unify(&ty, init.ty())?;
-      this.insts.insert((id, vec![]), Inst::Data {
-        name: def.name,
-        ty: ty.clone(),
-        is_mut: def.is_mut,
-        init: consteval(&init)?
-      });
+  fn inst_data(&mut self, id: DefId) -> MRes<LValue> {
+    let def = if let ResolvedDef::Data(def) = self.resolved_def(id) { def } else { unreachable!( ) };
 
-      Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+    let ty = self.infer_ty(&def.ty)?;
+    let init = self.infer_rvalue(&def.init)?;
+    self.tctx.unify(&ty, init.ty())?;
+    self.insts.insert((id, vec![]), Inst::Data {
+      name: def.name,
+      ty: ty.clone(),
+      is_mut: def.is_mut,
+      init: consteval(&init)?,
+    });
+
+    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
+  }
+
+  fn inst_func_sig(&mut self, id: DefId) -> MRes<RValue> {
+    let def = if let ResolvedDef::Func(def) = self.resolved_def(id) { def } else { unreachable!( ) };
+
+
+    // Create type variables for type parameters
+    self.type_args = (0..def.type_params)
+      .map(|_| self.tctx.tvar(Ty::BoundAny))
+      .collect();
+
+    // Parameters
+    let mut param_tys = vec![];
+    for (name, _, ty) in def.params.iter() {
+      let ty = self.infer_ty(ty)?;
+      param_tys.push((*name, ty.clone()));
+    }
+
+    // Return type
+    let ret_ty = self.infer_ty(&def.ret_ty)?;
+
+    // Insert signature record
+    self.insts.insert((id.clone(), self.type_args.clone()), Inst::Func {
+      name: def.name,
+      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+      params: Vec::new(),
+      locals: Vec::new(),
+      body: None,
+    });
+
+    // Return reference to signature
+    Ok(RValue::FuncRef {
+      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+      id: (id.clone(), self.type_args.clone()),
     })
   }
 
-  fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<RValue> {
-    self.with_scope_of(id.0, |this| {
-      // Try to find existing instance first
-      if let Some(Inst::Func { ty, .. }) = this.insts.get(&id) {
-        return Ok(RValue::FuncRef { ty: ty.clone(), id })
-      }
+  fn inst_func_body(&mut self, id: (DefId, Vec<Ty>)) -> MRes<()> {
+    let def = if let ResolvedDef::Func(def) = self.resolved_def(id.0) { def } else { unreachable!( ) };
 
-      this.newscope();
+    // Expose type arguments
+    if def.type_params != id.1.len() {
+      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))));
+    }
+    self.type_args = id.1.clone();
 
-      // Type parameters
-      if def.type_params.len() != id.1.len() {
-        return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-      }
-      for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
-        this.define(*name, Sym::TParam(ty.clone()));
-      }
+    // Parameters
+    let mut param_tys = vec![];
+    self.params.clear();
+    for (name, is_mut, ty) in def.params.iter() {
+      let ty = self.infer_ty(ty)?;
+      param_tys.push((*name, ty.clone()));
+      self.params.push((*is_mut, ty));
+    }
 
-      // Parameters
-      let mut param_tys = vec![];
-      for def_id in def.params.iter() {
-        let def = this.repo.param_by_id(*def_id);
-        param_tys.push((def.name, this.infer_ty(&def.ty)?));
-      }
+    // Return type
+    let ret_ty = self.infer_ty(&def.ret_ty)?;
 
-      // Return type
-      let ret_ty = this.infer_ty(&def.ret_ty)?;
+    // Expose locals
+    self.locals.clear();
+    for (is_mut, ty) in def.locals.iter() {
+      let ty = if let Some(ty) = ty {
+        self.infer_ty(ty)?
+      } else {
+        self.tctx.tvar(Ty::BoundAny)
+      };
+      self.locals.push((*is_mut, ty));
+    }
 
-      this.popscope();
+    // Body
+    self.ret_ty.push(ret_ty.clone());
+    let body = self.infer_rvalue(&def.body)?;
+    self.tctx.unify(&ret_ty, body.ty())?;
+    self.ret_ty.pop().unwrap();
 
-      // Insert signature record
-      this.insts.insert(id.clone(), Inst::Func {
-        name: def.name,
-        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-        params: Vec::new(),
-        body: None
-      });
+    // Insert body
+    self.insts.insert(id.clone(), Inst::Func {
+      name: def.name,
+      ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
+      params: take(&mut self.params),
+      locals: take(&mut self.locals),
+      body: Some(body),
+    });
 
-      // Return reference to signature
-      Ok(RValue::FuncRef {
-        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-        id
-      })
-    })
+    Ok(())
   }
 
-  fn inst_func_body(&mut self, id: (DefId, Vec<Ty>), def: &parse::FuncDef) -> MRes<()> {
-    self.with_scope_of(id.0, |this| {
-      // Create environment
-      this.newscope();
+  fn inst_extern_data(&mut self, id: DefId) -> MRes<LValue> {
+    let def = if let ResolvedDef::ExternData(def) = self.resolved_def(id) { def } else { unreachable!( ) };
 
-      // Type params
-      if def.type_params.len() != id.1.len() {
-        return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
-      }
-      for (name, ty) in def.type_params.iter().zip(id.1.iter()) {
-        this.define(*name, Sym::TParam(ty.clone()));
-      }
+    let ty = self.infer_ty(&def.ty)?;
+    self.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
 
-      // Regular parameters
-      let mut param_ids = vec![];
-      let mut param_tys = vec![];
-      for def_id in def.params.iter() {
-        let def = this.repo.param_by_id(*def_id);
-        param_ids.push(*def_id);
-        let ty = this.infer_ty(&def.ty)?;
-        param_tys.push((def.name, ty.clone()));
-        this.insts.insert((*def_id, vec![]), Inst::Param {
-          name: def.name,
-          is_mut: def.is_mut,
-          ty
-        });
-        this.define(def.name, Sym::Def(*def_id));
-      }
-
-      // Return type
-      let ret_ty = this.infer_ty(&def.ret_ty)?;
-
-      // Body
-      this.ret_ty.push(ret_ty.clone());
-      let body = this.infer_rvalue(&def.body)?;
-      this.tctx.unify(&ret_ty, body.ty())?;
-      this.ret_ty.pop().unwrap();
-
-      this.popscope();
-
-      // Insert body
-      this.insts.insert(id.clone(), Inst::Func {
-        name: def.name,
-        ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-        params: param_ids,
-        body: Some(body)
-      });
-
-      Ok(())
-    })
+    Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
-  fn inst_extern_data(&mut self, id: DefId, def: &parse::ExternDataDef) -> MRes<LValue> {
-    self.with_scope_of(id, |this| {
-      let ty = this.infer_ty(&def.ty)?;
-      this.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
+  fn inst_extern_func(&mut self, id: DefId) -> MRes<RValue> {
+    let def = if let ResolvedDef::ExternFunc(def) = self.resolved_def(id) { def } else { unreachable!( ) };
 
-      Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
-    })
-  }
+    let ty = Ty::Func(self.infer_params(&def.params)?,
+                      def.varargs,
+                      Box::new(self.infer_ty(&def.ret_ty)?));
+    self.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
 
-  fn inst_extern_func(&mut self, id: DefId, def: &parse::ExternFuncDef) -> MRes<RValue> {
-    self.with_scope_of(id, |this| {
-      let ty = Ty::Func(this.infer_params(&def.params)?,
-                        def.varargs,
-                        Box::new(this.infer_ty(&def.ret_ty)?));
-      this.insts.insert((id, vec![]), Inst::ExternFunc { name: def.name, ty: ty.clone() });
-
-      Ok(RValue::FuncRef { ty, id: (id, vec![]) })
-    })
-  }
-
-  /// Continue checking with a certain DefId as root
-  fn with_scope_of<F: FnOnce(&mut CheckCtx) -> MRes<R>, R>(&mut self, def_id: DefId, f: F) -> MRes<R> {
-    self.parent_ids.push(self.repo.parent(def_id));
-    let result = f(self);
-    self.parent_ids.pop();
-    result
+    Ok(RValue::FuncRef { ty, id: (id, vec![]) })
   }
 
   /// Lookup a parsed definition by its id
-  fn parsed_def(&self, id: DefId) -> &'static parse::Def {
-    unsafe { &*(self.repo.parsed_defs.get(&id).unwrap() as *const _) }
+  fn resolved_def(&self, id: DefId) -> &'static ResolvedDef {
+    unsafe { &*(self.repo.resolved_defs.get(&id).unwrap() as *const _) }
   }
 
   /// Lookup an instance by its id
-  fn inst(&self, id: &(DefId, Vec<Ty>)) -> &Inst {
+  fn lookup_inst(&self, id: &(DefId, Vec<Ty>)) -> &Inst {
     self.insts.get(id).unwrap()
   }
 
-  /// Create scope
-  fn newscope(&mut self) {
-    self.scopes.push(HashMap::new());
-  }
-
-  /// Exit scope
-  fn popscope(&mut self) {
-    self.scopes.pop().unwrap();
-  }
-
-  /// Introduce symbol with a new name
-  fn define(&mut self, name: RefStr, sym: Sym) {
-    self.scopes.last_mut().unwrap().insert(name, sym);
-  }
-
-  /// Resolve symbol by name
-  fn lookup(&self, path: &parse::Path) -> MRes<Sym> {
-    // Single crumb paths can refer to locals
-    if path.crumbs().len() == 1 {
-      for scope in self.scopes.iter().rev() {
-        if let Some(sym) = scope.get(&path.crumbs()[0]) {
-          return Ok(sym.clone());
-        }
-      }
-    }
-
-    // Otherwise check the global symbol table
-    if let Some(def_id) = self.repo.locate(*self.parent_ids.last().unwrap(), path) {
-      return Ok(Sym::Def(def_id))
-    }
-    
-    Err(Box::new(UnresolvedPathError(path.clone())))
-  }
-
   /// Infer the semantic form of a type expression
-  fn infer_ty(&mut self, ty: &parse::Ty) -> MRes<Ty> {
-    use parse::Ty::*;
+  fn infer_ty(&mut self, ty: &ResolvedTy) -> MRes<Ty> {
+    use ResolvedTy::*;
     Ok(match ty {
       Bool => Ty::Bool,
       Uint8 => Ty::Uint8,
@@ -355,68 +292,64 @@ impl<'a> CheckCtx<'a> {
       Intn => Ty::Intn,
       Float => Ty::Float,
       Double => Ty::Double,
-      Inst(path, targs) => {
-        let targs = targs
+      TParam(index) => {
+        self.type_args[*index].clone()
+      }
+      Inst(def_id, type_args) => {
+        let type_args = type_args
           .iter()
           .map(|ty| self.infer_ty(ty))
           .monadic_collect()?;
-        self.inst_as_ty(path, targs)?
-      },
+
+        match self.resolved_def(*def_id) {
+          ResolvedDef::Type(def) => self.infer_ty(&def.ty)?,
+          ResolvedDef::Struct(..) => self.inst_struct((*def_id, type_args))?,
+          ResolvedDef::Union(..) => self.inst_union((*def_id, type_args))?,
+          ResolvedDef::Enum(..) => self.inst_enum((*def_id, type_args))?,
+          _ => unreachable!()
+        }
+      }
       Ptr(is_mut, base_ty) => {
         Ty::Ptr(*is_mut, Box::new(self.infer_ty(base_ty)?))
-      },
+      }
       Func(params, ret_ty) => {
         Ty::Func(self.infer_params(params)?,
-                 false,Box::new(self.infer_ty(ret_ty)?))
-      },
+                 false, Box::new(self.infer_ty(ret_ty)?))
+      }
       Arr(elem_cnt_expr, elem_ty) => {
         let elem_cnt = self.infer_rvalue(elem_cnt_expr)
           .and_then(|rvalue| consteval_index(&rvalue))?;
         Ty::Arr(elem_cnt, Box::new(self.infer_ty(elem_ty)?))
-      },
+      }
       Tuple(params) => {
         Ty::Tuple(self.infer_params(params)?)
       }
     })
   }
 
-  /// Lookup a definition and instantiate it as a type
-  fn inst_as_ty(&mut self, path: &parse::Path, targs: Vec<Ty>) -> MRes<Ty> {
-    match self.lookup(path)? {
-      Sym::Def(def_id) => {
-        match self.parsed_def(def_id) {
-          parse::Def::Type(def) => {
-            self.infer_ty(&def.ty)
-          }
-          parse::Def::Struct(def) => {
-            self.inst_struct((def_id, targs), def)
-          }
-          parse::Def::Union(def) => {
-            self.inst_union((def_id, targs), def)
-          }
-          parse::Def::Enum(def) => {
-            self.inst_enum((def_id, targs), def)
-          }
-          _ => {
-            Err(Box::new(UnresolvedPathError(path.clone())))
-          }
-        }
-      }
-      Sym::TParam(ty) => {
-        Ok(ty)
-      }
-    }
-  }
-
   /// Infer the semantic form of an expression in an lvalue context
-  fn infer_lvalue(&mut self, expr: &parse::Expr) -> MRes<LValue> {
-    use parse::Expr::*;
+  fn infer_lvalue(&mut self, expr: &ResolvedExpr) -> MRes<LValue> {
+    use ResolvedExpr::*;
 
     Ok(match expr {
-      Path(path) => {
-        self.inst_as_lvalue(path)?
+      ConstRef(def_id) => if let ResolvedDef::Const(def) = self.resolved_def(*def_id) {
+        self.infer_lvalue(&def.val)?
+      } else {
+        unreachable!()
       }
-      Arr(elements) => {
+      DataRef(def_id) => self.inst_data(*def_id)?,
+      ExternDataRef(def_id) => self.inst_extern_data(*def_id)?,
+      ParamRef(index) => LValue::ParamRef {
+        ty: self.params[*index].1.clone(),
+        is_mut: self.params[*index].0,
+        index: *index
+      },
+      LetRef(index) => LValue::LetRef {
+        ty: self.locals[*index].1.clone(),
+        is_mut: self.locals[*index].0,
+        index: *index
+      },
+      ArrayLit(elements) => {
         let elem_ty = self.tctx.tvar(Ty::BoundAny);
         let elements = elements.iter()
           .map(|element| self.infer_rvalue(element))
@@ -427,7 +360,17 @@ impl<'a> CheckCtx<'a> {
         LValue::ArrayLit {
           ty: Ty::Arr(elements.len(), Box::new(elem_ty)),
           is_mut: IsMut::No,
-          elements
+          elements,
+        }
+      }
+      StructLit(def_id, fields) => {
+        let ty = self.inst_struct((*def_id, vec![]))?;
+        let params = if let Inst::Struct { params, .. }
+          = self.insts.get(&(*def_id, vec![])).unwrap() { params.clone().unwrap() } else { unreachable!() };
+        LValue::StructLit {
+          ty,
+          is_mut: IsMut::No,
+          fields: self.infer_args(&params, fields)?
         }
       }
       Str(val) => {
@@ -440,77 +383,15 @@ impl<'a> CheckCtx<'a> {
       Index(arg, idx) => {
         self.infer_index(arg, idx)?
       }
-      Call(called, args) => {
-        if let Some((ty, params)) = self.check_struct_ctor(called) {
-          let fields = self.infer_args(&params, args)?;
-          LValue::StructLit {
-            ty,
-            is_mut: IsMut::No,
-            fields
-          }
-        } else {
-          return Err(Box::new(TypeError(format!("Expected lvalue instead of {:?}", expr))))
-        }
-      }
       Ind(arg) => {
         self.infer_ind(arg)?
       }
-      expr => return Err(Box::new(
-        TypeError(format!("Expected lvalue instead of {:?}", expr))))
+      expr => return Err(Box::new(TypeError(format!("Expected lvalue instead of {:?}", expr))))
     })
   }
 
-  /// Lookup a definition and instantiate it as an lvalue
-  fn inst_as_lvalue(&mut self, path: &parse::Path) -> MRes<LValue> {
-    match self.lookup(path)? {
-      Sym::Def(def_id) => {
-        match self.parsed_def(def_id) {
-          parse::Def::Const(def) => {
-            self.with_scope_of(def_id, |this| {
-              this.infer_lvalue(&def.val)
-            })
-          }
-          parse::Def::Data(def) => {
-            self.inst_data(def_id, def)
-          }
-          parse::Def::ExternData(def) => {
-            self.inst_extern_data(def_id, def)
-          }
-          parse::Def::Param(_) => {
-            let inst = self.insts.get(&(def_id, vec![])).unwrap();
-            if let Inst::Param { ty, is_mut, .. } = inst {
-              Ok(LValue::ParamRef {
-                ty: ty.clone(),
-                is_mut: *is_mut,
-                id: def_id
-              })
-            } else {
-              unreachable!()
-            }
-          }
-          parse::Def::Let(_) => {
-            let inst = self.insts.get(&(def_id, vec![])).unwrap();
-            if let Inst::Let { ty, is_mut, .. } = inst {
-              Ok(LValue::LetRef {
-                ty: ty.clone(),
-                is_mut: *is_mut,
-                id: def_id
-              })
-            } else {
-              unreachable!()
-            }
-          }
-          _ => Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path))))
-        }
-      }
-      Sym::TParam(..) => {
-        Err(Box::new(TypeError(format!("{} cannot be used as an lvalue", path))))
-      }
-    }
-  }
-
   /// Infer the type of a member access expression
-  fn infer_dot(&mut self, arg: &parse::Expr, name: RefStr) -> MRes<LValue> {
+  fn infer_dot(&mut self, arg: &ResolvedExpr, name: RefStr) -> MRes<LValue> {
     // Infer argument type
     let arg = self.infer_lvalue(arg)?;
 
@@ -519,7 +400,7 @@ impl<'a> CheckCtx<'a> {
       let ty = self.tctx.lit_ty_nonrecusrive(arg.ty());
 
       let (is_stru, params) = match &ty {
-        Ty::Inst(_, id) => match self.inst(id) {
+        Ty::Inst(_, id) => match self.lookup_inst(id) {
           Inst::Struct { params: Some(params), .. } => (true, params),
           Inst::Union { params: Some(params), .. } => (false, params),
           _ => break 'error
@@ -539,22 +420,22 @@ impl<'a> CheckCtx<'a> {
           ty: param_ty.clone(),
           is_mut: arg.is_mut(),
           arg: Box::new(arg),
-          idx
+          idx,
         })
       } else {
         Ok(LValue::UnionDot {
           ty: param_ty.clone(),
           is_mut: arg.is_mut(),
-          arg: Box::new(arg)
+          arg: Box::new(arg),
         })
-      }
+      };
     }
 
     Err(Box::new(TypeError(format!("Type {:?} has no field named {}", arg.ty(), name))))
   }
 
   /// Infer the type of an array index expression
-  fn infer_index(&mut self, arg: &parse::Expr, idx: &parse::Expr) -> MRes<LValue> {
+  fn infer_index(&mut self, arg: &ResolvedExpr, idx: &ResolvedExpr) -> MRes<LValue> {
     // Infer array type
     let arg = self.infer_lvalue(arg)?;
 
@@ -573,12 +454,12 @@ impl<'a> CheckCtx<'a> {
       ty: elem_ty.clone(),
       is_mut: arg.is_mut(),
       arg: Box::new(arg),
-      idx: Box::new(idx)
+      idx: Box::new(idx),
     })
   }
 
   /// Infer the type of a pointer indirection expression
-  fn infer_ind(&mut self, arg: &parse::Expr) -> MRes<LValue> {
+  fn infer_ind(&mut self, arg: &ResolvedExpr) -> MRes<LValue> {
     // Infer pointer type
     let arg = self.infer_rvalue(arg)?;
 
@@ -592,46 +473,40 @@ impl<'a> CheckCtx<'a> {
 
     Ok(LValue::Ind {
       ty: base_ty.clone(),
-      is_mut: is_mut,
-      arg: Box::new(arg)
+      is_mut,
+      arg: Box::new(arg),
     })
   }
 
-  /// Check whether or not `expr` is a struct constructor in the current context
-  fn check_struct_ctor(&mut self, expr: &parse::Expr) -> Option<(Ty, Vec<(RefStr, Ty)>)> {
-    if let parse::Expr::Path(path) = expr {
-      // FIXME: we might need to infer type arguments
-      if let Ok(ty) = self.inst_as_ty(path, vec![]) {
-        if let Ty::Inst(_, id) = &ty {
-          if let Inst::Struct { params, .. } = self.insts.get(id).unwrap() {
-            return Some((ty, params.clone().unwrap()))
-          } else {
-            unreachable!()
-          }
-        } else {
-          unreachable!()
-        }
-      }
-    }
-    None
-  }
-
   /// Infer the semantic form of an expression in an rvalue context
-  fn infer_rvalue(&mut self, expr: &parse::Expr) -> MRes<RValue> {
-    use parse::Expr::*;
+  fn infer_rvalue(&mut self, expr: &ResolvedExpr) -> MRes<RValue> {
+    use ResolvedExpr::*;
 
     Ok(match expr {
       Empty => {
         RValue::Empty { ty: Ty::Tuple(vec![]) }
       }
-      Path(path) => {
-        self.inst_as_rvalue(path)?
+      ConstRef(def_id) => if let ResolvedDef::Const(def) = self.resolved_def(*def_id) {
+        self.infer_rvalue(&def.val)?
+      } else {
+        unreachable!()
       }
-      Arr(..) | Str(..) | Dot(..) | Index(..) | Ind(..) => {
+      FuncRef(def_id) => self.inst_func_sig(*def_id)?,
+      ExternFuncRef(def_id) => self.inst_extern_func(*def_id)?,
+      DataRef(..) |
+      ExternDataRef(..) |
+      ParamRef(..) |
+      LetRef(..) |
+      ArrayLit(..) |
+      StructLit(..) |
+      Str(..) |
+      Dot(..) |
+      Index(..) |
+      Ind(..) => {
         let arg = self.infer_lvalue(expr)?;
         RValue::Load {
           ty: arg.ty().clone(),
-          arg: Box::new(arg)
+          arg: Box::new(arg),
         }
       }
       CStr(val) => {
@@ -650,26 +525,13 @@ impl<'a> CheckCtx<'a> {
         RValue::Flt { ty: self.tctx.tvar(Ty::BoundFlt), val: *val }
       }
       Call(called, args) => {
-        if let Some((ty, params)) = self.check_struct_ctor(called) {
-          let fields = self.infer_args(&params, args)?;
-          let arg = LValue::StructLit {
-            ty,
-            is_mut: IsMut::No,
-            fields
-          };
-          RValue::Load {
-            ty: arg.ty().clone(),
-            arg: Box::new(arg)
-          }
-        } else {
-          self.infer_call(called, args)?
-        }
+        self.infer_call(called, args)?
       }
       Adr(arg) => {
         let arg = self.infer_lvalue(arg)?;
         RValue::Adr {
           ty: Ty::Ptr(arg.is_mut(), Box::new(arg.ty().clone())),
-          arg: Box::new(arg)
+          arg: Box::new(arg),
         }
       }
       Un(op, arg) => {
@@ -677,7 +539,7 @@ impl<'a> CheckCtx<'a> {
         RValue::Un {
           ty: self.infer_un(*op, arg.ty())?,
           op: *op,
-          arg: Box::new(arg)
+          arg: Box::new(arg),
         }
       }
       LNot(arg) => {
@@ -712,12 +574,10 @@ impl<'a> CheckCtx<'a> {
         RValue::LOr { ty: Ty::Bool, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Block(parsed_body) => {
-        self.newscope();
         let mut body = vec![];
         for expr in parsed_body {
           body.push(self.infer_rvalue(expr)?);
         }
-        self.popscope();
 
         let ty = if let Some(last) = body.last() {
           last.ty().clone()
@@ -788,8 +648,7 @@ impl<'a> CheckCtx<'a> {
         // Can only have return inside a function
         let ret_ty = match self.ret_ty.last() {
           Some(ret_ty) => ret_ty.clone(),
-          None => return Err(Box::new(
-            TypeError(format!("Return outside function")))),
+          None => return Err(Box::new(TypeError(format!("Return outside function")))),
         };
 
         // Unify function return type with the returned value's type
@@ -797,36 +656,16 @@ impl<'a> CheckCtx<'a> {
 
         RValue::Return { ty: self.tctx.tvar(Ty::BoundAny), arg: Box::new(arg) }
       }
-      Let(def_id, init) => {
-        let def = self.repo.let_by_id(*def_id);
-
-        // Add symbol
-        self.define(def.name, Sym::Def(*def_id));
-
-        // Type check initializer
-        let (ty, init) = if let Some(init) = init {
-          // Check initializer
+      Let(index, init) => {
+        let init = if let Some(init) = init {
           let init = self.infer_rvalue(init)?;
-          // Unify type annotation with initializer type
-          if let Some(ty) = &def.ty {
-            let ty = self.infer_ty(ty)?;
-            self.tctx.unify(&ty, init.ty())?;
-          }
-          (init.ty().clone(), Some(Box::new(init)))
-        } else if let Some(ty) = &def.ty {
-          (self.infer_ty(ty)?, None)
+          self.tctx.unify(&self.locals[*index].1, init.ty())?;
+          Some(Box::new(init))
         } else {
-          (self.tctx.tvar(Ty::BoundAny), None)
+          None
         };
 
-        // Add instance
-        self.insts.insert((*def_id, vec![]), Inst::Let {
-          name: def.name,
-          is_mut: def.is_mut,
-          ty
-        });
-
-        RValue::Let { ty: Ty::Tuple(vec![]), id: *def_id, init }
+        RValue::Let { ty: Ty::Tuple(vec![]), index: *index, init }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;
@@ -840,7 +679,7 @@ impl<'a> CheckCtx<'a> {
           ty: tbody.ty().clone(),
           cond: Box::new(cond),
           tbody: Box::new(tbody),
-          ebody: Box::new(ebody)
+          ebody: Box::new(ebody),
         }
       }
       While(cond, body) => {
@@ -854,7 +693,7 @@ impl<'a> CheckCtx<'a> {
         RValue::While {
           ty,
           cond: Box::new(cond),
-          body: Box::new(body)
+          body: Box::new(body),
         }
       }
       Loop(body) => {
@@ -864,85 +703,13 @@ impl<'a> CheckCtx<'a> {
 
         RValue::Loop {
           ty,
-          body: Box::new(body)
+          body: Box::new(body),
         }
       }
     })
   }
 
-  /// Lookup a definition and instantiate it as an rvalue
-  fn inst_as_rvalue(&mut self, path: &parse::Path) -> MRes<RValue> {
-    /// Convert an lvalue to an rvalue by loading it
-    fn lvalue_to_rvalue(lvalue: LValue) -> RValue {
-      RValue::Load {
-        ty: lvalue.ty().clone(),
-        arg: Box::new(lvalue)
-      }
-    }
-
-    match self.lookup(path)? {
-      Sym::Def(def_id) => {
-        match self.parsed_def(def_id) {
-          parse::Def::Const(def) => {
-            self.with_scope_of(def_id, |this| {
-              this.infer_rvalue(&def.val)
-            })
-          }
-          parse::Def::Func(def) => {
-            let targs = def.type_params
-              .iter()
-              .map(|_| self.tctx.tvar(Ty::BoundAny))
-              .collect();
-
-            self.inst_func_sig((def_id, targs), def)
-          }
-          parse::Def::Data(def) => {
-            let lvalue = self.inst_data(def_id, def)?;
-            Ok(lvalue_to_rvalue(lvalue))
-          }
-          parse::Def::ExternData(def) => {
-            let lvalue = self.inst_extern_data(def_id, def)?;
-            Ok(lvalue_to_rvalue(lvalue))
-          }
-          parse::Def::ExternFunc(def) => {
-            self.inst_extern_func(def_id, def)
-          }
-          parse::Def::Param(_) => {
-            let inst = self.insts.get(&(def_id, vec![])).unwrap();
-            if let Inst::Param { ty, is_mut, .. } = inst {
-              let lvalue = LValue::ParamRef {
-                ty: ty.clone(),
-                is_mut: *is_mut,
-                id: def_id
-              };
-              Ok(lvalue_to_rvalue(lvalue))
-            } else {
-              unreachable!()
-            }
-          }
-          parse::Def::Let(_) => {
-            let inst = self.insts.get(&(def_id, vec![])).unwrap();
-            if let Inst::Let { ty, is_mut, .. } = inst {
-              let lvalue = LValue::LetRef {
-                ty: ty.clone(),
-                is_mut: *is_mut,
-                id: def_id
-              };
-              Ok(lvalue_to_rvalue(lvalue))
-            } else {
-              unreachable!()
-            }
-          }
-          _ => Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path))))
-        }
-      }
-      Sym::TParam(..) => {
-        Err(Box::new(TypeError(format!("{} cannot be used as an rvalue", path))))
-      }
-    }
-  }
-
-  fn infer_call(&mut self, called: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> MRes<RValue> {
+  fn infer_call(&mut self, called: &ResolvedExpr, args: &Vec<(RefStr, ResolvedExpr)>) -> MRes<RValue> {
     // Infer function type
     let called_expr = self.infer_rvalue(called)?;
 
@@ -955,10 +722,10 @@ impl<'a> CheckCtx<'a> {
 
     // Validate argument count
     if args.len() < params.len() {
-      return Err(Box::new(TypeError(format!("Not enough arguments for {:?}", called_expr.ty()))))
+      return Err(Box::new(TypeError(format!("Not enough arguments for {:?}", called_expr.ty()))));
     }
     if va == false && args.len() > params.len() {
-      return Err(Box::new(TypeError(format!("Too many arguments for {:?}", called_expr.ty()))))
+      return Err(Box::new(TypeError(format!("Too many arguments for {:?}", called_expr.ty()))));
     }
 
     let args = self.infer_args(params, args)?;
@@ -966,11 +733,11 @@ impl<'a> CheckCtx<'a> {
     Ok(RValue::Call {
       ty: ret_ty.clone(),
       arg: Box::new(called_expr),
-      args
+      args,
     })
   }
 
-  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, parse::Expr)]) -> MRes<Vec<RValue>> {
+  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, ResolvedExpr)]) -> MRes<Vec<RValue>> {
     let mut nargs = vec![];
     let mut params_iter = params.iter();
 
@@ -980,7 +747,7 @@ impl<'a> CheckCtx<'a> {
       // If there is a corresponding parameter name and type, check it
       if let Some((param_name, param_ty)) = params_iter.next() {
         if *arg_name != RefStr::new("") && arg_name != param_name {
-          return Err(Box::new(TypeError(format!("Incorrect argument label {}", arg_name))))
+          return Err(Box::new(TypeError(format!("Incorrect argument label {}", arg_name))));
         }
         self.tctx.unify(arg_val.ty(), param_ty)?;
       }
@@ -1015,7 +782,7 @@ impl<'a> CheckCtx<'a> {
 
       // Both arguments must have matching integer types
       // Result has the same type as the arguments
-      BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or  => {
+      BinOp::Mod | BinOp::And | BinOp::Xor | BinOp::Or => {
         self.tctx.unify(lhs, &Ty::BoundInt)?;
         self.tctx.unify(lhs, rhs)
       }
@@ -1039,7 +806,6 @@ impl<'a> CheckCtx<'a> {
 }
 
 /// Errors
-
 #[derive(Debug)]
 struct TypeError(String);
 
@@ -1050,14 +816,3 @@ impl fmt::Display for TypeError {
 }
 
 impl error::Error for TypeError {}
-
-#[derive(Debug)]
-struct UnresolvedPathError(parse::Path);
-
-impl fmt::Display for UnresolvedPathError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Unresolved path {}", self.0)
-  }
-}
-
-impl error::Error for UnresolvedPathError {}

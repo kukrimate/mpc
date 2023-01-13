@@ -69,16 +69,20 @@ unsafe fn lower_const_ptr(ptr: &ConstPtr, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
   match lvalue {
-    LValue::DataRef { id, .. } |
-    LValue::ParamRef { id, .. } |
-    LValue::LetRef { id, .. } => {
+    LValue::DataRef { id, .. } => {
       ctx.get_value(&(*id, vec![]))
+    }
+    LValue::ParamRef { index, .. } => {
+      ctx.params[*index]
+    }
+    LValue::LetRef { index, .. } => {
+      ctx.locals[*index]
     }
     LValue::StrLit { val, .. } => {
       ctx.build_string_lit(val)
     }
     LValue::ArrayLit { ty, elements, .. } => {
-      let l_storage = ctx.allocate_local(RefStr::new(""), ty);
+      let l_storage = ctx.allocate_local(ty);
       let elements: Vec<(Ty, LLVMValueRef)> = elements.iter()
         .map(|element| (element.ty().clone(), lower_rvalue(element, ctx)))
         .collect();
@@ -86,7 +90,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       l_storage
     }
     LValue::StructLit { ty, fields, .. } => {
-      let l_storage = ctx.allocate_local(RefStr::new(""), ty);
+      let l_storage = ctx.allocate_local(ty);
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
         .map(|field| (field.ty().clone(), lower_rvalue(field, ctx)))
         .collect();
@@ -251,23 +255,18 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       // Void value
       ctx.build_void()
     }
-    RValue::Let { id, init, .. } => {
-      if let Some(Inst::Let { name, ty, .. }) = ctx.insts.get(&(*id, vec![])) {
-        // Allocate variable
-        let l_local = ctx.allocate_local(*name, ty);
-        ctx.values.insert((*id, vec![]), l_local);
+    RValue::Let { index, init, .. } => {
+      // Allocate variable
+      let l_local = ctx.locals[*index];
 
-        // Generate initializer
-        if let Some(init) = init {
-          let l_init = lower_rvalue(init, ctx);
-          ctx.build_store(init.ty(), l_local, l_init);
-        }
-
-        // Void value
-        ctx.build_void()
-      } else {
-        unreachable!()
+      // Generate initializer
+      if let Some(init) = init {
+        let l_init = lower_rvalue(init, ctx);
+        ctx.build_store(init.ty(), l_local, l_init);
       }
+
+      // Void value
+      ctx.build_void()
     }
     RValue::If { ty, cond, tbody, ebody, .. } => {
       let mut then_block = ctx.new_block();
@@ -406,6 +405,10 @@ struct LowerCtx<'a> {
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
 
+  // Function parameters and locals
+  params: Vec<LLVMValueRef>,
+  locals: Vec<LLVMValueRef>,
+
   // Break and continue blocks
   break_to: Vec<LLVMBasicBlockRef>,
   continue_to: Vec<LLVMBasicBlockRef>
@@ -468,6 +471,9 @@ impl<'a> LowerCtx<'a> {
       types: HashMap::new(),
       values: HashMap::new(),
       string_lits: HashMap::new(),
+
+      params: Vec::new(),
+      locals: Vec::new(),
 
       break_to: Vec::new(),
       continue_to: Vec::new()
@@ -715,7 +721,7 @@ impl<'a> LowerCtx<'a> {
     LLVMConstBitCast(l_addr, l_type)
   }
 
-  unsafe fn allocate_local(&mut self, name: RefStr, ty: &Ty) -> LLVMValueRef {
+  unsafe fn allocate_local(&mut self, ty: &Ty) -> LLVMValueRef {
     match self.ty_semantics(ty) {
       Semantics::Void => std::ptr::null_mut(),
       Semantics::Addr | Semantics::Value => {
@@ -724,7 +730,7 @@ impl<'a> LowerCtx<'a> {
         let l_alloca= LLVMBuildAlloca(
           self.l_builder,
           self.lower_ty(ty),
-          name.borrow_c());
+          empty_cstr());
         self.enter_block(prev);
         l_alloca
       }
@@ -873,7 +879,7 @@ impl<'a> LowerCtx<'a> {
   unsafe fn build_call(&mut self, ty: &Ty, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
     match self.ty_semantics(ty) {
       Semantics::Addr => {
-        let l_tmp = self.allocate_local(RefStr::new(""), ty);
+        let l_tmp = self.allocate_local(ty);
         let mut real_args = vec![l_tmp];
         real_args.extend(l_args);
         LLVMBuildCall(self.l_builder, l_func,
@@ -1144,7 +1150,7 @@ impl<'a> LowerCtx<'a> {
           // Create LLVM initializer
           LLVMSetInitializer(l_value, lower_const_val(init, self));
         }
-        Inst::Func { params, body: Some(body), .. } => {
+        Inst::Func { params, locals, body: Some(body), .. } => {
           self.l_func = self.get_value(id);
 
           // Create prelude block for allocas
@@ -1155,15 +1161,18 @@ impl<'a> LowerCtx<'a> {
           let pbase = if let Semantics::Addr = self.ty_semantics(body.ty()) { 1 } else { 0 };
 
           // Allocate parameters
-          for (index, def_id) in params.iter().enumerate() {
-            if let Some(Inst::Param { name, ty, .. }) = self.insts.get(&(*def_id, vec![])) {
-              let l_alloca = self.allocate_local(*name, ty);
-              let l_param = LLVMGetParam(self.l_func, pbase + index as u32);
-              self.build_store(ty, l_alloca, l_param);
-              self.values.insert((*def_id, vec![]), l_alloca);
-            } else {
-              unreachable!()
-            }
+          self.params.clear();
+          for (index, (_, ty)) in params.iter().enumerate() {
+            let l_alloca = self.allocate_local(ty);
+            let l_param = LLVMGetParam(self.l_func, pbase + index as u32);
+            self.build_store(ty, l_alloca, l_param);
+            self.params.push(l_alloca);
+          }
+          // Allocate locals
+          self.locals.clear();
+          for (_, ty) in locals.iter() {
+            let l_alloca = self.allocate_local(ty);
+            self.locals.push(l_alloca);
           }
 
           // Create LLVM function body

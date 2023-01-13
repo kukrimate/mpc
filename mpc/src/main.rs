@@ -28,11 +28,11 @@ fn main() {
     .get_matches();
 
   let compile_to = if args.occurrences_of("llvm-ir") > 0 {
-    mpc::CompileTo::LLVMIr
+    CompileTo::LLVMIr
   } else if args.occurrences_of("assembly") > 0 {
-    mpc::CompileTo::Assembly
+    CompileTo::Assembly
   } else {
-    mpc::CompileTo::Object
+    CompileTo::Object
   };
 
   let status = match compile(Path::new(args.value_of_os("input").unwrap()),

@@ -26,15 +26,40 @@ use consteval::*;
 /// Definitions
 #[derive(Debug)]
 enum Inst {
-  Struct { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
-  Union { name: RefStr, params: Option<Vec<(RefStr, Ty)>> },
-  Enum { name: RefStr, variants: Option<Vec<Variant>> },
-  Func { name: RefStr, ty: Ty, params: Vec<DefId>, body: Option<RValue> },
-  Data { name: RefStr, ty: Ty, is_mut: IsMut, init: ConstVal },
-  ExternFunc { name: RefStr, ty: Ty },
-  ExternData { name: RefStr, ty: Ty, is_mut: IsMut },
-  Param { name: RefStr, ty: Ty, is_mut: IsMut },
-  Let { name: RefStr, ty: Ty, is_mut: IsMut }
+  Struct {
+    name: RefStr,
+    params: Option<Vec<(RefStr, Ty)>>
+  },
+  Union {
+    name: RefStr,
+    params: Option<Vec<(RefStr, Ty)>>
+  },
+  Enum {
+    name: RefStr,
+    variants: Option<Vec<Variant>>
+  },
+  Func {
+    name: RefStr,
+    ty: Ty,
+    params: Vec<(IsMut, Ty)>,
+    locals: Vec<(IsMut, Ty)>,
+    body: Option<RValue>
+  },
+  Data {
+    name: RefStr,
+    ty: Ty,
+    is_mut: IsMut,
+    init: ConstVal
+  },
+  ExternFunc {
+    name: RefStr,
+    ty: Ty
+  },
+  ExternData {
+    name: RefStr,
+    ty: Ty,
+    is_mut: IsMut
+  }
 }
 
 #[derive(Debug)]
@@ -117,8 +142,8 @@ impl fmt::Debug for Ty {
 #[derive(Debug)]
 enum LValue {
   DataRef { ty: Ty, is_mut: IsMut, id: DefId },
-  ParamRef { ty: Ty, is_mut: IsMut, id: DefId },
-  LetRef { ty: Ty, is_mut: IsMut, id: DefId },
+  ParamRef { ty: Ty, is_mut: IsMut, index: usize },
+  LetRef { ty: Ty, is_mut: IsMut, index: usize },
   StrLit { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
@@ -152,7 +177,7 @@ enum RValue {
   Continue { ty: Ty },
   Break { ty: Ty, arg: Box<RValue> },
   Return { ty: Ty, arg: Box<RValue> },
-  Let { ty: Ty, id: DefId, init: Option<Box<RValue>> },
+  Let { ty: Ty, index: usize, init: Option<Box<RValue>> },
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
