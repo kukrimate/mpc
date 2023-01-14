@@ -384,6 +384,26 @@ impl<'a> CheckCtx<'a> {
           fields: self.infer_args(&params, fields)?
         }
       }
+      UnionLit(def_id, name, val) => {
+        let ty = self.inst_union((*def_id, vec![]))?;
+        let params = if let Inst::Union { params, .. }
+          = self.insts.get(&(*def_id, vec![])).unwrap() { params.clone().unwrap() } else { unreachable!() };
+
+        let val = self.infer_rvalue(val)?;
+        if name.borrow_rs() == "" && params.len() > 0 {
+          self.tctx.unify(val.ty(), &params[0].1)?;
+        } else if let Some((_, param_ty)) = lin_search(&params, name) {
+          self.tctx.unify(val.ty(), param_ty)?;
+        } else {
+          Err(Box::new(TypeError(format!("Unknown union field {}", name))))?
+        }
+
+        LValue::UnionLit {
+          ty,
+          is_mut: IsMut::No,
+          val
+        }
+      }
       UnitVariantLit(def_id, index) => {
         let ty = self.inst_enum((*def_id, vec![]))?;
         let variant = if let Inst::Enum { variants: Some(variants), .. }
@@ -539,6 +559,7 @@ impl<'a> CheckCtx<'a> {
       LetRef(..) |
       ArrayLit(..) |
       StructLit(..) |
+      UnionLit(..) |
       UnitVariantLit(..) |
       StructVariantLit(..) |
       Str(..) |

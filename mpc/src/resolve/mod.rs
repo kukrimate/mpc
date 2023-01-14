@@ -157,6 +157,7 @@ pub enum ResolvedExpr {
   CStr(Vec<u8>),
   ArrayLit(Vec<ResolvedExpr>),
   StructLit(DefId, Vec<(RefStr, ResolvedExpr)>),
+  UnionLit(DefId, RefStr, Box<ResolvedExpr>),
   UnitVariantLit(DefId, usize),
   StructVariantLit(DefId, usize, Vec<(RefStr, ResolvedExpr)>),
 
@@ -504,14 +505,18 @@ impl<'a> ResolveCtx<'a> {
           if let Path(path) = &**called {
             match self.lookup(path)? {
               Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
-                parse::Def::Type(..) => {
-                  todo!()
-                }
+                parse::Def::Type(..) => { todo!() }
                 parse::Def::Struct(..) => {
                   break ResolvedExpr::StructLit(def_id, args);
                 }
+                parse::Def::Union(..) if args.len() == 1 => {
+                  let (name, val) = args.into_iter().nth(0).unwrap();
+                  break ResolvedExpr::UnionLit(def_id,
+                                               name,
+                                               Box::new(val));
+                }
                 parse::Def::Union(..) => {
-                  todo!()
+                  Err(ResolveError::InvalidUnionLiteral)?
                 }
                 parse::Def::Variant(def) => {
                   break ResolvedExpr::StructVariantLit(def.parent_enum,
@@ -637,6 +642,7 @@ enum ResolveError {
   UnresolvedPath(parse::Path),
   InvalidValueName(parse::Path),
   InvalidTypeName(parse::Path),
+  InvalidUnionLiteral,
 }
 
 impl fmt::Display for ResolveError {
@@ -644,7 +650,8 @@ impl fmt::Display for ResolveError {
     match self {
       ResolveError::UnresolvedPath(path) => write!(f, "Unresolved path {}", path),
       ResolveError::InvalidValueName(path) => write!(f, "{} does not refer to a value", path),
-      ResolveError::InvalidTypeName(path) => write!(f, "{} does not refer to a type", path)
+      ResolveError::InvalidTypeName(path) => write!(f, "{} does not refer to a type", path),
+      ResolveError::InvalidUnionLiteral => write!(f, "Union literal with more than one argument")
     }
   }
 }

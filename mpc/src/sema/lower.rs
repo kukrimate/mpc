@@ -87,6 +87,12 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_aggregate_inplace(ty, l_storage, &elements);
       l_storage
     }
+    LValue::UnionLit { ty, val, .. } => {
+      let l_storage = ctx.allocate_local(ty);
+      let l_val = lower_rvalue(val, ctx);
+      ctx.build_store(val.ty(), l_storage, l_val);
+      l_storage
+    }
     LValue::StructLit { ty, fields, .. } => {
       let l_storage = ctx.allocate_local(ty);
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
