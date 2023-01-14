@@ -46,9 +46,7 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
       LLVMConstNamedStruct(ctx.lower_ty(ty), vals.as_mut_ptr(), vals.len() as _)
     }
     CStrLit { val } => {
-      let ty = Ty::Ptr(IsMut::No, Box::new(Ty::Int8));
-      let val = ctx.build_string_lit(val);
-      ctx.build_const_bitcast(&ty, val)
+      ctx.build_string_lit(val)
     }
   }
 }
@@ -97,6 +95,34 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       ctx.build_aggregate_inplace(ty, l_storage, &fields);
       l_storage
     }
+    LValue::UnitVariantLit { ty, index, .. } => {
+      let l_storage = ctx.allocate_local(ty);
+      // Write tag
+      let l_tag = ctx.build_int(&Ty::Int32, *index);
+      ctx.build_store(&Ty::Int32, l_storage, l_tag);
+      l_storage
+    }
+    LValue::StructVariantLit { ty, index, fields, .. } => {
+      let l_storage = ctx.allocate_local(ty);
+      // Write tag
+      let l_tag = ctx.build_int(&Ty::Int32, *index);
+      ctx.build_store(&Ty::Int32, l_storage, l_tag);
+
+      // Write data
+      let l_dest = ctx.build_gep(ty, l_storage, 1);
+      let l_fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
+        .map(|field| (field.ty().clone(), lower_rvalue(field, ctx)))
+        .collect();
+      // NOTE: this is kind of hacky, we should be storing the pre-computed variant types
+      //       during enum lowering
+      let variant_ty = Ty::Tuple(l_fields
+        .iter()
+        .map(|(ty, _)| (RefStr::new(""), ty.clone()))
+        .collect());
+      ctx.build_aggregate_inplace(&variant_ty, l_dest, &l_fields);
+
+      l_storage
+    }
     LValue::StruDot { arg, idx, .. } => {
       let l_ptr = lower_lvalue(arg, ctx);
       ctx.build_gep(arg.ty(), l_ptr, *idx)
@@ -123,9 +149,8 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::FuncRef { id, .. } => {
       ctx.get_value(id)
     }
-    RValue::CStr { ty,  val } => {
-      let l_addr = ctx.build_string_lit(val);
-      ctx.build_bitcast(ty, l_addr)
+    RValue::CStr { val, .. } => {
+      ctx.build_string_lit(val)
     }
     RValue::Load { ty, arg, .. } => {
       let addr = lower_lvalue(arg, ctx);
@@ -737,11 +762,6 @@ impl<'a> LowerCtx<'a> {
 
   }
 
-  unsafe fn build_const_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
-    let l_type = self.lower_ty(ty);
-    LLVMConstBitCast(l_addr, l_type)
-  }
-
   unsafe fn allocate_local(&mut self, ty: &Ty) -> LLVMValueRef {
     match self.ty_semantics(ty) {
       Semantics::Void => std::ptr::null_mut(),
@@ -886,11 +906,6 @@ impl<'a> LowerCtx<'a> {
                          empty_cstr())
   }
 
-  unsafe fn build_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
-    let l_type = self.lower_ty(ty);
-    LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
-  }
-
   unsafe fn build_index(&mut self, ty: &Ty, l_ptr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
@@ -976,7 +991,7 @@ impl<'a> LowerCtx<'a> {
     match (&dest_ty, &src_ty) {
       // Pointer to pointer
       (Ptr(..), Ptr(..)) => {
-        LLVMBuildBitCast(self.l_builder, l_val, l_dest_type, empty_cstr())
+        l_val
       }
       // Pointer to integer
       (Uint8|Uint16|Uint32|Uint64|Uintn|Int8|Int16|Int32|Int64|Intn, Ptr(..)) => {

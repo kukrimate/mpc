@@ -290,8 +290,21 @@ TypeDefinition: () = {
     repo.sym(name, def_id);
   },
   "enum" <name:Identifier> <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
-    let def_id = repo.def(Def::Enum(EnumDef { name, type_params, variants }));
+    let def_id = repo.def(Def::Enum(EnumDef { name, type_params, variants: variants.clone() }));
     repo.sym(name, def_id);
+    repo.current_scope.push(def_id);
+    for (index, variant) in variants.iter().enumerate() {
+      match variant {
+        Variant::Unit(name) |
+        Variant::Struct(name, ..) => {
+          let variant_id = repo.def(Def::Variant(VariantDef {
+            name: *name, parent_enum: def_id, variant_index: index
+          }));
+          repo.sym(*name, variant_id);
+        }
+      }
+    }
+    repo.current_scope.pop();
   },
 };
 

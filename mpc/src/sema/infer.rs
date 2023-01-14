@@ -384,6 +384,32 @@ impl<'a> CheckCtx<'a> {
           fields: self.infer_args(&params, fields)?
         }
       }
+      UnitVariantLit(def_id, index) => {
+        let ty = self.inst_enum((*def_id, vec![]))?;
+        let variant = if let Inst::Enum { variants: Some(variants), .. }
+          = self.insts.get(&(*def_id, vec![])).unwrap() { variants[*index].clone() } else { unreachable!() };
+        match variant {
+          Variant::Unit(..) => (),
+          Variant::Struct(..) => Err(Box::new(TypeError(format!("Expected arguments for struct variant"))))?
+        }
+        LValue::UnitVariantLit { ty, is_mut: IsMut::No, index: *index }
+      }
+      StructVariantLit(def_id, index, fields) => {
+        let ty = self.inst_enum((*def_id, vec![]))?;
+        let variant = if let Inst::Enum { variants: Some(variants), .. }
+          = self.insts.get(&(*def_id, vec![])).unwrap() { variants[*index].clone() } else { unreachable!() };
+        match variant {
+          Variant::Unit(..) => Err(Box::new(TypeError(format!("Unexpected arguments for unit variant"))))?,
+          Variant::Struct(_, params) => {
+            LValue::StructVariantLit {
+              ty,
+              is_mut: IsMut::No,
+              index: *index,
+              fields: self.infer_args(&params, fields)?
+            }
+          }
+        }
+      }
       Str(val) => {
         let ty = Ty::Arr(val.len(), Box::new(self.tctx.tvar(Ty::BoundInt)));
         LValue::StrLit { ty, is_mut: IsMut::No, val: val.clone() }
@@ -513,6 +539,8 @@ impl<'a> CheckCtx<'a> {
       LetRef(..) |
       ArrayLit(..) |
       StructLit(..) |
+      UnitVariantLit(..) |
+      StructVariantLit(..) |
       Str(..) |
       Dot(..) |
       Index(..) |

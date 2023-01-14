@@ -4,7 +4,7 @@
  */
 
 use crate::util::{MRes, RefStr};
-use crate::resolve::{ResolvedDef,resolve_def};
+use crate::resolve::{ResolvedDef,resolve_defs};
 use lexer::Token;
 use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashMap;
@@ -50,7 +50,7 @@ impl fmt::Display for Path {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Ty {
   Bool,
   Uint8,
@@ -82,7 +82,7 @@ pub enum BinOp {
   Mul, Div, Mod, Add, Sub, Lsh, Rsh, And, Xor, Or, Eq, Ne, Lt, Gt, Le, Ge
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
   Empty,
   Path(Path),
@@ -123,12 +123,13 @@ impl fmt::Debug for DefId {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.0.fmt(f) }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Def {
   Type(TypeDef),
   Struct(StructDef),
   Union(UnionDef),
   Enum(EnumDef),
+  Variant(VariantDef),
   Const(ConstDef),
   Data(DataDef),
   Func(FuncDef),
@@ -136,47 +137,54 @@ pub enum Def {
   ExternFunc(ExternFuncDef)
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TypeDef {
   pub name: RefStr,
   pub ty: Ty
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct StructDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct UnionDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EnumDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub variants: Vec<Variant>
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+pub struct VariantDef {
+  pub name: RefStr,
+  pub parent_enum: DefId,
+  pub variant_index: usize
+}
+
+#[derive(Clone, Debug)]
 pub enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConstDef {
   pub name: RefStr,
   pub ty: Ty,
   pub val: Expr
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DataDef {
   pub name: RefStr,
   pub is_mut: IsMut,
@@ -184,7 +192,7 @@ pub struct DataDef {
   pub init: Expr
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FuncDef {
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
@@ -195,14 +203,14 @@ pub struct FuncDef {
 
 pub type ParamDef = (RefStr, IsMut, Ty);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExternDataDef {
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: Ty
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ExternFuncDef {
   pub name: RefStr,
   pub params: Vec<(RefStr, Ty)>,
@@ -215,10 +223,7 @@ pub struct ExternFuncDef {
 pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
   let mut repo = Repository::new();
   repo.parse_module(path)?;
-  for (id, _) in &repo.parsed_defs {
-    let resolved_def = resolve_def(&repo, *id)?;
-    repo.resolved_defs.insert(*id, resolved_def);
-  }
+  resolve_defs(&mut repo)?;
   Ok(repo)
 }
 

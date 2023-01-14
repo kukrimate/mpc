@@ -62,7 +62,7 @@ enum Inst {
   }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
@@ -151,6 +151,8 @@ enum LValue {
   StrLit { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
+  UnitVariantLit { ty: Ty, is_mut: IsMut, index: usize },
+  StructVariantLit { ty: Ty, is_mut: IsMut, index: usize, fields: Vec<RValue> },
   StruDot { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: usize },
   UnionDot { ty: Ty, is_mut: IsMut, arg: Box<LValue> },
   Index { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -196,6 +198,8 @@ impl LValue {
       LValue::StrLit { ty, .. } => ty,
       LValue::ArrayLit { ty, .. } => ty,
       LValue::StructLit { ty, .. } => ty,
+      LValue::UnitVariantLit { ty, .. } => ty,
+      LValue::StructVariantLit { ty, .. } => ty,
       LValue::StruDot { ty, .. } => ty,
       LValue::UnionDot { ty, .. } => ty,
       LValue::Index { ty, .. } => ty,
@@ -211,6 +215,8 @@ impl LValue {
       LValue::StrLit { is_mut, .. } => *is_mut,
       LValue::ArrayLit { is_mut, .. } => *is_mut,
       LValue::StructLit { is_mut, .. } => *is_mut,
+      LValue::UnitVariantLit { is_mut, .. } => *is_mut,
+      LValue::StructVariantLit { is_mut, .. } => *is_mut,
       LValue::StruDot { is_mut, .. } => *is_mut,
       LValue::UnionDot { is_mut, .. } => *is_mut,
       LValue::Index { is_mut, .. } => *is_mut,

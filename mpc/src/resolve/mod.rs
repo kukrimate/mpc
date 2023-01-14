@@ -6,98 +6,114 @@
 use crate::util::*;
 use crate::parse::{self, Repository, DefId, UnOp, BinOp, IsMut};
 use std::collections::HashMap;
-use std::fmt::{self,Debug,Formatter};
+use std::fmt::{self, Debug, Formatter};
 
-pub fn resolve_def(repo: &Repository, def_id: DefId) -> MRes<ResolvedDef> {
-  Ok(match repo.parsed_by_id(def_id) {
-    parse::Def::Type(def) => {
-      let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
-      ResolvedDef::Type(ResolvedTypeDef {
-        name: def.name,
-        ty: ctx.resolve_ty(&def.ty)?
-      })
+pub fn resolve_defs(repo: &mut Repository) -> MRes<()> {
+  for (def_id, def) in repo.parsed_defs.iter() {
+    match def {
+      parse::Def::Type(def) => {
+        let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Type(ResolvedTypeDef {
+                                    name: def.name,
+                                    ty: ctx.resolve_ty(&def.ty)?,
+                                  }),
+        );
+      }
+      parse::Def::Struct(def) => {
+        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Struct(ResolvedStructDef {
+                                    name: def.name,
+                                    type_params: def.type_params.len(),
+                                    params: ctx.resolve_params(&def.params)?,
+                                  }));
+      }
+      parse::Def::Union(def) => {
+        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Union(ResolvedUnionDef {
+                                    name: def.name,
+                                    type_params: def.type_params.len(),
+                                    params: ctx.resolve_params(&def.params)?,
+                                  }));
+      }
+      parse::Def::Enum(def) => {
+        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Enum(ResolvedEnumDef {
+                                    name: def.name,
+                                    type_params: def.type_params.len(),
+                                    variants: def.variants
+                                      .iter()
+                                      .map(|variant| Ok(match variant {
+                                        parse::Variant::Unit(name) => ResolvedVariant::Unit(*name),
+                                        parse::Variant::Struct(name, params) => ResolvedVariant::Struct(*name, ctx.resolve_params(params)?)
+                                      }))
+                                      .monadic_collect()?,
+                                  }));
+      }
+      parse::Def::Variant(..) => {
+        // NOTE: this does not exist in resolved form
+      }
+      parse::Def::Const(def) => {
+        let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Const(ResolvedConstDef {
+                                    name: def.name,
+                                    ty: ctx.resolve_ty(&def.ty)?,
+                                    val: ctx.resolve_expr(&def.val)?,
+                                  }));
+      }
+      parse::Def::Data(def) => {
+        let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Data(ResolvedDataDef {
+                                    name: def.name,
+                                    is_mut: def.is_mut,
+                                    ty: ctx.resolve_ty(&def.ty)?,
+                                    init: ctx.resolve_expr(&def.init)?,
+                                  }));
+      }
+      parse::Def::Func(def) => {
+        let mut ctx = ResolveCtx::new_func(repo, repo.parent(*def_id),
+                                           &def.type_params, &def.params);
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::Func(ResolvedFuncDef {
+                                    name: def.name,
+                                    type_params: def.type_params.len(),
+                                    params: def.params
+                                      .iter()
+                                      .map(|(name, is_mut, ty)|
+                                        Ok((*name, *is_mut, ctx.resolve_ty(ty)?)))
+                                      .monadic_collect()?,
+                                    ret_ty: ctx.resolve_ty(&def.ret_ty)?,
+                                    body: ctx.resolve_expr(&def.body)?,
+                                    locals: ctx.locals,
+                                  }));
+      }
+      parse::Def::ExternData(def) => {
+        let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::ExternData(ResolvedExternDataDef {
+                                    name: def.name,
+                                    is_mut: def.is_mut,
+                                    ty: ctx.resolve_ty(&def.ty)?,
+                                  }));
+      }
+      parse::Def::ExternFunc(def) => {
+        let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
+        repo.resolved_defs.insert(*def_id,
+                                  ResolvedDef::ExternFunc(ResolvedExternFuncDef {
+                                    name: def.name,
+                                    varargs: def.varargs,
+                                    params: ctx.resolve_params(&def.params)?,
+                                    ret_ty: ctx.resolve_ty(&def.ret_ty)?,
+                                  }));
+      }
     }
-    parse::Def::Struct(def) => {
-      let mut ctx = ResolveCtx::new_generic(repo, repo.parent(def_id), &def.type_params);
-      ResolvedDef::Struct(ResolvedStructDef {
-        name: def.name,
-        type_params: def.type_params.len(),
-        params: ctx.resolve_params(&def.params)?
-      })
-    }
-    parse::Def::Union(def) => {
-      let mut ctx = ResolveCtx::new_generic(repo, repo.parent(def_id), &def.type_params);
-      ResolvedDef::Union(ResolvedUnionDef {
-        name: def.name,
-        type_params: def.type_params.len(),
-        params: ctx.resolve_params(&def.params)?
-      })
-    }
-    parse::Def::Enum(def) => {
-      let mut ctx = ResolveCtx::new_generic(repo, repo.parent(def_id), &def.type_params);
-      ResolvedDef::Enum(ResolvedEnumDef {
-        name: def.name,
-        type_params: def.type_params.len(),
-        variants: def.variants
-          .iter()
-          .map(|variant| Ok(match variant {
-            parse::Variant::Unit(name) => ResolvedVariant::Unit(*name),
-            parse::Variant::Struct(name, params) => ResolvedVariant::Struct(*name,ctx.resolve_params(params)?)
-          }))
-          .monadic_collect()?
-      })
-    }
-    parse::Def::Const(def) => {
-      let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
-      ResolvedDef::Const(ResolvedConstDef {
-        name: def.name,
-        ty: ctx.resolve_ty(&def.ty)?,
-        val: ctx.resolve_expr(&def.val)?
-      })
-    }
-    parse::Def::Data(def) => {
-      let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
-      ResolvedDef::Data(ResolvedDataDef {
-        name: def.name,
-        is_mut: def.is_mut,
-        ty: ctx.resolve_ty(&def.ty)?,
-        init: ctx.resolve_expr(&def.init)?,
-      })
-    }
-    parse::Def::Func(def) => {
-      let mut ctx = ResolveCtx::new_func(repo, repo.parent(def_id),
-                                                    &def.type_params, &def.params);
-      ResolvedDef::Func(ResolvedFuncDef {
-        name: def.name,
-        type_params: def.type_params.len(),
-        params: def.params
-          .iter()
-          .map(|(name, is_mut, ty)|
-            Ok((*name, *is_mut, ctx.resolve_ty(ty)?)))
-          .monadic_collect()?,
-        ret_ty: ctx.resolve_ty(&def.ret_ty)?,
-        body: ctx.resolve_expr(&def.body)?,
-        locals: ctx.locals,
-      })
-    }
-    parse::Def::ExternData(def) => {
-      let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
-      ResolvedDef::ExternData(ResolvedExternDataDef {
-        name: def.name,
-        is_mut: def.is_mut,
-        ty: ctx.resolve_ty(&def.ty)?
-      })
-    }
-    parse::Def::ExternFunc(def) => {
-      let mut ctx = ResolveCtx::new(repo, repo.parent(def_id));
-      ResolvedDef::ExternFunc(ResolvedExternFuncDef {
-        name: def.name,
-        varargs: def.varargs,
-        params: ctx.resolve_params(&def.params)?,
-        ret_ty: ctx.resolve_ty(&def.ret_ty)?
-      })
-    }
-  })
+  }
+  Ok(())
 }
 
 #[derive(Debug)]
@@ -123,7 +139,7 @@ pub enum ResolvedTy {
   Ptr(IsMut, Box<ResolvedTy>),
   Func(Vec<(RefStr, ResolvedTy)>, Box<ResolvedTy>),
   Arr(Box<ResolvedExpr>, Box<ResolvedTy>),
-  Tuple(Vec<(RefStr, ResolvedTy)>)
+  Tuple(Vec<(RefStr, ResolvedTy)>),
 }
 
 
@@ -141,6 +157,8 @@ pub enum ResolvedExpr {
   CStr(Vec<u8>),
   ArrayLit(Vec<ResolvedExpr>),
   StructLit(DefId, Vec<(RefStr, ResolvedExpr)>),
+  UnitVariantLit(DefId, usize),
+  StructVariantLit(DefId, usize, Vec<(RefStr, ResolvedExpr)>),
 
   // References
   FuncRef(DefId),
@@ -186,34 +204,34 @@ pub enum ResolvedDef {
   Data(ResolvedDataDef),
   Func(ResolvedFuncDef),
   ExternData(ResolvedExternDataDef),
-  ExternFunc(ResolvedExternFuncDef)
+  ExternFunc(ResolvedExternFuncDef),
 }
 
 #[derive(Debug)]
 pub struct ResolvedTypeDef {
   pub name: RefStr,
-  pub ty: ResolvedTy
+  pub ty: ResolvedTy,
 }
 
 #[derive(Debug)]
 pub struct ResolvedStructDef {
   pub name: RefStr,
   pub type_params: usize,
-  pub params: Vec<(RefStr, ResolvedTy)>
+  pub params: Vec<(RefStr, ResolvedTy)>,
 }
 
 #[derive(Debug)]
 pub struct ResolvedUnionDef {
   pub name: RefStr,
   pub type_params: usize,
-  pub params: Vec<(RefStr, ResolvedTy)>
+  pub params: Vec<(RefStr, ResolvedTy)>,
 }
 
 #[derive(Debug)]
 pub struct ResolvedEnumDef {
   pub name: RefStr,
   pub type_params: usize,
-  pub variants: Vec<ResolvedVariant>
+  pub variants: Vec<ResolvedVariant>,
 }
 
 #[derive(Debug)]
@@ -226,7 +244,7 @@ pub enum ResolvedVariant {
 pub struct ResolvedConstDef {
   pub name: RefStr,
   pub ty: ResolvedTy,
-  pub val: ResolvedExpr
+  pub val: ResolvedExpr,
 }
 
 #[derive(Debug)]
@@ -234,7 +252,7 @@ pub struct ResolvedDataDef {
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: ResolvedTy,
-  pub init: ResolvedExpr
+  pub init: ResolvedExpr,
 }
 
 #[derive(Debug)]
@@ -244,14 +262,14 @@ pub struct ResolvedFuncDef {
   pub params: Vec<(RefStr, IsMut, ResolvedTy)>,
   pub ret_ty: ResolvedTy,
   pub locals: Vec<(IsMut, Option<ResolvedTy>)>,
-  pub body: ResolvedExpr
+  pub body: ResolvedExpr,
 }
 
 #[derive(Debug)]
 pub struct ResolvedExternDataDef {
   pub name: RefStr,
   pub is_mut: IsMut,
-  pub ty: ResolvedTy
+  pub ty: ResolvedTy,
 }
 
 #[derive(Debug)]
@@ -259,7 +277,7 @@ pub struct ResolvedExternFuncDef {
   pub name: RefStr,
   pub params: Vec<(RefStr, ResolvedTy)>,
   pub varargs: bool,
-  pub ret_ty: ResolvedTy
+  pub ret_ty: ResolvedTy,
 }
 
 struct ResolveCtx<'a> {
@@ -280,7 +298,7 @@ enum Sym {
   Def(DefId),
   Param(usize),
   Local(usize),
-  TParam(usize)
+  TParam(usize),
 }
 
 impl<'a> ResolveCtx<'a> {
@@ -342,7 +360,7 @@ impl<'a> ResolveCtx<'a> {
 
     // Otherwise check the global symbol table
     if let Some(def_id) = self.repo.locate(self.parent_id, path) {
-      return Ok(Sym::Def(def_id))
+      return Ok(Sym::Def(def_id));
     }
 
     Err(ResolveError::UnresolvedPath(path.clone()))
@@ -379,27 +397,27 @@ impl<'a> ResolveCtx<'a> {
               parse::Def::Struct(..) => ResolvedTy::StructRef(def_id, type_args),
               parse::Def::Union(..) => ResolvedTy::UnionRef(def_id, type_args),
               parse::Def::Enum(..) => ResolvedTy::EnumRef(def_id, type_args),
-              _ => Err(ResolveError::ValueInTypeContext(path.clone()))?
+              _ => Err(ResolveError::InvalidTypeName(path.clone()))?
             }
           }
           Sym::TParam(index) => ResolvedTy::TParam(index),
           Sym::Local(..) |
-          Sym::Param(..) => Err(ResolveError::ValueInTypeContext(path.clone()))?,
+          Sym::Param(..) => Err(ResolveError::InvalidTypeName(path.clone()))?,
         }
       }
       Ptr(is_mut, base_ty) => {
         ResolvedTy::Ptr(*is_mut, Box::new(self.resolve_ty(base_ty)?))
-      },
+      }
       Func(params, ret_ty) => {
         let params = self.resolve_params(params)?;
         let ret_ty = self.resolve_ty(ret_ty)?;
         ResolvedTy::Func(params, Box::new(ret_ty))
-      },
+      }
       Arr(elem_cnt, elem_ty) => {
         let elem_cnt = self.resolve_expr(elem_cnt)?;
         let elem_ty = self.resolve_ty(elem_ty)?;
         ResolvedTy::Arr(Box::new(elem_cnt), Box::new(elem_ty))
-      },
+      }
       Tuple(params) => {
         let params = self.resolve_params(params)?;
         ResolvedTy::Tuple(params)
@@ -422,16 +440,29 @@ impl<'a> ResolveCtx<'a> {
       Path(path) => {
         match self.lookup(path)? {
           Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
-            parse::Def::Const(..) => ResolvedExpr::ConstRef(def_id),
-            parse::Def::ExternData(..) => ResolvedExpr::ExternDataRef(def_id),
-            parse::Def::Data(..) => ResolvedExpr::DataRef(def_id),
-            parse::Def::ExternFunc(..) => ResolvedExpr::ExternFuncRef(def_id),
-            parse::Def::Func(..) => ResolvedExpr::FuncRef(def_id),
-            _ => Err(ResolveError::TypeInValueContext(path.clone()))?
+            parse::Def::Const(..) => {
+              ResolvedExpr::ConstRef(def_id)
+            }
+            parse::Def::ExternData(..) => {
+              ResolvedExpr::ExternDataRef(def_id)
+            }
+            parse::Def::Data(..) => {
+              ResolvedExpr::DataRef(def_id)
+            }
+            parse::Def::ExternFunc(..) => {
+              ResolvedExpr::ExternFuncRef(def_id)
+            }
+            parse::Def::Func(..) => {
+              ResolvedExpr::FuncRef(def_id)
+            }
+            parse::Def::Variant(def) => {
+              ResolvedExpr::UnitVariantLit(def.parent_enum, def.variant_index)
+            }
+            _ => Err(ResolveError::InvalidValueName(path.clone()))?
           }
           Sym::Local(index) => ResolvedExpr::LetRef(index),
           Sym::Param(index) => ResolvedExpr::ParamRef(index),
-          Sym::TParam(..) => Err(ResolveError::TypeInValueContext(path.clone()))?
+          Sym::TParam(..) => Err(ResolveError::InvalidValueName(path.clone()))?
         }
       }
       Nil => ResolvedExpr::Nil,
@@ -473,10 +504,20 @@ impl<'a> ResolveCtx<'a> {
           if let Path(path) = &**called {
             match self.lookup(path)? {
               Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
-                parse::Def::Type(..) => todo!(),
-                parse::Def::Struct(..) => break ResolvedExpr::StructLit(def_id, args),
-                parse::Def::Union(..) => todo!(),
-                parse::Def::Enum(..) => todo!(),
+                parse::Def::Type(..) => {
+                  todo!()
+                }
+                parse::Def::Struct(..) => {
+                  break ResolvedExpr::StructLit(def_id, args);
+                }
+                parse::Def::Union(..) => {
+                  todo!()
+                }
+                parse::Def::Variant(def) => {
+                  break ResolvedExpr::StructVariantLit(def.parent_enum,
+                                                       def.variant_index,
+                                                       args);
+                }
                 _ => ()
               }
               _ => ()
@@ -486,7 +527,7 @@ impl<'a> ResolveCtx<'a> {
           // Regular call expression
           let called = self.resolve_expr(called)?;
           break ResolvedExpr::Call(Box::new(called),
-                                   args)
+                                   args);
         }
       }
       Adr(arg) => {
@@ -591,20 +632,19 @@ impl<'a> ResolveCtx<'a> {
 }
 
 /// Errors
-
 #[derive(Debug)]
 enum ResolveError {
   UnresolvedPath(parse::Path),
-  TypeInValueContext(parse::Path),
-  ValueInTypeContext(parse::Path)
+  InvalidValueName(parse::Path),
+  InvalidTypeName(parse::Path),
 }
 
 impl fmt::Display for ResolveError {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     match self {
       ResolveError::UnresolvedPath(path) => write!(f, "Unresolved path {}", path),
-      ResolveError::TypeInValueContext(path)  => write!(f, "Type {} used in value context", path),
-      ResolveError::ValueInTypeContext(path) => write!(f, "Value {} used in type context", path)
+      ResolveError::InvalidValueName(path) => write!(f, "{} does not refer to a value", path),
+      ResolveError::InvalidTypeName(path) => write!(f, "{} does not refer to a type", path)
     }
   }
 }
