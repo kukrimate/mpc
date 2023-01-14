@@ -55,12 +55,12 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_const_ptr(ptr: &ConstPtr, ctx: &mut LowerCtx) -> Val {
   match ptr {
-    ConstPtr::Data(id) => ctx.get_value(&(*id, vec![])),
-    ConstPtr::StrLit(val) => ctx.build_string_lit(val),
-    ConstPtr::ArrayElement(base, index) |
-    ConstPtr::StructField(base, index) => {
-      let base_ptr = lower_const_ptr(base, ctx);
-      ctx.build_const_gep(base_ptr, *index)
+    ConstPtr::Data { id, ..} => ctx.get_value(&(*id, vec![])),
+    ConstPtr::StrLit { val, ..  } => ctx.build_string_lit(val),
+    ConstPtr::ArrayElement { base, idx, .. } |
+    ConstPtr::StructField { base, idx, .. }=> {
+      let l_ptr = lower_const_ptr(base, ctx);
+      ctx.build_const_gep(base.ty(), l_ptr, *idx)
     }
   }
 }
@@ -86,7 +86,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       let elements: Vec<(Ty, LLVMValueRef)> = elements.iter()
         .map(|element| (element.ty().clone(), lower_rvalue(element, ctx)))
         .collect();
-      ctx.build_aggregate_inplace(l_storage, &elements);
+      ctx.build_aggregate_inplace(ty, l_storage, &elements);
       l_storage
     }
     LValue::StructLit { ty, fields, .. } => {
@@ -94,21 +94,20 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
       let fields: Vec<(Ty, LLVMValueRef)> = fields.iter()
         .map(|field| (field.ty().clone(), lower_rvalue(field, ctx)))
         .collect();
-      ctx.build_aggregate_inplace(l_storage, &fields);
+      ctx.build_aggregate_inplace(ty, l_storage, &fields);
       l_storage
     }
     LValue::StruDot { arg, idx, .. } => {
-      let addr = lower_lvalue(arg, ctx);
-      ctx.build_gep(addr, *idx)
+      let l_ptr = lower_lvalue(arg, ctx);
+      ctx.build_gep(arg.ty(), l_ptr, *idx)
     }
-    LValue::UnionDot { ty, arg, .. } => {
-      let addr = lower_lvalue(arg, ctx);
-      ctx.build_ptrbitcast(ty, addr)
+    LValue::UnionDot { arg, .. } => {
+      lower_lvalue(arg, ctx)
     }
     LValue::Index { arg, idx, .. } => {
-      let addr = lower_lvalue(arg, ctx);
-      let idx = lower_rvalue(idx, ctx);
-      ctx.build_index(addr, idx)
+      let l_ptr = lower_lvalue(arg, ctx);
+      let l_idx = lower_rvalue(idx, ctx);
+      ctx.build_index(arg.ty(), l_ptr, l_idx)
     }
     LValue::Ind { arg, .. } => {
       lower_rvalue(arg, ctx)
@@ -144,12 +143,12 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
     RValue::Flt { ty, val, .. } => {
       ctx.build_flt(ty, *val)
     }
-    RValue::Call { ty, arg, args, .. } => {
-      let arg = lower_rvalue(arg, ctx);
-      let args = args.iter()
+    RValue::Call { arg, args, .. } => {
+      let l_func = lower_rvalue(arg, ctx);
+      let l_args = args.iter()
         .map(|arg| lower_rvalue(arg, ctx))
         .collect();
-      ctx.build_call(ty, arg, args)
+      ctx.build_call(arg.ty(), l_func, l_args)
     }
     RValue::Adr { arg, .. } => {
       lower_lvalue(arg, ctx)
@@ -498,14 +497,6 @@ impl<'a> LowerCtx<'a> {
     LLVMStoreSizeOfType(self.l_layout, l_type) as usize
   }
 
-  unsafe fn lower_params(&mut self, params: &Vec<(RefStr, Ty)>) -> Vec<LLVMTypeRef> {
-    let mut l_params = vec![];
-    for (_, ty) in params {
-      l_params.push(self.lower_ty(ty));
-    }
-    l_params
-  }
-
   unsafe fn lower_ty(&mut self, ty: &Ty) -> LLVMTypeRef {
     use Ty::*;
 
@@ -530,39 +521,53 @@ impl<'a> LowerCtx<'a> {
       EnumRef(_, id) => {
         self.get_type(id)
       }
-      Ptr(_, base_ty) => {
-        LLVMPointerType(self.lower_ty(base_ty), 0)
-      }
-      Func(params, va, ret_ty) => {
-        LLVMPointerType(self.lower_func_ty(params, *va, ret_ty), 0)
+      Ptr(..) |
+      Func(..) => {
+        LLVMPointerTypeInContext(self.l_context, 0)
       }
       Arr(siz, elem_ty) => {
         LLVMArrayType(self.lower_ty(elem_ty), *siz as u32)
       }
       Tuple(params) => {
-        let mut l_params = self.lower_params(params);
+        let mut l_params: Vec<LLVMTypeRef> = params
+          .iter()
+          .map(|(_, ty)| self.lower_ty(ty))
+          .collect();
         LLVMStructTypeInContext(self.l_context,
-          l_params.as_mut_ptr() as _, l_params.len() as _, 0)
+                                l_params.as_mut_ptr() as _,
+                                l_params.len() as _,
+                                0)
       }
       _ => unreachable!()
     }
   }
 
   unsafe fn lower_func_ty(&mut self, params: &Vec<(RefStr, Ty)>, va: bool, ret_ty: &Ty) -> LLVMTypeRef {
+    let mut l_params: Vec<LLVMTypeRef> = params
+      .iter()
+      .map(|(_, ty)| {
+        match self.ty_semantics(ty) {
+          Semantics::Void => todo!(),
+          Semantics::Value => self.lower_ty(ty),
+          Semantics::Addr => LLVMPointerTypeInContext(self.l_context, 0),
+        }
+      })
+      .collect();
+
     match self.ty_semantics(ret_ty) {
       Semantics::Void | Semantics::Value => {
-        let mut l_params = self.lower_params(params);
         LLVMFunctionType(self.lower_ty(ret_ty),
                          l_params.as_mut_ptr() as _,
                          l_params.len() as _,
                          va as _)
       }
       Semantics::Addr => {
-        let mut l_params = vec![ LLVMPointerType(self.lower_ty(ret_ty), 0) ];
-        l_params.extend(self.lower_params(params));
+        let mut real_params = vec![ LLVMPointerTypeInContext(self.l_context, 0) ];
+        real_params.extend(l_params);
+
         LLVMFunctionType(LLVMVoidTypeInContext(self.l_context),
-                         l_params.as_mut_ptr() as _,
-                         l_params.len() as _,
+                         real_params.as_mut_ptr() as _,
+                         real_params.len() as _,
                          va as _)
       }
     }
@@ -615,11 +620,18 @@ impl<'a> LowerCtx<'a> {
       let mut l_params = match def {
         Inst::Struct { params: Some(params), .. } => {
           // This is the simplest case, LLVM has native support for structures
-          self.lower_params(params)
+          params
+            .iter()
+            .map(|(_, ty)| self.lower_ty(ty))
+            .collect()
         }
         Inst::Union { params: Some(params), .. } => {
           // The union lowering code is shared with enums thus it's in 'lower_union'
-          let l_params = self.lower_params(params);
+          let l_params = params
+            .iter()
+            .map(|(_, ty)| self.lower_ty(ty))
+            .collect();
+
           self.lower_union(l_params)
         }
         Inst::Enum { variants: Some(variants), .. } => {
@@ -632,7 +644,11 @@ impl<'a> LowerCtx<'a> {
             match variant {
               Variant::Unit(_) => (),
               Variant::Struct(_, params) => {
-                let mut l_params = self.lower_params(params);
+                let mut l_params: Vec<LLVMTypeRef> = params
+                  .iter()
+                  .map(|(_, ty)| self.lower_ty(ty))
+                  .collect();
+
                 l_variant_types.push(LLVMStructTypeInContext(
                   self.l_context,
                   l_params.as_mut_ptr() as _,
@@ -705,16 +721,19 @@ impl<'a> LowerCtx<'a> {
     LLVMConstReal(self.lower_ty(ty), val)
   }
 
-  unsafe fn build_const_gep(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+  unsafe fn build_const_gep(&mut self, ty: &Ty, l_ptr: LLVMValueRef, idx: usize) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
       // NOTE: this is not documented in many places, but struct field
       // indices have to be Int32 otherwise LLVM crashes :(
       LLVMConstInt(LLVMInt32TypeInContext(self.l_context), idx as u64, 0)
     ];
-    LLVMConstInBoundsGEP(l_addr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32)
+
+    let l_type = self.lower_ty(ty);
+    LLVMConstInBoundsGEP2(l_type,
+                          l_ptr,
+                          &mut indices as *mut LLVMValueRef,
+                          indices.len() as u32)
 
   }
 
@@ -773,11 +792,15 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn build_load(&mut self, ty: &Ty, l_src: LLVMValueRef) -> LLVMValueRef {
+  unsafe fn build_load(&mut self, ty: &Ty, l_ptr: LLVMValueRef) -> LLVMValueRef {
+    let l_type = self.lower_ty(ty);
     match self.ty_semantics(ty) {
       Semantics::Void => std::ptr::null_mut(),
-      Semantics::Addr => l_src,
-      Semantics::Value => LLVMBuildLoad(self.l_builder, l_src, empty_cstr())
+      Semantics::Addr => l_ptr,
+      Semantics::Value => LLVMBuildLoad2(self.l_builder,
+                                         l_type,
+                                         l_ptr,
+                                         empty_cstr())
     }
   }
 
@@ -839,24 +862,28 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn build_aggregate_inplace(&mut self, l_storage: LLVMValueRef, fields: &[(Ty, LLVMValueRef)]) {
-    for (idx, (ty, l_val)) in fields.iter().enumerate() {
-      let l_addr = self.build_gep(l_storage, idx);
-      self.build_store(ty, l_addr, *l_val);
+  unsafe fn build_aggregate_inplace(&mut self, ty: &Ty, l_storage: LLVMValueRef, fields: &[(Ty, LLVMValueRef)]) {
+    for (idx, (field_ty, l_field)) in fields.iter().enumerate() {
+      let l_dest = self.build_gep(ty, l_storage, idx);
+      self.build_store(field_ty, l_dest, *l_field);
     }
   }
 
-  unsafe fn build_gep(&mut self, l_addr: LLVMValueRef, idx: usize) -> LLVMValueRef {
+  unsafe fn build_gep(&mut self, ty: &Ty, l_ptr: LLVMValueRef, idx: usize) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
       // NOTE: this is not documented in many places, but struct field
       // indices have to be Int32 otherwise LLVM crashes :(
       LLVMConstInt(LLVMInt32TypeInContext(self.l_context), idx as u64, 0)
     ];
-    LLVMBuildInBoundsGEP(self.l_builder, l_addr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32,
-      empty_cstr())
+
+    let l_type = self.lower_ty(ty);
+    LLVMBuildInBoundsGEP2(self.l_builder,
+                         l_type,
+                         l_ptr,
+                         &mut indices as *mut LLVMValueRef,
+                         indices.len() as u32,
+                         empty_cstr())
   }
 
   unsafe fn build_bitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
@@ -864,39 +891,50 @@ impl<'a> LowerCtx<'a> {
     LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
   }
 
-  unsafe fn build_ptrbitcast(&mut self, ty: &Ty, l_addr: LLVMValueRef) -> LLVMValueRef {
-    let l_type = LLVMPointerType(self.lower_ty(ty), 0);
-    LLVMBuildBitCast(self.l_builder, l_addr, l_type, empty_cstr())
-  }
-
-  unsafe fn build_index(&mut self, l_addr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
+  unsafe fn build_index(&mut self, ty: &Ty, l_ptr: LLVMValueRef, l_idx: LLVMValueRef) -> LLVMValueRef {
     let mut indices = [
       LLVMConstInt(LLVMInt8TypeInContext(self.l_context), 0, 0),
       l_idx
     ];
-    LLVMBuildInBoundsGEP(self.l_builder, l_addr,
-      &mut indices as *mut LLVMValueRef,
-      indices.len() as u32,
-      empty_cstr())
+
+    let l_type = self.lower_ty(ty);
+    LLVMBuildInBoundsGEP2(self.l_builder,
+                          l_type,
+                          l_ptr,
+                          indices.as_mut_ptr() as _,
+                          indices.len() as _,
+                          empty_cstr())
   }
 
-  unsafe fn build_call(&mut self, ty: &Ty, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
-    match self.ty_semantics(ty) {
+  unsafe fn build_call(&mut self, func_ty: &Ty, l_func: LLVMValueRef, mut l_args: Vec<LLVMValueRef>) -> LLVMValueRef {
+    let (params, va, ret_ty) = if let Ty::Func(params, va, ret_ty) = func_ty {
+      (params, va, ret_ty)
+    } else {
+      unreachable!()
+    };
+
+    let l_func_type = self.lower_func_ty(params, *va, ret_ty);
+
+    match self.ty_semantics(ret_ty) {
       Semantics::Addr => {
-        let l_tmp = self.allocate_local(ty);
-        let mut real_args = vec![l_tmp];
+        let l_ret_tmp = self.allocate_local(ret_ty);
+        let mut real_args = vec![l_ret_tmp];
         real_args.extend(l_args);
-        LLVMBuildCall(self.l_builder, l_func,
-                      real_args.as_mut_ptr() as _,
-                      real_args.len() as _,
-                      empty_cstr());
-        l_tmp
+        LLVMBuildCall2(self.l_builder,
+                       l_func_type,
+                       l_func,
+                       real_args.as_mut_ptr() as _,
+                       real_args.len() as _,
+                       empty_cstr());
+        l_ret_tmp
       }
       _ => {
-        LLVMBuildCall(self.l_builder, l_func,
-                      l_args.as_mut_ptr() as _,
-                      l_args.len() as _,
-                      empty_cstr())
+        LLVMBuildCall2(self.l_builder,
+                       l_func_type,
+                       l_func,
+                       l_args.as_mut_ptr() as _,
+                       l_args.len() as _,
+                       empty_cstr())
       }
     }
   }

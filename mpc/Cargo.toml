@@ -9,4 +9,4 @@ lalrpop = "0.19.8"
 [dependencies]
 clap = "2.33.3"
 lalrpop-util = "0.19.8"
-llvm-sys = "130"
+llvm-sys = "150"

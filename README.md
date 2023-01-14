@@ -8,12 +8,12 @@ MPC is written in Rust, requiring `rustc` nightly for compilation,
 and Cargo as a build system. Both of which can be acquired from:
 > https://www.rust-lang.org/tools/install
 
-LLVM 13 is used as a code generation backend. It may need to be manually
+LLVM 15 is used as a code generation backend. It may need to be manually
 installed if not bundled with the host operating system. It can be obtained from:
 > https://releases.llvm.org/
 
 ## Portability
-While MPC should be able to run on all platforms targeted by recent rustc, that can host LLVM 13.
+While MPC should be able to run on all platforms targeted by recent rustc, that can host LLVM 15.
 
 For ease of development, currently only 64-bit macOS, and 64-bit Linux are considered supported.
 
@@ -23,10 +23,10 @@ host platform's default LLVM target.
 ## Compilation
 
 If not bundled with the operating system, set the environment variable
-`LLVM_SYS_130_PREFIX` to point to the directory where LLVM 13 was installed,
+`LLVM_SYS_150_PREFIX` to point to the directory where LLVM 15 was installed,
 e.g:
 ```
-export LLVM_SYS_130_PREFIX=/opt/llvm-13
+export LLVM_SYS_150_PREFIX=/opt/llvm-15
 ```
 
 Then MPC can be built with Cargo, either in Debug mode (which is also default):

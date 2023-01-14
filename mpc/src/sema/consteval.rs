@@ -8,10 +8,21 @@ use super::*;
 
 #[derive(Debug)]
 pub(super) enum ConstPtr {
-  Data(DefId),
-  StrLit(Vec<u8>),
-  ArrayElement(Box<ConstPtr>, usize),
-  StructField(Box<ConstPtr>, usize)
+  Data { ty: Ty, id: DefId },
+  StrLit { ty: Ty, val: Vec<u8> },
+  ArrayElement { ty: Ty, base: Box<ConstPtr>, idx: usize },
+  StructField { ty: Ty, base: Box<ConstPtr>, idx: usize }
+}
+
+impl ConstPtr {
+  pub fn ty(&self) -> &Ty {
+    match self {
+      ConstPtr::Data { ty, .. } => ty,
+      ConstPtr::StrLit { ty, .. } => ty,
+      ConstPtr::ArrayElement { ty, .. } => ty,
+      ConstPtr::StructField { ty, .. } => ty,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -40,20 +51,34 @@ impl error::Error for InvalidConstantExpressionError {}
 fn eval_constptr(lvalue: &LValue) -> MRes<ConstPtr> {
   use ConstPtr::*;
   match lvalue {
-    LValue::DataRef { id, .. } => {
-      Ok(Data(*id))
+    LValue::DataRef { ty, id, .. } => {
+      Ok(Data {
+        ty: ty.clone(),
+        id: *id
+      })
     }
-    LValue::StrLit { val, .. } => {
-      Ok(StrLit(val.clone()))
+    LValue::StrLit { ty, val, .. } => {
+      Ok(StrLit {
+        ty: ty.clone(),
+        val: val.clone()
+      })
     }
-    LValue::StruDot { arg, idx, .. } => {
+    LValue::StruDot { ty, arg, idx, .. } => {
       let base = eval_constptr(&*arg)?;
-      Ok(StructField(Box::new(base), *idx))
+      Ok(StructField {
+        ty: ty.clone(),
+        base: Box::new(base),
+        idx: *idx
+      })
     }
-    LValue::Index { arg, idx, .. } => {
+    LValue::Index { ty, arg, idx, .. } => {
       let base = eval_constptr(&*arg)?;
       let index = consteval_index(idx)?;
-      Ok(ArrayElement(Box::new(base), index))
+      Ok(ArrayElement {
+        ty: ty.clone(),
+        base: Box::new(base),
+        idx: index
+      })
     }
     _ => {
       Err(Box::new(InvalidConstantExpressionError))
