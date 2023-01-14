@@ -11,7 +11,8 @@ pub(super) enum ConstPtr {
   Data { ty: Ty, id: DefId },
   StrLit { ty: Ty, val: Vec<u8> },
   ArrayElement { ty: Ty, base: Box<ConstPtr>, idx: usize },
-  StructField { ty: Ty, base: Box<ConstPtr>, idx: usize }
+  StructField { ty: Ty, base: Box<ConstPtr>, idx: usize },
+  UnionField { ty: Ty, base: Box<ConstPtr> }
 }
 
 impl ConstPtr {
@@ -21,6 +22,7 @@ impl ConstPtr {
       ConstPtr::StrLit { ty, .. } => ty,
       ConstPtr::ArrayElement { ty, .. } => ty,
       ConstPtr::StructField { ty, .. } => ty,
+      ConstPtr::UnionField { ty, .. } => ty
     }
   }
 }
@@ -34,7 +36,8 @@ pub(super) enum ConstVal {
   FltLit { ty: Ty, val: f64 },
   ArrLit { ty: Ty, vals: Vec<ConstVal> },
   StructLit { ty: Ty, vals: Vec<ConstVal> },
-  CStrLit { val: Vec<u8> }
+  UnionLit { ty: Ty, val: Box<ConstVal> },
+  CStrLit { val: Vec<u8> },
 }
 
 #[derive(Debug)]
@@ -71,6 +74,13 @@ fn eval_constptr(lvalue: &LValue) -> MRes<ConstPtr> {
         idx: *idx
       })
     }
+    LValue::UnionDot { ty, arg, .. } => {
+      let base = eval_constptr(&*arg)?;
+      Ok(UnionField {
+        ty: ty.clone(),
+        base: Box::new(base)
+      })
+    }
     LValue::Index { ty, arg, idx, .. } => {
       let base = eval_constptr(&*arg)?;
       let index = consteval_index(idx)?;
@@ -102,11 +112,23 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         .monadic_collect()?;
       Ok(ConstVal::StructLit { ty: ty.clone(), vals })
     }
+    LValue::UnionLit { ty, val, .. } => {
+      Ok(ConstVal::UnionLit { ty: ty.clone(), val: Box::new(consteval(val)?) })
+    }
     LValue::StruDot { arg, idx, .. } => {
       let base = eval_constload(arg)?;
       match base {
         ConstVal::StructLit { vals, .. } => {
           Ok(vals.into_iter().nth(*idx).unwrap())
+        }
+        _ => Err(Box::new(InvalidConstantExpressionError))
+      }
+    }
+    LValue::UnionDot { arg, .. } => {
+      let base = eval_constload(arg)?;
+      match base {
+        ConstVal::UnionLit { .. } => {
+          todo!()
         }
         _ => Err(Box::new(InvalidConstantExpressionError))
       }
