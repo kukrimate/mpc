@@ -36,9 +36,12 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
         .iter()
         .map(|val| lower_const_val(val, ctx))
         .collect();
-      LLVMConstStruct(vals.as_mut_ptr() as _,
-                      vals.len() as _,
-                      0)
+      let types: Vec<LLVMTypeRef> =
+        vals.iter().map(|value| LLVMTypeOf(*value)).collect();
+      LLVMConstNamedStruct(
+        ctx.lower_anon_struct(&types),
+        vals.as_mut_ptr() as _,
+        vals.len() as _)
     }
     UnionLit { ty, val, .. } => {
       let l_type = ctx.lower_ty(ty);
@@ -49,7 +52,12 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
           LLVMInt8TypeInContext(ctx.l_context),
           (ctx.size_of(l_type) - ctx.size_of(LLVMTypeOf(l_val))) as _))
       ];
-      LLVMConstStruct(vals.as_mut_ptr(), vals.len() as _, 0)
+      let types: Vec<LLVMTypeRef> =
+        vals.iter().map(|value| LLVMTypeOf(*value)).collect();
+      LLVMConstNamedStruct(
+        ctx.lower_anon_struct(&types),
+        vals.as_mut_ptr() as _,
+        vals.len() as _)
     }
     CStrLit { val } => {
       ctx.build_string_lit(val)
@@ -72,15 +80,12 @@ unsafe fn const_init_ty(val: &ConstVal, ctx: &mut LowerCtx) -> LLVMTypeRef {
 
     ArrLit { vals, .. } |
     StructLit { vals, .. } => {
-      let mut l_types: Vec<LLVMTypeRef> = vals
+      let l_types: Vec<LLVMTypeRef> = vals
         .iter()
         .map(|val| const_init_ty(val, ctx))
         .collect();
 
-      LLVMStructTypeInContext(ctx.l_context,
-                              l_types.as_mut_ptr() as _,
-                              l_types.len() as _,
-                              0)
+      ctx.lower_anon_struct(&l_types)
     }
 
     UnionLit { ty, val, .. } => {
@@ -89,16 +94,13 @@ unsafe fn const_init_ty(val: &ConstVal, ctx: &mut LowerCtx) -> LLVMTypeRef {
 
       let l_val_type = const_init_ty(val, ctx);
 
-      let mut l_types = [
+      let l_types = [
         l_val_type, // Value
         LLVMArrayType(LLVMInt8TypeInContext(ctx.l_context),
                       (union_size - ctx.size_of(l_val_type)) as _)  // Padding
       ];
 
-      LLVMStructTypeInContext(ctx.l_context,
-                              l_types.as_mut_ptr() as _,
-                              l_types.len() as _,
-                              0)
+      ctx.lower_anon_struct(&l_types)
     }
   }
 }
@@ -488,6 +490,12 @@ struct LowerCtx<'a> {
   // Values
   values: HashMap<(DefId, Vec<Ty>), LLVMValueRef>,
 
+  // Anonymous structures
+  // This de-duplication table is needed as LLVM doesn't
+  // support checking for structural equality on such types
+  // only nominal (e.g. always false between two different instances)
+  anon_structs: HashMap<Vec<LLVMTypeRef>, LLVMTypeRef>,
+
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
 
@@ -556,6 +564,8 @@ impl<'a> LowerCtx<'a> {
 
       types: HashMap::new(),
       values: HashMap::new(),
+
+      anon_structs: HashMap::new(),
       string_lits: HashMap::new(),
 
       params: Vec::new(),
@@ -616,17 +626,27 @@ impl<'a> LowerCtx<'a> {
         LLVMArrayType(self.lower_ty(elem_ty), *siz as u32)
       }
       Tuple(params) => {
-        let mut l_params: Vec<LLVMTypeRef> = params
+        let l_params: Vec<LLVMTypeRef> = params
           .iter()
           .map(|(_, ty)| self.lower_ty(ty))
           .collect();
-        LLVMStructTypeInContext(self.l_context,
-                                l_params.as_mut_ptr() as _,
-                                l_params.len() as _,
-                                0)
+        self.lower_anon_struct(&l_params)
       }
       _ => unreachable!()
     }
+  }
+
+  unsafe fn lower_anon_struct(&mut self, fields: &[LLVMTypeRef]) -> LLVMTypeRef {
+    let l_context = self.l_context;
+    *self.anon_structs
+      .raw_entry_mut()
+      .from_key(fields)
+      .or_insert_with(|| {
+        (Vec::from(fields), LLVMStructTypeInContext(l_context,
+                                                    fields.as_ptr() as _,
+                                                    fields.len() as _,
+                                                    0))
+      }).1
   }
 
   unsafe fn lower_func_ty(&mut self, params: &Vec<(RefStr, Ty)>, va: bool, ret_ty: &Ty) -> LLVMTypeRef {
@@ -667,6 +687,7 @@ impl<'a> LowerCtx<'a> {
     let mut union_size = 0;
     let mut l_max_align_type = std::ptr::null_mut();
     for l_param in l_params {
+      assert!(LLVMTypeIsSized(l_param) == 1);
       if self.align_of(l_param) > union_align {
         union_align = self.align_of(l_param);
         l_max_align_type = l_param;
@@ -731,24 +752,20 @@ impl<'a> LowerCtx<'a> {
             match variant {
               Variant::Unit(_) => (),
               Variant::Struct(_, params) => {
-                let mut l_params: Vec<LLVMTypeRef> = params
+                let l_params: Vec<LLVMTypeRef> = params
                   .iter()
                   .map(|(_, ty)| self.lower_ty(ty))
                   .collect();
-
-                l_variant_types.push(LLVMStructTypeInContext(
-                  self.l_context,
-                  l_params.as_mut_ptr() as _,
-                  l_params.len() as _,
-                  0));
+                l_variant_types.push(self.lower_anon_struct(&l_params));
               }
             }
           }
 
           // Create actual enum parameters
-          let mut l_params = vec![ LLVMInt32TypeInContext(self.l_context) ];
-          l_params.extend(self.lower_union(l_variant_types));
-          l_params
+          concat(
+            vec![ LLVMInt32TypeInContext(self.l_context) ],
+            self.lower_union(l_variant_types)
+          )
         }
         _ => continue,
       };
@@ -1241,13 +1258,9 @@ impl<'a> LowerCtx<'a> {
     // Pass 1: Create LLVM values for each definition
     for (id, def) in self.insts.iter() {
       let l_value = match def {
-        Inst::Data { name, ty, init, .. } => {
-          let l_real_type = self.lower_ty(ty);
-          let l_init_type = const_init_ty(init, self);
-          assert_eq!(self.size_of(l_real_type), self.size_of(l_init_type));
-          let l_val = LLVMAddGlobal(self.l_module, l_init_type, name.borrow_c());
-          LLVMSetAlignment(l_val, self.align_of(l_real_type) as _);
-          l_val
+        Inst::Data { name, init, .. } => {
+          let l_type = const_init_ty(init, self);
+          LLVMAddGlobal(self.l_module, l_type, name.borrow_c())
         }
         Inst::ExternData { name, ty, .. } => {
           LLVMAddGlobal(self.l_module, self.lower_ty(ty), name.borrow_c())
@@ -1272,7 +1285,9 @@ impl<'a> LowerCtx<'a> {
       match def {
         Inst::Data { init, .. }  => {
           let l_value = self.get_value(id);
-          LLVMSetInitializer(l_value, lower_const_val(init, self));
+          let l_init = lower_const_val(init, self);
+          assert_eq!(LLVMGlobalGetValueType(l_value), LLVMTypeOf(l_init));
+          LLVMSetInitializer(l_value, l_init);
         }
         Inst::Func { params, locals, body: Some(body), .. } => {
           self.l_func = self.get_value(id);

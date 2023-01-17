@@ -199,3 +199,9 @@ pub unsafe fn c_strlen(s: *const c_char) -> usize {
   }
   end.offset_from(s) as _
 }
+
+/// Concatenate two vectors
+pub fn concat<T>(mut a: Vec<T>, b: Vec<T>) -> Vec<T> {
+  a.extend(b.into_iter());
+  a
+}
