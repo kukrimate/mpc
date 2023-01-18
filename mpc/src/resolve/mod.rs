@@ -139,15 +139,13 @@ pub enum ResolvedTy {
   Ptr(IsMut, Box<ResolvedTy>),
   Func(Vec<(RefStr, ResolvedTy)>, Box<ResolvedTy>),
   Arr(Box<ResolvedExpr>, Box<ResolvedTy>),
+  Unit,
   Tuple(Vec<(RefStr, ResolvedTy)>),
 }
 
 
 #[derive(Debug)]
 pub enum ResolvedExpr {
-  // Empty expression
-  Empty,
-
   // Literals
   Nil,
   Bool(bool),
@@ -155,6 +153,7 @@ pub enum ResolvedExpr {
   Flt(f64),
   Str(Vec<u8>),
   CStr(Vec<u8>),
+  Unit,
   ArrayLit(Vec<ResolvedExpr>),
   StructLit(DefId, Vec<(RefStr, ResolvedExpr)>),
   UnionLit(DefId, RefStr, Box<ResolvedExpr>),
@@ -419,6 +418,9 @@ impl<'a> ResolveCtx<'a> {
         let elem_ty = self.resolve_ty(elem_ty)?;
         ResolvedTy::Arr(Box::new(elem_cnt), Box::new(elem_ty))
       }
+      Unit => {
+        ResolvedTy::Unit
+      }
       Tuple(params) => {
         let params = self.resolve_params(params)?;
         ResolvedTy::Tuple(params)
@@ -437,7 +439,6 @@ impl<'a> ResolveCtx<'a> {
     use parse::Expr::*;
 
     Ok(match expr {
-      Empty => ResolvedExpr::Empty,
       Path(path) => {
         match self.lookup(path)? {
           Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
@@ -472,6 +473,7 @@ impl<'a> ResolveCtx<'a> {
       Flt(val) => ResolvedExpr::Flt(*val),
       Str(val) => ResolvedExpr::Str(val.clone()),
       CStr(val) => ResolvedExpr::CStr(val.clone()),
+      Unit => ResolvedExpr::Unit,
       Arr(elements) => {
         let elements = elements
           .iter()

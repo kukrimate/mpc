@@ -91,6 +91,7 @@ enum Ty {
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, bool, Box<Ty>),
   Arr(usize, Box<Ty>),
+  Unit,
   Tuple(Vec<(RefStr, Ty)>),
   // Type variables
   TVar(usize),
@@ -99,6 +100,16 @@ enum Ty {
   BoundNum,
   BoundInt,
   BoundFlt,
+}
+
+impl Ty {
+  fn unwrap_func(&self) -> (&Vec<(RefStr, Ty)>, bool, &Ty) {
+    if let Ty::Func(params, varargs, ret_ty) = self {
+      (params, *varargs, ret_ty)
+    } else {
+      unreachable!()
+    }
+  }
 }
 
 impl fmt::Debug for Ty {
@@ -129,6 +140,9 @@ impl fmt::Debug for Ty {
         write!(f, " -> {:?}", ty)
       }
       Arr(cnt, ty) => write!(f, "[{}]{:?}", cnt, ty),
+      Unit => {
+        write!(f, "()")
+      }
       Tuple(params) => {
         write_comma_separated(f,
                               params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
@@ -162,7 +176,7 @@ enum LValue {
 
 #[derive(Debug)]
 enum RValue {
-  Empty { ty: Ty },
+  Unit { ty: Ty },
   FuncRef { ty: Ty, id: (DefId, Vec<Ty>) },
   CStr { ty: Ty, val: Vec<u8> },
   Load { ty: Ty, arg: Box<LValue> },
@@ -231,7 +245,7 @@ impl LValue {
 impl RValue {
   fn ty(&self) -> &Ty {
     match self {
-      RValue::Empty { ty, .. } => ty,
+      RValue::Unit { ty, .. } => ty,
       RValue::FuncRef { ty, .. } => ty,
       RValue::CStr { ty, .. } => ty,
       RValue::Load { ty, .. } => ty,

@@ -40,7 +40,9 @@ TypeName: Ty = {
     Ty::Func(params, Box::new(ret)),
   "[" <l:Expr> "]" <t:TypeName> =>
     Ty::Arr(Box::new(l), Box::new(t)),
-  "(" <params:ParameterListOpt>  ")" =>
+  "(" ")" =>
+    Ty::Unit,
+  "(" <params:ParameterList>  ")" =>
     Ty::Tuple(params)
 };
 
@@ -72,7 +74,7 @@ ParameterList: Vec<(RefStr, Ty)> = {
 
 ReturnType: Ty = {
   "->" <t:TypeName> => t,
-  => Ty::Tuple(vec![])
+  => Ty::Unit
 };
 
 IsMut: IsMut = {
@@ -90,7 +92,7 @@ Expr: Expr = {
 };
 
 BlockExpr: Expr = {
-  "{" "}" => Expr::Empty,
+  "{" "}" => Expr::Unit,
   "{" <OpenItemList> "}" => Expr::Block(<>),
   "{" <ClosedItemList> "}" => Expr::Block(<>),
 };
@@ -106,7 +108,7 @@ OpenItemList: Vec<Expr> = {
 ClosedItemList: Vec<Expr> = {
   ClosedItem => vec![<>],
   <mut list:OpenItemList> ";" => {
-    list.push(Expr::Empty);
+    list.push(Expr::Unit);
     list
   },
   <mut list:ClosedItemList> <item:ClosedItem> => {
@@ -123,8 +125,8 @@ OpenItem: Expr = {
     Expr::Let(name, is_mut, ty, None)
   },
   "continue" => Expr::Continue,
-  "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Empty))),
-  "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Empty))),
+  "break" <e:Expr?> => Expr::Break(Box::new(e.unwrap_or(Expr::Unit))),
+  "return" <e:Expr?> => Expr::Return(Box::new(e.unwrap_or(Expr::Unit))),
 
   <l:Expr> "=" <r:Expr> => Expr::As(Box::new(l), Box::new(r)),
   <l:Expr> "*=" <r:Expr> => Expr::Rmw(BinOp::Mul, Box::new(l), Box::new(r)),
@@ -145,11 +147,11 @@ ClosedItem: Expr = {
   BlockExpr,
   IfExpr,
   LoopExpr,
-  ";" => Expr::Empty
+  ";" => Expr::Unit
 };
 
 IfExpr: Expr = {
-  "if" <c:Expr> <t:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Empty)),
+  "if" <c:Expr> <t:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(Expr::Unit)),
   "if" <c:Expr> <t:BlockExpr> "else" <e:BlockExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
   "if" <c:Expr> <t:BlockExpr> "else" <e:IfExpr> => Expr::If(Box::new(c), Box::new(t), Box::new(e)),
 };
@@ -255,11 +257,12 @@ Argument: (RefStr, Expr) = {
 
 PrimExpr: Expr = {
   "(" <e:Expr> ")" => e,
-   "[" <list:ArrayExprList> "]" => Expr::Arr(list),
   <p:Path> => Expr::Path(p),
   "nil" => Expr::Nil,
   "true" => Expr::Bool(true),
   "false" => Expr::Bool(false),
+  "(" ")" => Expr::Unit,
+  "[" <list:ArrayExprList> "]" => Expr::Arr(list),
   Integer => Expr::Int(<>),
   Float => Expr::Flt(<>),
   String => Expr::Str(<>),

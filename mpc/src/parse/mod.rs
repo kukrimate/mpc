@@ -69,6 +69,7 @@ pub enum Ty {
   Ptr(IsMut, Box<Ty>),
   Func(Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(Box<Expr>, Box<Ty>),
+  Unit,
   Tuple(Vec<(RefStr, Ty)>),
 }
 
@@ -84,7 +85,6 @@ pub enum BinOp {
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-  Empty,
   Path(Path),
   Nil,
   Bool(bool),
@@ -92,6 +92,7 @@ pub enum Expr {
   Flt(f64),
   Str(Vec<u8>),
   CStr(Vec<u8>),
+  Unit,
   Arr(Vec<Expr>),
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),

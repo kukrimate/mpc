@@ -125,6 +125,9 @@ impl TVarCtx {
         (Arr(siz1, elem1), Arr(siz2, elem2)) if siz1 == siz2 => {
           Arr(*siz1, Box::new(self.unify(elem1, elem2)?))
         }
+        (Unit, Unit) => {
+          Unit
+        }
         (Tuple(par1), Tuple(par2)) if par1.len() == par2.len() => {
           let mut par = Vec::new();
           for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
@@ -246,6 +249,9 @@ impl TVarCtx {
         Func(params, *va, Box::new(self.lit_ty(&**ty)))
       }
       Arr(cnt, ty) => Arr(*cnt, Box::new(self.lit_ty(&**ty))),
+      Unit => {
+        Unit
+      }
       Tuple(params) => {
         let params = params
           .iter()
@@ -321,6 +327,9 @@ impl TVarCtx {
       }
       Arr(cnt, ty) => {
         Arr(*cnt, Box::new(self.root_ty(ty)))
+      }
+      Unit => {
+        Unit
       }
       Tuple(params) => {
         let params = params

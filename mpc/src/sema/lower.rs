@@ -207,7 +207,7 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
 
 unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
   match rvalue {
-    RValue::Empty { .. } => {
+    RValue::Unit { .. } => {
       ctx.build_void()
     }
     RValue::FuncRef { id, .. } => {
@@ -927,33 +927,13 @@ impl<'a> LowerCtx<'a> {
 
     // Choose semantics
     match self.tctx.lit_ty(&ty) {
+      Unit => Semantics::Void,
       Bool | Uint8 | Int8 | Uint16 |
       Int16 |Uint32 | Int32 | Uint64 |
       Int64 | Uintn | Intn | Float |
       Double | Ptr(..) | Func(..) => Semantics::Value,
-      Arr(elem_cnt, elem_ty) => {
-        // Check for zero sized array
-        if elem_cnt == 0 {
-          return Semantics::Void
-        }
-        if let Semantics::Void = self.ty_semantics(&*elem_ty) {
-          return Semantics::Void
-        }
-        // Arrays follow address semantics normally
-        Semantics::Addr
-      }
-      Tuple(params) => {
-        // If any field has non-void semantics, it's non-void
-        for (_, ty) in params.iter() {
-          match self.ty_semantics(ty) {
-            Semantics::Void => (),
-            _ => return Semantics::Addr
-          }
-        }
-        // Otherwise this is an empty tuple
-        Semantics::Void
-      }
-      // NOTE: empty aggregates and unions still follow address semantics
+      Arr(..) |
+      Tuple(..) |
       StructRef(..) |
       UnionRef(..) |
       EnumRef(..) => Semantics::Addr,

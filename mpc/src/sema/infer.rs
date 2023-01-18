@@ -325,6 +325,9 @@ impl<'a> CheckCtx<'a> {
           .and_then(|rvalue| consteval_index(&rvalue))?;
         Ty::Arr(elem_cnt, Box::new(self.infer_ty(elem_ty)?))
       }
+      Unit => {
+        Ty::Unit
+      }
       Tuple(params) => {
         Ty::Tuple(self.infer_params(params)?)
       }
@@ -543,9 +546,6 @@ impl<'a> CheckCtx<'a> {
     use ResolvedExpr::*;
 
     Ok(match expr {
-      Empty => {
-        RValue::Empty { ty: Ty::Tuple(vec![]) }
-      }
       ConstRef(def_id) => if let ResolvedDef::Const(def) = self.resolved_def(*def_id) {
         self.infer_rvalue(&def.val)?
       } else {
@@ -586,6 +586,9 @@ impl<'a> CheckCtx<'a> {
       }
       Flt(val) => {
         RValue::Flt { ty: self.tctx.tvar(Ty::BoundFlt), val: *val }
+      }
+      Unit => {
+        RValue::Unit { ty: Ty::Unit }
       }
       Call(called, args) => {
         self.infer_call(called, args)?
@@ -645,7 +648,7 @@ impl<'a> CheckCtx<'a> {
         let ty = if let Some(last) = body.last() {
           last.ty().clone()
         } else {
-          Ty::Tuple(vec![])
+          Ty::Unit
         };
 
         RValue::Block { ty, body }
@@ -663,7 +666,7 @@ impl<'a> CheckCtx<'a> {
             TypeError(format!("Cannot assign to immutable location {:?}", lhs)))),
         };
 
-        RValue::As { ty: Ty::Tuple(vec![]), lhs: Box::new(lhs), rhs: Box::new(rhs) }
+        RValue::As { ty: Ty::Unit, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Rmw(op, lhs, rhs) => {
         // Infer and check argument types
@@ -678,7 +681,7 @@ impl<'a> CheckCtx<'a> {
             TypeError(format!("Cannot assign to immutable location {:?}", lhs)))),
         };
 
-        RValue::Rmw { ty: Ty::Tuple(vec![]), op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
+        RValue::Rmw { ty: Ty::Unit, op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
       }
       Continue => {
         // Can only have continue inside a loop
@@ -728,7 +731,7 @@ impl<'a> CheckCtx<'a> {
           None
         };
 
-        RValue::Let { ty: Ty::Tuple(vec![]), index: *index, init }
+        RValue::Let { ty: Ty::Unit, index: *index, init }
       }
       If(cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;
@@ -749,7 +752,7 @@ impl<'a> CheckCtx<'a> {
         let cond = self.infer_rvalue(cond)?;
         self.tctx.unify(&Ty::Bool, cond.ty())?;
 
-        self.loop_ty.push(Ty::Tuple(vec![]));
+        self.loop_ty.push(Ty::Unit);
         let body = self.infer_rvalue(body)?;
         let ty = self.loop_ty.pop().unwrap();
 
