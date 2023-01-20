@@ -1,2 +1,0 @@
-[env]
-MPC_STD_DIR = { value = "mpc_std", relative = true }
