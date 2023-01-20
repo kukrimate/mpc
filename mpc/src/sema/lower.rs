@@ -576,14 +576,99 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  fn get_type(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMTypeRef {
-    let tmp = (id.0, self.tctx.root_type_args(&id.1));
-    *self.types.get(&tmp).unwrap()
+  unsafe fn get_type(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMTypeRef {
+    let id = (id.0, self.tctx.root_type_args(&id.1));
+
+    if let Some(ty) = self.types.get(&id) {
+      *ty
+    } else {
+      let inst = self.insts.get(&id).unwrap();
+      let ty = self.lower_ty_def(inst);
+      self.types.insert(id, ty);
+      ty
+    }
   }
 
-  fn get_value(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMValueRef {
-    let tmp = (id.0, self.tctx.root_type_args(&id.1));
-    *self.values.get(&tmp).unwrap()
+  unsafe fn lower_ty_def(&mut self, inst: &Inst) -> LLVMTypeRef {
+    let (name, l_params) = match inst {
+      Inst::Struct { name, params: Some(params), .. } => {
+        // This is the simplest case, LLVM has native support for structures
+        (*name, params
+          .iter()
+          .map(|(_, ty)| self.lower_ty(ty))
+          .collect())
+      }
+      Inst::Union { name, params: Some(params), .. } => {
+        // The union lowering code is shared with enums thus it's in 'lower_union'
+        let l_params = params
+          .iter()
+          .map(|(_, ty)| self.lower_ty(ty))
+          .collect();
+
+        (*name, self.lower_union(l_params))
+      }
+      Inst::Enum { name, variants: Some(variants), .. } => {
+        // Enum lowering is done by adding a discriminant (always a dword for now)
+        // Followed by the variants lowered as if they were parameters of a union
+
+        // Convert struct-like variants into LLVM types
+        let mut l_variant_types = vec![];
+        for variant in variants {
+          match variant {
+            Variant::Unit(_) => (),
+            Variant::Struct(_, params) => {
+              let l_params: Vec<LLVMTypeRef> = params
+                .iter()
+                .map(|(_, ty)| self.lower_ty(ty))
+                .collect();
+              l_variant_types.push(self.lower_anon_struct(&l_params));
+            }
+          }
+        }
+
+        // Create actual enum parameters
+        (*name, concat(
+          vec![ LLVMInt32TypeInContext(self.l_context) ],
+          self.lower_union(l_variant_types)
+        ))
+      }
+      _ => unreachable!(),
+    };
+
+    let l_type = LLVMStructCreateNamed(self.l_context, name.borrow_c());
+    LLVMStructSetBody(l_type,
+                      l_params.as_ptr() as _,
+                      l_params.len() as _,
+                      0);
+    l_type
+  }
+
+  unsafe fn lower_union(&mut self, l_params: Vec<LLVMTypeRef>) -> Vec<LLVMTypeRef> {
+    // Union lowering is done clang style, we take the highest alignment
+    // element, and pad it to have the expected size of the union
+    let mut union_align = 0;
+    let mut union_size = 0;
+    let mut l_max_align_type = std::ptr::null_mut();
+    for l_param in l_params {
+      assert!(LLVMTypeIsSized(l_param) == 1);
+      if self.align_of(l_param) > union_align {
+        union_align = self.align_of(l_param);
+        l_max_align_type = l_param;
+      }
+      if self.size_of(l_param) > union_size {
+        union_size = self.size_of(l_param);
+      }
+    }
+
+    // Start with the highest alignment type then add byte array with
+    // the length of the required padding
+    let mut l_params = vec![ l_max_align_type ];
+    let padding_size = union_size - self.size_of(l_max_align_type);
+    if padding_size > 0 {
+      l_params.push(LLVMArrayType(
+        LLVMInt8TypeInContext(self.l_context), padding_size as u32));
+    }
+    l_params
   }
 
   unsafe fn align_of(&mut self, l_type: LLVMTypeRef) -> usize {
@@ -680,103 +765,11 @@ impl<'a> LowerCtx<'a> {
     }
   }
 
-  unsafe fn lower_union(&mut self, l_params: Vec<LLVMTypeRef>) -> Vec<LLVMTypeRef> {
-    // Union lowering is done clang style, we take the highest alignment
-    // element, and pad it to have the expected size of the union
-    let mut union_align = 0;
-    let mut union_size = 0;
-    let mut l_max_align_type = std::ptr::null_mut();
-    for l_param in l_params {
-      assert!(LLVMTypeIsSized(l_param) == 1);
-      if self.align_of(l_param) > union_align {
-        union_align = self.align_of(l_param);
-        l_max_align_type = l_param;
-      }
-      if self.size_of(l_param) > union_size {
-        union_size = self.size_of(l_param);
-      }
-    }
-
-    // Start with the highest alignment type then add byte array with
-    // the length of the required padding
-    let mut l_params = vec![ l_max_align_type ];
-    let padding_size = union_size - self.size_of(l_max_align_type);
-    if padding_size > 0 {
-      l_params.push(LLVMArrayType(
-        LLVMInt8TypeInContext(self.l_context), padding_size as u32));
-    }
-    l_params
+  fn get_value(&mut self, id: &(DefId, Vec<Ty>)) -> LLVMValueRef {
+    let tmp = (id.0, self.tctx.root_type_args(&id.1));
+    *self.values.get(&tmp).unwrap()
   }
 
-  unsafe fn lower_ty_defs(&mut self) {
-    // Pass 1: Create named LLVM structure for each type definition
-    for (id, def) in self.insts.iter() {
-      let l_type = match def {
-        Inst::Struct { name, .. } |
-        Inst::Union { name, .. } |
-        Inst::Enum { name, .. } => {
-          LLVMStructCreateNamed(self.l_context, name.borrow_c())
-        }
-        _ => continue
-      };
-
-      self.types.insert(id.clone(), l_type);
-    }
-
-    // Pass 2: Resolve bodies
-    for (id, def) in self.insts.iter() {
-      let mut l_params = match def {
-        Inst::Struct { params: Some(params), .. } => {
-          // This is the simplest case, LLVM has native support for structures
-          params
-            .iter()
-            .map(|(_, ty)| self.lower_ty(ty))
-            .collect()
-        }
-        Inst::Union { params: Some(params), .. } => {
-          // The union lowering code is shared with enums thus it's in 'lower_union'
-          let l_params = params
-            .iter()
-            .map(|(_, ty)| self.lower_ty(ty))
-            .collect();
-
-          self.lower_union(l_params)
-        }
-        Inst::Enum { variants: Some(variants), .. } => {
-          // Enum lowering is done by adding a discriminant (always a dword for now)
-          // Followed by the variants lowered as if they were parameters of a union
-
-          // Convert struct-like variants into LLVM types
-          let mut l_variant_types = vec![];
-          for variant in variants {
-            match variant {
-              Variant::Unit(_) => (),
-              Variant::Struct(_, params) => {
-                let l_params: Vec<LLVMTypeRef> = params
-                  .iter()
-                  .map(|(_, ty)| self.lower_ty(ty))
-                  .collect();
-                l_variant_types.push(self.lower_anon_struct(&l_params));
-              }
-            }
-          }
-
-          // Create actual enum parameters
-          concat(
-            vec![ LLVMInt32TypeInContext(self.l_context) ],
-            self.lower_union(l_variant_types)
-          )
-        }
-        _ => continue,
-      };
-
-      let l_type = self.get_type(id);
-      LLVMStructSetBody(l_type,
-                        l_params.as_mut_ptr() as _,
-                        l_params.len() as _,
-                        0);
-    }
-  }
 
   unsafe fn build_void(&mut self) -> LLVMValueRef {
     std::ptr::null_mut()
@@ -1380,7 +1373,6 @@ impl<'a> Drop for LowerCtx<'a> {
 pub(super) fn lower_module(tctx: &mut TVarCtx, insts: &HashMap<(DefId, Vec<Ty>), Inst>, path: &Path, compile_to: CompileTo) -> MRes<()> {
   unsafe {
     let mut ctx = LowerCtx::new(tctx, insts, RefStr::new(""));
-    ctx.lower_ty_defs();
     ctx.lower_defs();
     if let Some(_) = option_env!("MPC_SPEW") {
       ctx.dump();
