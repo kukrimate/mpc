@@ -10,7 +10,7 @@ use std::os::raw::c_char;
 
 /// Boxed, type-erased error wrapper
 
-pub type MRes<T> = Result<T, Box<dyn Error>>;
+pub type MRes<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 /// Globally de-duped strings
 
