@@ -280,21 +280,27 @@ ArrayExprList: Vec<Expr> = {
 // Definitions
 
 TypeDefinition: () = {
-  "type" <name:Identifier> "=" <ty:TypeName> => {
+   <location:@L> "type" <name:Identifier> "=" <ty:TypeName> =>? {
     let def_id = repo.def(Def::Type(TypeDef { name, ty }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   },
-  "struct" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+   <location:@L> "struct" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" =>? {
     let def_id = repo.def(Def::Struct(StructDef { name, type_params, params }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   },
-  "union" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" => {
+   <location:@L> "union" <name:Identifier> <type_params:TypeParameterListOpt> "(" <params:ParameterListOpt> ")" =>? {
     let def_id = repo.def(Def::Union(UnionDef { name, type_params, params }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   },
-  "enum" <name:Identifier> <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" => {
+  <location:@L> "enum" <name:Identifier> <type_params:TypeParameterListOpt> "(" <variants:VariantListOpt> ")" =>? {
     let def_id = repo.def(Def::Enum(EnumDef { name, type_params, variants: variants.clone() }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })?;
+
+
     repo.current_scope.push(def_id);
     for (index, variant) in variants.iter().enumerate() {
       match variant {
@@ -303,11 +309,14 @@ TypeDefinition: () = {
           let variant_id = repo.def(Def::Variant(VariantDef {
             name: *name, parent_enum: def_id, variant_index: index
           }));
-          repo.sym(*name, variant_id);
+          // FIXME: propagate these errors too
+          repo.sym(location, *name, variant_id).unwrap();
         }
       }
     }
     repo.current_scope.pop();
+
+    Ok(())
   },
 };
 
@@ -343,24 +352,27 @@ Variant: Variant = {
 };
 
 ConstDefinition: () = {
-  "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> => {
+   <location:@L> "const" <name:Identifier> ":" <ty:TypeName> "=" <val:Expr> =>? {
     let def_id = repo.def(Def::Const(ConstDef { name, ty, val }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   }
 };
 
 DataDefinition: () = {
-  "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> => {
+   <location:@L> "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> "=" <init:Expr> =>? {
     let def_id = repo.def(Def::Data(DataDef { name, is_mut, ty, init }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   }
 };
 
 FunctionDefinition: () = {
-  "function" <name:Identifier> <type_params:TypeParameterListOpt>
-      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:BlockExpr> => {
+   <location:@L> "function" <name:Identifier> <type_params:TypeParameterListOpt>
+      "(" <params:ParameterDefinitionListOpt> ")" <ret_ty:ReturnType> <body:BlockExpr> =>? {
     let def_id = repo.def(Def::Func(FuncDef { name, type_params, params, ret_ty, body }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   }
 };
 
@@ -382,27 +394,29 @@ ParameterDefinition: ParamDef = <is_mut:IsMut> <name:Identifier> ":" <ty:TypeNam
 };
 
 ImportDefinition: () = <location:@L> "import" <name:Identifier> =>? {
-  repo.find_module(name)
-    .ok_or_else(|| Error::UnknownModule(location, name))
+  repo.find_module(location, name)
     .and_then(|path| repo.parse_module(&path))
-    .and_then(|id| Ok(repo.sym(name, id)))
+    .and_then(|id| repo.sym(location, name, id))
     .map_err(|error| lalrpop_util::ParseError::User { error })
 };
 
 ExternBlock: () = "extern" "{" Seq<ExternDefinition> "}";
 
 ExternDefinition: () = {
-  "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> => {
+  <location:@L> "function" <name:Identifier> "(" <params:ParameterListOpt> ")" <ret_ty:ReturnType> =>? {
     let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: false, ret_ty }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   },
-  "function" <name:Identifier> "(" <params:ParameterList> "," "..." ")" <ret_ty:ReturnType> => {
+  <location:@L> "function" <name:Identifier> "(" <params:ParameterList> "," "..." ")" <ret_ty:ReturnType> =>? {
     let def_id = repo.def(Def::ExternFunc(ExternFuncDef { name, params, varargs: true, ret_ty }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   },
-  "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> => {
+  <location:@L> "data" <is_mut:IsMut> <name:Identifier> ":" <ty:TypeName> =>? {
     let def_id = repo.def(Def::ExternData(ExternDataDef { name, is_mut, ty }));
-    repo.sym(name, def_id);
+    repo.sym(location, name, def_id)
+      .map_err(|error| lalrpop_util::ParseError::User { error })
   }
 };
 

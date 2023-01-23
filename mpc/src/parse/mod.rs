@@ -288,23 +288,27 @@ impl Repository {
     id
   }
 
-  fn sym(&mut self, name: RefStr, def: DefId) {
-    let parent = *self.current_scope.last().unwrap();
-    if let Some(syms) = self.syms.get_mut(&parent) {
-      syms.insert(name, def);
-    } else {
-      self.syms.insert(parent,HashMap::from([ (name, def) ]));
+  fn sym(&mut self, location: Location, name: RefStr, def: DefId) -> Result<(), Error> {
+    let scope = self.syms
+      .entry(*self.current_scope.last().unwrap())
+      .or_insert_with(|| HashMap::new());
+
+    match scope.insert(name, def) {
+      None => Ok(()),         // No redefinition
+      Some(..) => {           // Redefinition errors
+        Err(Error::Redefinition(location, name))
+      }
     }
   }
 
-  fn find_module(&mut self, name: RefStr) -> Option<PathBuf> {
+  fn find_module(&mut self, location: Location, name: RefStr) -> Result<PathBuf, Error> {
     for dir in self.search_dirs.iter().rev() {
       let path = dir
         .join(std::path::Path::new(name.borrow_rs()))
         .with_extension("m");
-      if path.is_file() { return Some(path) }
+      if path.is_file() { return Ok(path) }
     }
-    None
+    Err(Error::UnknownModule(location, name))
   }
 
   fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, Error> {
@@ -348,7 +352,8 @@ pub enum Error {
   InvalidChar(Location),
   UnexpectedToken(Location),
   UnexpectedEndOfFile(Location),
-  UnknownModule(Location, RefStr)
+  UnknownModule(Location, RefStr),
+  Redefinition(Location, RefStr)
 }
 
 impl Error {
@@ -385,7 +390,8 @@ impl fmt::Display for Error {
       Error::InvalidChar(location) => write!(fmt, "Error at {}: Invalid char literal", location),
       Error::UnexpectedToken(location) => write!(fmt, "Error at {}: Unexpected token", location),
       Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location),
-      Error::UnknownModule(location, name) => write!(fmt, "Error at {}: Unknown module {}", location, name)
+      Error::UnknownModule(location, name) => write!(fmt, "Error at {}: Unknown module {}", location, name),
+      Error::Redefinition(location, name) => write!(fmt, "Error at {}: Re-definition of {}", location, name)
     }
   }
 }
