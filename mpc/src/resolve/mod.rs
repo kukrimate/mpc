@@ -168,6 +168,7 @@ pub enum ResolvedExpr {
   ExternDataRef(DefId),
   ParamRef(usize),
   LetRef(usize),
+  BindingRef(usize),
 
   // Compound expressions
   Dot(Box<ResolvedExpr>, RefStr),
@@ -191,7 +192,7 @@ pub enum ResolvedExpr {
   If(Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
   While(Box<ResolvedExpr>, Box<ResolvedExpr>),
   Loop(Box<ResolvedExpr>),
-  Match(Box<ResolvedExpr>, Vec<(RefStr, ResolvedExpr)>)
+  Match(Box<ResolvedExpr>, Vec<(Option<usize>, RefStr, ResolvedExpr)>)
 }
 
 
@@ -290,6 +291,9 @@ struct ResolveCtx<'a> {
   // Local variables
   locals: Vec<(IsMut, Option<ResolvedTy>)>,
 
+  // Match bindings
+  bindings: usize,
+
   // Symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
 }
@@ -299,12 +303,13 @@ enum Sym {
   Def(DefId),
   Param(usize),
   Local(usize),
+  Binding(usize),
   TParam(usize),
 }
 
 impl<'a> ResolveCtx<'a> {
   fn new(repo: &'a Repository, parent_id: DefId) -> Self {
-    ResolveCtx { repo, parent_id, locals: Vec::new(), scopes: Vec::new() }
+    ResolveCtx { repo, parent_id, locals: Vec::new(), bindings: 0, scopes: Vec::new() }
   }
 
   fn new_generic(repo: &'a Repository,
@@ -403,6 +408,7 @@ impl<'a> ResolveCtx<'a> {
           }
           Sym::TParam(index) => ResolvedTy::TParam(index),
           Sym::Local(..) |
+          Sym::Binding(..) |
           Sym::Param(..) => Err(ResolveError::InvalidTypeName(path.clone()))?,
         }
       }
@@ -465,6 +471,7 @@ impl<'a> ResolveCtx<'a> {
           }
           Sym::Local(index) => ResolvedExpr::LetRef(index),
           Sym::Param(index) => ResolvedExpr::ParamRef(index),
+          Sym::Binding(index) => ResolvedExpr::BindingRef(index),
           Sym::TParam(..) => Err(ResolveError::InvalidValueName(path.clone()))?
         }
       }
@@ -637,11 +644,23 @@ impl<'a> ResolveCtx<'a> {
       }
       Match(cond, cases) => {
         let cond = self.resolve_expr(cond)?;
-        let cases = cases
-          .iter()
-          .map(|(name, val)| Ok((*name, self.resolve_expr(val)?)))
-          .monadic_collect2()?;
-        ResolvedExpr::Match(Box::new(cond), cases)
+        let mut resolved_cases = Vec::new();
+
+        for (name, variant, val) in cases.iter() {
+          let index = name.map(|name| {
+            let index = self.bindings;
+            self.define(name, Sym::Binding(index));
+            self.bindings += 1;
+            index
+          });
+          self.newscope();
+          let result = self.resolve_expr(val);
+          self.popscope();
+          resolved_cases.push((index, *variant, result?));
+        }
+
+        ResolvedExpr::Match(Box::new(cond),
+                            resolved_cases)
       }
     })
   }

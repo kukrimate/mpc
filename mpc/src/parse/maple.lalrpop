@@ -164,21 +164,24 @@ LoopExpr: Expr = {
 };
 
 MatchExpr: Expr = {
-  "match" <e:Expr> "{" <c:CaseListOpt> "}" => Expr::Match(Box::new(e), c)
+  "match" <e:Expr> "{" <c:MatchCaseListOpt> "}" => Expr::Match(Box::new(e), c)
 };
 
-CaseListOpt:Vec<(RefStr, Expr)> = {
+MatchCaseListOpt:Vec<(Option<RefStr>, RefStr, Expr)> = {
   => vec![],
-  CaseList
+  MatchCaseList
 };
 
-CaseList: Vec<(RefStr, Expr)> = {
-  <name:Identifier> "=>" <body:Expr> => vec![(name, body)],
-  <mut list:CaseList> "," <name:Identifier> "=>" <body:Expr> => {
-    list.push((name, body));
+MatchCaseList: Vec<(Option<RefStr>, RefStr, Expr)> = {
+  MatchCase => vec![<>],
+  <mut list:MatchCaseList> "," <c:MatchCase> => {
+    list.push(c);
     list
   }
 };
+
+MatchCase: (Option<RefStr>, RefStr, Expr) =
+  <name:(<Identifier> ":")?> <variant:Identifier> "=>" <body:Expr> => (name, variant, body);
 
 LOrExpr: Expr = {
   LAndExpr,

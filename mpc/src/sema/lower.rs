@@ -134,6 +134,9 @@ unsafe fn lower_lvalue(lvalue: &LValue, ctx: &mut LowerCtx) -> Val {
     LValue::LetRef { index, .. } => {
       ctx.locals[*index]
     }
+    LValue::BindingRef { index, .. } => {
+      ctx.bindings[*index]
+    }
     LValue::StrLit { val, .. } => {
       ctx.build_string_lit(val)
     }
@@ -446,7 +449,7 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let end_block = ctx.new_block();
 
       // Lower tag
-      let l_addr = lower_rvalue(cond, ctx);
+      let l_addr = lower_lvalue(cond, ctx);
       let l_tag = ctx.build_load(&Ty::Int32, l_addr);
       let l_switch = LLVMBuildSwitch(
         ctx.l_builder,
@@ -460,7 +463,7 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       let mut phi_vals = Vec::new();
       let mut phi_blocks = Vec::new();
 
-      for (index, val) in cases.iter().enumerate() {
+      for (index, (binding, val)) in cases.iter().enumerate() {
         let case_block = ctx.new_block();
 
         // Add branch from switch
@@ -470,6 +473,11 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
 
         // Lower case
         ctx.enter_block(case_block);
+        if let Some(binding) = binding {
+          assert_eq!(*binding, ctx.bindings.len());
+          let l_binding = ctx.build_gep(cond.ty(), l_addr, 1);
+          ctx.bindings.push(l_binding);
+        }
         let l_val = lower_rvalue(val, ctx);
         if !l_val.is_null() {
           phi_vals.push(l_val);
@@ -559,6 +567,7 @@ struct LowerCtx<'a> {
   // Function parameters and locals
   params: Vec<LLVMValueRef>,
   locals: Vec<LLVMValueRef>,
+  bindings: Vec<LLVMValueRef>,
 
   // Break and continue blocks
   break_to: Vec<LLVMBasicBlockRef>,
@@ -588,7 +597,7 @@ impl<'a> LowerCtx<'a> {
       l_cpu_name,
       l_cpu_features,
       LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
-      LLVMRelocMode::LLVMRelocDefault,
+      LLVMRelocMode::LLVMRelocPIC,
       LLVMCodeModel::LLVMCodeModelDefault);
 
     let l_layout = LLVMCreateTargetDataLayout(l_machine);
@@ -627,6 +636,7 @@ impl<'a> LowerCtx<'a> {
 
       params: Vec::new(),
       locals: Vec::new(),
+      bindings: Vec::new(),
 
       break_to: Vec::new(),
       continue_to: Vec::new()

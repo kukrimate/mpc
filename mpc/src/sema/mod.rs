@@ -43,6 +43,7 @@ enum Inst {
     ty: Ty,
     params: Vec<(IsMut, Ty)>,
     locals: Vec<(IsMut, Ty)>,
+    bindings: Vec<(IsMut, Ty)>,
     body: Option<RValue>
   },
   Data {
@@ -162,6 +163,7 @@ enum LValue {
   DataRef { ty: Ty, is_mut: IsMut, id: DefId },
   ParamRef { ty: Ty, is_mut: IsMut, index: usize },
   LetRef { ty: Ty, is_mut: IsMut, index: usize },
+  BindingRef { ty: Ty, is_mut: IsMut, index: usize },
   StrLit { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
@@ -202,7 +204,7 @@ enum RValue {
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
-  Match { ty: Ty, cond: Box<RValue>, cases: Vec<RValue> }
+  Match { ty: Ty, cond: Box<LValue>, cases: Vec<(Option<usize>, RValue)> }
 }
 
 impl LValue {
@@ -211,6 +213,7 @@ impl LValue {
       LValue::DataRef { ty, .. } => ty,
       LValue::ParamRef { ty, .. } => ty,
       LValue::LetRef { ty, .. } => ty,
+      LValue::BindingRef { ty, .. } => ty,
       LValue::StrLit { ty, .. } => ty,
       LValue::ArrayLit { ty, .. } => ty,
       LValue::StructLit { ty, .. } => ty,
@@ -229,6 +232,7 @@ impl LValue {
       LValue::DataRef { is_mut, .. } => *is_mut,
       LValue::ParamRef { is_mut, .. } => *is_mut,
       LValue::LetRef { is_mut, .. } => *is_mut,
+      LValue::BindingRef { is_mut, .. } => *is_mut,
       LValue::StrLit { is_mut, .. } => *is_mut,
       LValue::ArrayLit { is_mut, .. } => *is_mut,
       LValue::StructLit { is_mut, .. } => *is_mut,

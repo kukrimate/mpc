@@ -17,6 +17,7 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefI
     type_args: Vec::new(),
     params: Vec::new(),
     locals: Vec::new(),
+    bindings: Vec::new(),
     ret_ty: Vec::new(),
     loop_ty: Vec::new(),
   };
@@ -70,6 +71,7 @@ struct CheckCtx<'a> {
   type_args: Vec<Ty>,
   params: Vec<(IsMut, Ty)>,
   locals: Vec<(IsMut, Ty)>,
+  bindings: Vec<(IsMut, Ty)>,
   ret_ty: Vec<Ty>,
   loop_ty: Vec<Ty>,
 }
@@ -191,6 +193,7 @@ impl<'a> CheckCtx<'a> {
       ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
       params: Vec::new(),
       locals: Vec::new(),
+      bindings: Vec::new(),
       body: None,
     });
 
@@ -245,6 +248,7 @@ impl<'a> CheckCtx<'a> {
       ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
       params: take(&mut self.params),
       locals: take(&mut self.locals),
+      bindings: take(&mut self.bindings),
       body: Some(body),
     });
 
@@ -361,6 +365,11 @@ impl<'a> CheckCtx<'a> {
       LetRef(index) => LValue::LetRef {
         ty: self.locals[*index].1.clone(),
         is_mut: self.locals[*index].0,
+        index: *index
+      },
+      BindingRef(index) => LValue::BindingRef {
+        ty: self.bindings[*index].1.clone(),
+        is_mut: self.bindings[*index].0,
         index: *index
       },
       ArrayLit(elements) => {
@@ -557,6 +566,7 @@ impl<'a> CheckCtx<'a> {
       ExternDataRef(..) |
       ParamRef(..) |
       LetRef(..) |
+      BindingRef(..) |
       ArrayLit(..) |
       StructLit(..) |
       UnionLit(..) |
@@ -773,11 +783,6 @@ impl<'a> CheckCtx<'a> {
         }
       }
       Match(cond, cases) => {
-        let cond = self.infer_rvalue(cond)?;
-        let cases = cases
-          .iter()
-          .map(|(name, val)| Ok((*name, self.infer_rvalue(val)?)))
-          .monadic_collect()?;
         self.infer_match(cond, cases)?
       }
     })
@@ -878,48 +883,62 @@ impl<'a> CheckCtx<'a> {
     }
   }
 
-  fn infer_match(&mut self, cond: RValue, cases: Vec<(RefStr, RValue)>) -> MRes<RValue> {
-    // Find enum variants
+  fn infer_match(&mut self, cond: &ResolvedExpr, cases: &[(Option<usize>, RefStr, ResolvedExpr)]) -> MRes<RValue> {
+    // Infer condition + find enum variants
+    let cond = self.infer_lvalue(cond)?;
     let variants = match self.tctx.lit_ty_nonrecusrive(cond.ty()) {
       Ty::EnumRef(_, id) => {
         if let Inst::Enum { variants: Some(variants), .. }
-          = self.insts.get(&id).unwrap() { variants } else { unreachable!() }
+          = self.insts.get(&id).unwrap() { variants.clone() } else { unreachable!() }
       },
       _ => Err(Box::new(TypeError(format!("Cannot match on non-enum type {:?}", cond.ty()))))?
     };
 
     // Create lookup table for cases
-    let expected_len = cases.len();
-    let mut cases: HashMap<RefStr, RValue> = cases
-      .into_iter()
-      .collect();
-    if cases.len() != expected_len {
-      Err(Box::new(TypeError(format!("Duplicate match case"))))?
+    let mut case_lookup: HashMap<RefStr, (Option<usize>, &ResolvedExpr)> = HashMap::new();
+
+    for (binding, variant, val) in cases.iter() {
+      // Check for duplicate case
+      if case_lookup.contains_key(variant) {
+        Err(Box::new(TypeError(format!("Duplicate match case"))))?
+      }
+      // Insert case
+      case_lookup.insert(*variant, (*binding, val));
     }
 
-    // Find case for each variant
-    let mut ordered_case_list = Vec::new();
-    for variant in variants.iter() {
-      let name = match variant {
-        Variant::Unit(name) => name,
-        Variant::Struct(name, ..) => name,
+    // Infer case for each variant
+    let mut inferred_cases = Vec::new();
+
+    for variant in variants.into_iter() {
+      let (name, ty) = match variant {
+        Variant::Unit(name) => (name, Ty::Unit),
+        Variant::Struct(name, params) => (name, Ty::Tuple(params)),
       };
-      ordered_case_list.push(cases.remove(name).ok_or_else(||
-        TypeError(format!("Missing match case for variant {}", name)))?);
+
+      let (binding, val) = case_lookup
+        .remove(&name)
+        .ok_or_else(|| TypeError(format!("Missing match case for variant {}", name)))?;
+
+      if let Some(binding) = binding {
+        assert_eq!(self.bindings.len(), binding);
+        self.bindings.push((cond.is_mut(), ty));
+      }
+
+      inferred_cases.push((binding, self.infer_rvalue(val)?));
     }
 
     // Make sure there are no cases left over
-    if cases.len() > 0 {
+    if case_lookup.len() > 0 {
       Err(Box::new(TypeError(format!("Match case for unknown variant"))))?
     }
 
     // Unify case types
-    let ty = if ordered_case_list.len() > 0 {
-      ordered_case_list[1..]
+    let ty = if inferred_cases.len() > 0 {
+      inferred_cases[1..]
         .iter()
-        .map(|val| val.ty())
-        .try_fold(ordered_case_list[0].ty().clone(),
-              |a, b| self.tctx.unify(&a, b))?
+        .map(|(_, val)| val.ty())
+        .try_fold(inferred_cases[0].1.ty().clone(),
+                  |a, b| self.tctx.unify(&a, b))?
     } else {
       Ty::Unit
     };
@@ -927,7 +946,7 @@ impl<'a> CheckCtx<'a> {
     Ok(RValue::Match {
       ty,
       cond: Box::new(cond),
-      cases: ordered_case_list
+      cases: inferred_cases
     })
   }
 }
