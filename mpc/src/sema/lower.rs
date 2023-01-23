@@ -442,11 +442,10 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       // Void value
       ctx.build_void()
     }
-    RValue::Match { cond, cases, .. } => {
-      // Merge block after switch
+    RValue::Match { ty, cond, cases, .. } => {
       let end_block = ctx.new_block();
 
-      // Branching point
+      // Lower tag
       let l_addr = lower_rvalue(cond, ctx);
       let l_tag = ctx.build_load(&Ty::Int32, l_addr);
       let l_switch = LLVMBuildSwitch(
@@ -455,19 +454,50 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
         end_block,
         cases.len() as _);
 
-      // Lower cases in their own block
+      let start_block = LLVMGetInsertBlock(ctx.l_builder);
+
+      // Lower cases
+      let mut phi_vals = Vec::new();
+      let mut phi_blocks = Vec::new();
+
       for (index, val) in cases.iter().enumerate() {
         let case_block = ctx.new_block();
+
+        // Add branch from switch
         LLVMAddCase(l_switch,
                     ctx.build_int(&Ty::Int32, index),
                     case_block);
+
+        // Lower case
         ctx.enter_block(case_block);
-        lower_rvalue(val, ctx);
+        let l_val = lower_rvalue(val, ctx);
+        if !l_val.is_null() {
+          phi_vals.push(l_val);
+          phi_blocks.push(LLVMGetInsertBlock(ctx.l_builder));
+        }
         ctx.exit_block_br(end_block);
       }
 
+      // Merge values into a phi at the end
       ctx.enter_block(end_block);
-      ctx.build_void()
+
+      if phi_vals.len() > 0 {
+        let ty = ctx.lower_ty(ty);
+        let l_phi = LLVMBuildPhi(
+          ctx.l_builder,
+          ty,
+          empty_cstr());
+
+        phi_vals.push(LLVMGetUndef(ty));
+        phi_blocks.push(start_block);
+        LLVMAddIncoming(l_phi,
+                        phi_vals.as_ptr() as _,
+                        phi_blocks.as_ptr() as _,
+                        phi_vals.len() as _);
+        l_phi
+      } else {
+        ctx.build_void()
+      }
     }
   }
 }
