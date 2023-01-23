@@ -202,6 +202,7 @@ enum RValue {
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
+  Match { ty: Ty, cond: Box<RValue>, cases: Vec<RValue> }
 }
 
 impl LValue {
@@ -271,6 +272,7 @@ impl RValue {
       RValue::If { ty, .. } => ty,
       RValue::While { ty, .. } => ty,
       RValue::Loop { ty, .. } => ty,
+      RValue::Match { ty, .. } => ty,
     }
   }
 }

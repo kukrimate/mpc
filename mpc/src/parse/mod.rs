@@ -115,6 +115,7 @@ pub enum Expr {
   If(Box<Expr>, Box<Expr>, Box<Expr>),
   While(Box<Expr>, Box<Expr>),
   Loop(Box<Expr>),
+  Match(Box<Expr>, Vec<(RefStr, Expr)>)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

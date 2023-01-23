@@ -88,6 +88,7 @@ Expr: Expr = {
   BlockExpr,
   IfExpr,
   LoopExpr,
+  MatchExpr,
   LOrExpr
 };
 
@@ -147,6 +148,7 @@ ClosedItem: Expr = {
   BlockExpr,
   IfExpr,
   LoopExpr,
+  MatchExpr,
   ";" => Expr::Unit
 };
 
@@ -159,6 +161,23 @@ IfExpr: Expr = {
 LoopExpr: Expr = {
   "loop" <b:BlockExpr> => Expr::Loop(Box::new(b)),
   "while" <e:Expr> <b:BlockExpr> => Expr::While(Box::new(e), Box::new(b))
+};
+
+MatchExpr: Expr = {
+  "match" <e:Expr> "{" <c:CaseListOpt> "}" => Expr::Match(Box::new(e), c)
+};
+
+CaseListOpt:Vec<(RefStr, Expr)> = {
+  => vec![],
+  CaseList
+};
+
+CaseList: Vec<(RefStr, Expr)> = {
+  <name:Identifier> "=>" <body:Expr> => vec![(name, body)],
+  <mut list:CaseList> "," <name:Identifier> "=>" <body:Expr> => {
+    list.push((name, body));
+    list
+  }
 };
 
 LOrExpr: Expr = {
@@ -467,6 +486,7 @@ extern {
     "else" => lexer::Token::KwElse,
     "while" => lexer::Token::KwWhile,
     "loop" => lexer::Token::KwLoop,
+    "match" => lexer::Token::KwMatch,
     "nil" => lexer::Token::KwNil,
     "true" => lexer::Token::KwTrue,
     "false" => lexer::Token::KwFalse,
@@ -506,6 +526,7 @@ extern {
     ">>" => lexer::Token::RShift,
     "::" => lexer::Token::DColon,
     "->" => lexer::Token::Arrow,
+    "=>" => lexer::Token::FatArrow,
     "==" => lexer::Token::EqEq,
     "!=" => lexer::Token::ExclEq,
     "<=" => lexer::Token::LessEq,

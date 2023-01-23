@@ -191,6 +191,7 @@ pub enum ResolvedExpr {
   If(Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
   While(Box<ResolvedExpr>, Box<ResolvedExpr>),
   Loop(Box<ResolvedExpr>),
+  Match(Box<ResolvedExpr>, Vec<(RefStr, ResolvedExpr)>)
 }
 
 
@@ -633,6 +634,14 @@ impl<'a> ResolveCtx<'a> {
       Loop(body) => {
         let body = self.resolve_expr(body)?;
         ResolvedExpr::Loop(Box::new(body))
+      }
+      Match(cond, cases) => {
+        let cond = self.resolve_expr(cond)?;
+        let cases = cases
+          .iter()
+          .map(|(name, val)| Ok((*name, self.resolve_expr(val)?)))
+          .monadic_collect2()?;
+        ResolvedExpr::Match(Box::new(cond), cases)
       }
     })
   }

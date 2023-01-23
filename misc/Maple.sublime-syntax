@@ -7,7 +7,7 @@ file_extensions:
 scope: source.m
 
 variables:
-  keywords: 'as|let|mut|continue|break|return|if|else|while|loop|nil|true|false|type|struct|union|enum|function|const|data|import|extern'
+  keywords: 'as|let|mut|continue|break|return|if|else|while|loop|match|nil|true|false|type|struct|union|enum|function|const|data|import|extern'
   basic_types: 'Bool|Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|Uintn|Intn|Float|Double|Function'
 
 contexts:
@@ -18,7 +18,7 @@ contexts:
       push: single_quoted_char
 
     # String literals
-    - match: '"'
+    - match: 'c?"'
       scope: punctuation.definition.string.begin.m
       push: double_quoted_string
 

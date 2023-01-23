@@ -772,6 +772,14 @@ impl<'a> CheckCtx<'a> {
           body: Box::new(body),
         }
       }
+      Match(cond, cases) => {
+        let cond = self.infer_rvalue(cond)?;
+        let cases = cases
+          .iter()
+          .map(|(name, val)| Ok((*name, self.infer_rvalue(val)?)))
+          .monadic_collect()?;
+        self.infer_match(cond, cases)?
+      }
     })
   }
 
@@ -868,6 +876,59 @@ impl<'a> CheckCtx<'a> {
         Ok(Ty::Bool)
       }
     }
+  }
+
+  fn infer_match(&mut self, cond: RValue, cases: Vec<(RefStr, RValue)>) -> MRes<RValue> {
+    // Find enum variants
+    let variants = match self.tctx.lit_ty_nonrecusrive(cond.ty()) {
+      Ty::EnumRef(_, id) => {
+        if let Inst::Enum { variants: Some(variants), .. }
+          = self.insts.get(&id).unwrap() { variants } else { unreachable!() }
+      },
+      _ => Err(Box::new(TypeError(format!("Cannot match on non-enum type {:?}", cond.ty()))))?
+    };
+
+    // Create lookup table for cases
+    let expected_len = cases.len();
+    let mut cases: HashMap<RefStr, RValue> = cases
+      .into_iter()
+      .collect();
+    if cases.len() != expected_len {
+      Err(Box::new(TypeError(format!("Duplicate match case"))))?
+    }
+
+    // Find case for each variant
+    let mut ordered_case_list = Vec::new();
+    for variant in variants.iter() {
+      let name = match variant {
+        Variant::Unit(name) => name,
+        Variant::Struct(name, ..) => name,
+      };
+      ordered_case_list.push(cases.remove(name).ok_or_else(||
+        TypeError(format!("Missing match case for variant {}", name)))?);
+    }
+
+    // Make sure there are no cases left over
+    if cases.len() > 0 {
+      Err(Box::new(TypeError(format!("Match case for unknown variant"))))?
+    }
+
+    // Unify case types
+    let ty = if ordered_case_list.len() > 0 {
+      ordered_case_list[1..]
+        .iter()
+        .map(|val| val.ty())
+        .try_fold(ordered_case_list[0].ty().clone(),
+              |a, b| self.tctx.unify(&a, b))?
+    } else {
+      Ty::Unit
+    };
+
+    Ok(RValue::Match {
+      ty,
+      cond: Box::new(cond),
+      cases: ordered_case_list
+    })
   }
 }
 

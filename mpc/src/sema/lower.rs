@@ -442,6 +442,33 @@ unsafe fn lower_rvalue(rvalue: &RValue, ctx: &mut LowerCtx) -> Val {
       // Void value
       ctx.build_void()
     }
+    RValue::Match { cond, cases, .. } => {
+      // Merge block after switch
+      let end_block = ctx.new_block();
+
+      // Branching point
+      let l_addr = lower_rvalue(cond, ctx);
+      let l_tag = ctx.build_load(&Ty::Int32, l_addr);
+      let l_switch = LLVMBuildSwitch(
+        ctx.l_builder,
+        l_tag,
+        end_block,
+        cases.len() as _);
+
+      // Lower cases in their own block
+      for (index, val) in cases.iter().enumerate() {
+        let case_block = ctx.new_block();
+        LLVMAddCase(l_switch,
+                    ctx.build_int(&Ty::Int32, index),
+                    case_block);
+        ctx.enter_block(case_block);
+        lower_rvalue(val, ctx);
+        ctx.exit_block_br(end_block);
+      }
+
+      ctx.enter_block(end_block);
+      ctx.build_void()
+    }
   }
 }
 
@@ -644,6 +671,11 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn lower_union(&mut self, l_params: Vec<LLVMTypeRef>) -> Vec<LLVMTypeRef> {
+    // NOTE: this special case is needed otherwise bad things (NULL-derefs happen)
+    if l_params.len() == 0 {
+      return vec![]
+    }
+
     // Union lowering is done clang style, we take the highest alignment
     // element, and pad it to have the expected size of the union
     let mut union_align = 0;

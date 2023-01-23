@@ -51,6 +51,7 @@ pub enum Token {
   KwElse,           // else
   KwWhile,          // while
   KwLoop,           // loop
+  KwMatch,          // match
   KwNil,            // nil
   KwTrue,           // true
   KwFalse,          // false
@@ -90,6 +91,7 @@ pub enum Token {
   RShift,           // >>
   DColon,           // ::
   Arrow,            // ->
+  FatArrow,         // =>
   EqEq,             // ==
   ExclEq,           // !=
   LessEq,           // <=
@@ -144,6 +146,7 @@ impl<'input> Lexer<'input> {
       ("else", Token::KwElse),
       ("while", Token::KwWhile),
       ("loop", Token::KwLoop),
+      ("match", Token::KwMatch),
       ("nil", Token::KwNil),
       ("true", Token::KwTrue),
       ("false", Token::KwFalse),
@@ -414,6 +417,10 @@ impl<'input> Lexer<'input> {
           Some(b'=') => {
             self.consume_byte();
             Token::EqEq
+          }
+          Some(b'>') => {
+            self.consume_byte();
+            Token::FatArrow
           }
           _ => Token::Eq
         }
