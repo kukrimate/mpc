@@ -38,10 +38,11 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
         .collect();
       let types: Vec<LLVMTypeRef> =
         vals.iter().map(|value| LLVMTypeOf(*value)).collect();
-      LLVMConstNamedStruct(
-        ctx.lower_anon_struct(&types),
+      LLVMConstStructInContext(
+        ctx.l_context,
         vals.as_mut_ptr() as _,
-        vals.len() as _)
+        vals.len() as _,
+        0)
     }
     UnionLit { ty, val, .. } => {
       let l_type = ctx.lower_ty(ty);
@@ -54,10 +55,11 @@ unsafe fn lower_const_val(val: &ConstVal, ctx: &mut LowerCtx) -> Val {
       ];
       let types: Vec<LLVMTypeRef> =
         vals.iter().map(|value| LLVMTypeOf(*value)).collect();
-      LLVMConstNamedStruct(
-        ctx.lower_anon_struct(&types),
+      LLVMConstStructInContext(
+        ctx.l_context,
         vals.as_mut_ptr() as _,
-        vals.len() as _)
+        vals.len() as _,
+        0)
     }
     CStrLit { val } => {
       ctx.build_string_lit(val)
@@ -555,12 +557,6 @@ struct LowerCtx<'a> {
   // Values
   values: HashMap<(DefId, Vec<Ty>), LLVMValueRef>,
 
-  // Anonymous structures
-  // This de-duplication table is needed as LLVM doesn't
-  // support checking for structural equality on such types
-  // only nominal (e.g. always false between two different instances)
-  anon_structs: HashMap<Vec<LLVMTypeRef>, LLVMTypeRef>,
-
   // String literals
   string_lits: HashMap<Vec<u8>, LLVMValueRef>,
 
@@ -631,7 +627,6 @@ impl<'a> LowerCtx<'a> {
       types: HashMap::new(),
       values: HashMap::new(),
 
-      anon_structs: HashMap::new(),
       string_lits: HashMap::new(),
 
       params: Vec::new(),
@@ -794,16 +789,10 @@ impl<'a> LowerCtx<'a> {
   }
 
   unsafe fn lower_anon_struct(&mut self, fields: &[LLVMTypeRef]) -> LLVMTypeRef {
-    let l_context = self.l_context;
-    *self.anon_structs
-      .raw_entry_mut()
-      .from_key(fields)
-      .or_insert_with(|| {
-        (Vec::from(fields), LLVMStructTypeInContext(l_context,
-                                                    fields.as_ptr() as _,
-                                                    fields.len() as _,
-                                                    0))
-      }).1
+    LLVMStructTypeInContext(self.l_context,
+                            fields.as_ptr() as _,
+                            fields.len() as _,
+                            0)
   }
 
   unsafe fn lower_func_ty(&mut self, params: &Vec<(RefStr, Ty)>, va: bool, ret_ty: &Ty) -> LLVMTypeRef {
