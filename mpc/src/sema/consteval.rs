@@ -7,7 +7,7 @@ use std::fmt::Formatter;
 use super::*;
 
 #[derive(Debug)]
-pub(super) enum ConstPtr {
+pub enum ConstPtr {
   Data { ty: Ty, id: DefId },
   StrLit { ty: Ty, val: Vec<u8> },
   ArrayElement { ty: Ty, base: Box<ConstPtr>, idx: usize },
@@ -28,7 +28,7 @@ impl ConstPtr {
 }
 
 #[derive(Debug)]
-pub(super) enum ConstVal {
+pub enum ConstVal {
   FuncPtr { id: (DefId, Vec<Ty>) },
   DataPtr { ptr: ConstPtr },
   BoolLit { val: bool },
@@ -112,7 +112,7 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         .monadic_collect()?;
       Ok(ConstVal::StructLit { ty: ty.clone(), vals })
     }
-    LValue::UnionLit { ty, val, .. } => {
+    LValue::UnionLit { ty, field: val, .. } => {
       Ok(ConstVal::UnionLit { ty: ty.clone(), val: Box::new(consteval(val)?) })
     }
     LValue::StruDot { arg, idx, .. } => {

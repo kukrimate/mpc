@@ -37,18 +37,18 @@ impl error::Error for CannotUnifyError {}
 /// represent is computed using the union-find algorithm.
 
 #[derive(Debug)]
-pub(super) struct TVarCtx {
+pub struct TVarCtx {
   tvars: Vec<Ty>
 }
 
 impl TVarCtx {
-  pub(super) fn new() -> Self {
+  pub fn new() -> Self {
     Self {
       tvars: vec![],
     }
   }
 
-  pub(super) fn tvar(&mut self, bound: Ty) -> Ty {
+  pub fn tvar(&mut self, bound: Ty) -> Ty {
     let ty = Ty::TVar(self.tvars.len());
     self.tvars.push(bound);
     ty
@@ -65,7 +65,7 @@ impl TVarCtx {
     }
   }
 
-  pub(super) fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
+  pub fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
     use Ty::*;
     'error: loop {
       return Ok(match (ty1, ty2) {
@@ -203,7 +203,7 @@ impl TVarCtx {
 
   /// Obtain the literal type for a type expression
 
-  pub(super) fn lit_ty(&mut self, ty: &Ty) -> Ty {
+  pub fn lit_ty(&mut self, ty: &Ty) -> Ty {
     use Ty::*;
     match ty {
       Bool => Bool,
@@ -273,7 +273,7 @@ impl TVarCtx {
   }
 
   /// Literalize the outermost part of a type expression
-  pub(super) fn lit_ty_nonrecusrive(&mut self, ty: &Ty) -> Ty {
+  pub fn lit_ty_nonrecusrive(&mut self, ty: &Ty) -> Ty {
     match ty {
       Ty::TVar(idx) => {
         // Find root element
@@ -286,11 +286,11 @@ impl TVarCtx {
   }
 
 
-  pub(super) fn root_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
+  pub fn root_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
     type_args.iter().map(|ty| self.root_ty(ty)).collect()
   }
 
-  pub(super) fn root_ty(&mut self, ty: &Ty) -> Ty {
+  pub fn root_ty(&mut self, ty: &Ty) -> Ty {
     use Ty::*;
     match ty {
       Bool => Bool,

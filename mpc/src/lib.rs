@@ -9,6 +9,7 @@
 mod parse;
 mod resolve;
 mod sema;
+mod lower;
 pub mod util;
 
 use crate::util::*;
@@ -23,6 +24,7 @@ pub enum CompileTo {
 }
 
 pub fn compile(input_path: &Path, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
-  let repo = parse::parse_bundle(input_path)?;
-  sema::compile(&repo, output_path, compile_to)
+  let parsed_repo = parse::parse_bundle(input_path)?;
+  let mut inst_collection = sema::analyze(&parsed_repo)?;
+  lower::compile(&mut inst_collection, output_path, compile_to)
 }

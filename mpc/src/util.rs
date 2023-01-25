@@ -6,7 +6,6 @@
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
-use std::os::raw::c_char;
 use std::sync::Mutex;
 
 /// Boxed, type-erased error wrapper
@@ -108,12 +107,6 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
   write!(f, ")")
 }
 
-// Empty NUL-terminated string
-
-pub fn empty_cstr() -> *const i8 {
-  b"\0".as_ptr() as _
-}
-
 /// Monadic collection over an iterator of results
 
 pub trait MonadicCollect<O> {
@@ -146,16 +139,6 @@ impl<I, O, E> MonadicCollect2<O, E> for I
     }
     Ok(vec)
   }
-}
-
-/// Calculate the length of a C-style string (in bytes)
-
-pub unsafe fn c_strlen(s: *const c_char) -> usize {
-  let mut end = s;
-  while end.read() != 0 {
-    end = end.add(1);
-  }
-  end.offset_from(s) as _
 }
 
 /// Concatenate two vectors

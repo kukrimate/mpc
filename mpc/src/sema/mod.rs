@@ -10,22 +10,42 @@
 // operate on the same intermediate representation.
 //
 
-use crate::*;
 use crate::parse::{self, IsMut, UnOp, BinOp, DefId};
 use crate::util::*;
 use std::collections::HashMap;
 use std::error;
 use std::fmt;
 
-mod tctx;
 mod consteval;
+mod infer;
+mod tctx;
 
-use tctx::*;
-use consteval::*;
+pub use consteval::*;
+use infer::*;
+pub use tctx::*;
 
-/// Definitions
+pub fn analyze(repo: &parse::Repository) -> MRes<Collection> {
+  let mut tctx = TVarCtx::new();
+  let insts = infer(repo, &mut tctx)?;
+  if let Some(_) = option_env!("MPC_SPEW") {
+    eprintln!("{:#?}", insts);
+    eprintln!("{:#?}", tctx);
+  }
+  Ok(Collection {
+    tctx,
+    insts
+  })
+}
+
+/// Instance list
+pub struct Collection {
+  pub tctx: TVarCtx,
+  pub insts: HashMap<(DefId, Vec<Ty>), Inst>
+}
+
+/// Definition instances
 #[derive(Debug)]
-enum Inst {
+pub enum Inst {
   Struct {
     name: RefStr,
     params: Option<Vec<(RefStr, Ty)>>
@@ -64,14 +84,14 @@ enum Inst {
 }
 
 #[derive(Clone, Debug)]
-enum Variant {
+pub enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
 }
 
 /// Types
 #[derive(Clone, PartialEq, Eq, Hash)]
-enum Ty {
+pub enum Ty {
   // Real types
   Bool,
   Uint8,
@@ -104,7 +124,7 @@ enum Ty {
 }
 
 impl Ty {
-  fn unwrap_func(&self) -> (&Vec<(RefStr, Ty)>, bool, &Ty) {
+  pub fn unwrap_func(&self) -> (&Vec<(RefStr, Ty)>, bool, &Ty) {
     if let Ty::Func(params, varargs, ret_ty) = self {
       (params, *varargs, ret_ty)
     } else {
@@ -159,7 +179,7 @@ impl fmt::Debug for Ty {
 
 /// Expressions
 #[derive(Debug)]
-enum LValue {
+pub enum LValue {
   DataRef { ty: Ty, is_mut: IsMut, id: DefId },
   ParamRef { ty: Ty, is_mut: IsMut, index: usize },
   LetRef { ty: Ty, is_mut: IsMut, index: usize },
@@ -167,7 +187,7 @@ enum LValue {
   StrLit { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
-  UnionLit { ty: Ty, is_mut: IsMut, val: RValue },
+  UnionLit { ty: Ty, is_mut: IsMut, field: RValue },
   UnitVariantLit { ty: Ty, is_mut: IsMut, index: usize },
   StructVariantLit { ty: Ty, is_mut: IsMut, index: usize, fields: Vec<RValue> },
   StruDot { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: usize },
@@ -177,7 +197,7 @@ enum LValue {
 }
 
 #[derive(Debug)]
-enum RValue {
+pub enum RValue {
   Unit { ty: Ty },
   FuncRef { ty: Ty, id: (DefId, Vec<Ty>) },
   CStr { ty: Ty, val: Vec<u8> },
@@ -208,7 +228,7 @@ enum RValue {
 }
 
 impl LValue {
-  fn ty(&self) -> &Ty {
+  pub fn ty(&self) -> &Ty {
     match self {
       LValue::DataRef { ty, .. } => ty,
       LValue::ParamRef { ty, .. } => ty,
@@ -227,7 +247,7 @@ impl LValue {
     }
   }
 
-  fn is_mut(&self) -> IsMut {
+  pub fn is_mut(&self) -> IsMut {
     match self {
       LValue::DataRef { is_mut, .. } => *is_mut,
       LValue::ParamRef { is_mut, .. } => *is_mut,
@@ -248,7 +268,7 @@ impl LValue {
 }
 
 impl RValue {
-  fn ty(&self) -> &Ty {
+  pub fn ty(&self) -> &Ty {
     match self {
       RValue::Unit { ty, .. } => ty,
       RValue::FuncRef { ty, .. } => ty,
@@ -281,18 +301,3 @@ impl RValue {
   }
 }
 
-/// Type checker and lowerer live in their own files
-
-mod infer;
-mod lower;
-
-pub fn compile(repo: &parse::Repository, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
-  let mut tctx = TVarCtx::new();
-  let insts = infer::infer(repo, &mut tctx)?;
-  if let Some(_) = option_env!("MPC_SPEW") {
-    eprintln!("{:#?}", insts);
-    eprintln!("{:#?}", tctx);
-  }
-  lower::lower_module(&mut tctx, &insts, output_path, compile_to)?;
-  Ok(())
-}

@@ -282,6 +282,13 @@ dependencies = [
  "clap",
  "lalrpop",
  "lalrpop-util",
+ "mpc_llvm",
+]
+
+[[package]]
+name = "mpc_llvm"
+version = "0.1.0"
+dependencies = [
  "llvm-sys",
 ]
 

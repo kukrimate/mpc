@@ -413,7 +413,7 @@ impl<'a> CheckCtx<'a> {
         LValue::UnionLit {
           ty,
           is_mut: IsMut::No,
-          val
+          field: val
         }
       }
       UnitVariantLit(def_id, index) => {

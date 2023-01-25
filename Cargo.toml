@@ -2,5 +2,6 @@
 
 members = [
   "mpc",
+  "mpc_llvm",
   "mpc_test"
 ]
