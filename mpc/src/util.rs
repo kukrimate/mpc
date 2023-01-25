@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use std::os::raw::c_char;
+use std::sync::Mutex;
 
 /// Boxed, type-erased error wrapper
 
@@ -14,16 +15,20 @@ pub type MRes<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 /// Globally de-duped strings
 
-static mut STRING_TABLE: Option<HashSet<String>> = None;
+static STRING_TABLE: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
 
-fn string_table_mut() -> &'static mut HashSet<String> {
-  unsafe {
-    if let Some(val) = STRING_TABLE.as_mut() {
-      val
-    } else {
-      STRING_TABLE.insert(HashSet::new())
-    }
-  }
+fn string_table_intern(s: &str) -> &'static str {
+  let s = to_owned_c(s);
+  let mut locked = STRING_TABLE.lock().unwrap();
+  locked
+    .get_or_insert_with(|| HashSet::new())
+    .get_or_insert(Box::leak(s))
+}
+
+fn to_owned_c(s: &str) -> Box<str> {
+  let mut s = str::to_owned(s);
+  s.push('\0');
+  s.into_boxed_str()
 }
 
 #[derive(Clone, Copy)]
@@ -33,9 +38,8 @@ pub struct RefStr {
 
 impl RefStr {
   pub fn new(s: &str) -> RefStr {
-    let s = to_owned_c(s);
     RefStr {
-      s: string_table_mut().get_or_insert(s)
+      s: string_table_intern(s)
     }
   }
 
@@ -46,12 +50,6 @@ impl RefStr {
   pub fn borrow_c(&self) -> *const i8 {
     self.s.as_ptr() as _
   }
-}
-
-fn to_owned_c(s: &str) -> String {
-  let mut s = str::to_owned(s);
-  s.push('\0');
-  s
 }
 
 impl fmt::Display for RefStr {
