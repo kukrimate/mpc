@@ -121,6 +121,7 @@ pub enum Ty {
   BoundNum,
   BoundInt,
   BoundFlt,
+  BoundEq
 }
 
 impl Ty {
@@ -173,6 +174,7 @@ impl fmt::Debug for Ty {
       BoundNum => write!(f, "Num"),
       BoundInt => write!(f, "Int"),
       BoundFlt => write!(f, "Flt"),
+      BoundEq => write!(f, "Eq"),
     }
   }
 }

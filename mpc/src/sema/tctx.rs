@@ -3,38 +3,30 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
+//
+// Type inference engine
+//
+// The algorithm used is similar to "Algorithm J" from the paper
+// "A Theory of Type Polymorphism in Programming" by Robin Milner,
+// but with the typing rules extended with type constructors for
+// additional types supported that are irrelevant to lambda calculus.
+//
+// A type is a term containing literal types and type variables, nested in
+// a variety of type constructors. Type variables are held in a context that
+// has a variety of methods for enforcing equality or other constraints on
+// types, which are called by `infer.rs` according to the typing rules.
+//
+// The most important operation is enforcing equality of two types. This is
+// done using Robinson's first order unification. The most challenging case of
+// this arises when the unification algorithm finds that two type variables must
+// be equal. Type variables are represented as a "disjoint-set forest", where each
+// set is a set of type variables that are deemed equal. When two type variables
+// are found to be equal during unification, the union of the sets they
+// represent is computed using the union-find algorithm.
+//
+
+
 use super::*;
-
-#[derive(Debug)]
-struct CannotUnifyError(Ty, Ty);
-
-impl fmt::Display for CannotUnifyError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Cannot unify types {:?} and {:?}", self.0, self.1)
-  }
-}
-
-impl error::Error for CannotUnifyError {}
-
-/// Type inference engine
-///
-/// The algorithm used is similar to "Algorithm J" from the paper
-/// "A Theory of Type Polymorphism in Programming" by Robin Milner,
-/// but with the typing rules extended with type constructors for
-/// additional types supported that are irrelevant to lambda calculus.
-///
-/// A type is a term containing literal types and type variables, nested in
-/// a variety of type constructors. Type variables are held in a context that
-/// has a variety of methods for enforcing equality or other constraints on
-/// types, which are called by `check.rs` according to the typing rules.
-///
-/// The most important operation is enforcing equality of two types. This is
-/// done using Robinson's first order unification. The most important operation
-/// arises when the unification algorithm finds that two type variables must be
-/// equal. Type variables are represented as a "disjoint-set forset", where each
-/// set is a set of type variables that are deemed equal. When two type variables
-/// are found to be equal during unification, the union of the sets they
-/// represent is computed using the union-find algorithm.
 
 #[derive(Debug)]
 pub struct TVarCtx {
@@ -193,6 +185,15 @@ impl TVarCtx {
           ty.clone()
         }
 
+        // Equality comparable
+        (BoundEq, ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+                              Uintn|Intn|Float|Ptr(..)|Func(..)|Double|BoundEq|
+                              BoundNum|BoundInt|BoundFlt)) |
+        (ty @ (Uint8|Int8|Uint16|Int16|Uint32|Int32|Uint64|Int64|
+                      Uintn|Intn|Float|Ptr(..)|Func(..)|Double|BoundNum|BoundInt|BoundFlt), BoundEq) => {
+          ty.clone()
+        }
+
         _ => break 'error,
       });
     }
@@ -269,6 +270,7 @@ impl TVarCtx {
       BoundNum => Int32,
       BoundInt => Int32,
       BoundFlt => Float,
+      BoundEq => Int32
     }
   }
 
@@ -344,8 +346,19 @@ impl TVarCtx {
       BoundAny => BoundAny,
       BoundNum => BoundNum,
       BoundInt => BoundInt,
-      BoundFlt => BoundFlt
+      BoundFlt => BoundFlt,
+      BoundEq => BoundEq
     }
   }
 }
 
+#[derive(Debug)]
+struct CannotUnifyError(Ty, Ty);
+
+impl fmt::Display for CannotUnifyError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Cannot unify types {:?} and {:?}", self.0, self.1)
+  }
+}
+
+impl error::Error for CannotUnifyError {}

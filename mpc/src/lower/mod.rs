@@ -222,8 +222,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       Uint16 | Int16 => self.context.ty_int16(),
       Uint32 | Int32 => self.context.ty_int32(),
       Uint64 | Int64 => self.context.ty_int64(),
-      // FIXME: make the width of Uintn and Intn per target
-      Uintn | Intn => self.context.ty_int64(),
+      Uintn | Intn => self.lower_intn(),
       Float => self.context.ty_float(),
       Double => self.context.ty_double(),
       StructRef(_, id) |
@@ -248,6 +247,11 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       _ => unreachable!()
     }
+  }
+
+  fn lower_intn(&mut self) -> llvm::Type<'ctx> {
+    // FIXME: make the width of Uintn and Intn per target
+    self.context.ty_int64()
   }
 
   fn lower_struct(&mut self, fields: &[llvm::Type<'ctx>]) -> llvm::Type<'ctx> {
@@ -1185,6 +1189,17 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       (Ne, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
         self.builder.icmp(llvm::LLVMIntNE, lhs, rhs)
+      }
+      // Pointer/function pointer comparison
+      (Eq | Ne, Ptr(..) | Func(..)) => {
+        let ty = self.lower_intn();
+        let lhs = self.builder.ptr_to_int(ty, lhs);
+        let rhs = self.builder.ptr_to_int(ty, rhs);
+        match op {
+          Eq => self.builder.icmp(llvm::LLVMIntEQ, lhs, rhs),
+          Ne => self.builder.icmp(llvm::LLVMIntNE, lhs, rhs),
+          _ => unreachable!()
+        }
       }
       // Unsigned integer comparisons
       (Lt, Uint8 | Uint16 | Uint32 | Uint64 | Uintn) => {

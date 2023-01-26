@@ -873,9 +873,13 @@ impl<'a> CheckCtx<'a> {
         self.tctx.unify(lhs, &Ty::BoundInt)
       }
 
-      // Both arguments must have matching numeric types
-      // Result is a boolean
-      BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
+      BinOp::Eq | BinOp::Ne => {
+        self.tctx.unify(lhs, &Ty::BoundEq)?;
+        self.tctx.unify(lhs, rhs)?;
+        Ok(Ty::Bool)
+      }
+
+      BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
         self.tctx.unify(lhs, &Ty::BoundNum)?;
         self.tctx.unify(lhs, rhs)?;
         Ok(Ty::Bool)
