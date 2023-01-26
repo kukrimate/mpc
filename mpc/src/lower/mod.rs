@@ -75,7 +75,6 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
     let target = llvm::Target::native();
 
-    // FIXME: shouldn't leak this
     let builder = context.builder();
     let module = context.module(name.borrow_c());
     module.set_target(&target);
@@ -210,12 +209,6 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn lower_ty(&mut self, ty: &Ty) -> llvm::Type<'ctx> {
     use Ty::*;
 
-    // Void semantic types are special
-    match self.ty_semantics(ty) {
-      Semantics::Void => return self.context.ty_void(),
-      Semantics::Addr | Semantics::Value => (),
-    }
-
     match &self.tctx.lit_ty(ty) {
       Bool => self.context.ty_int1(),
       Uint8 | Int8 => self.context.ty_int8(),
@@ -237,6 +230,9 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       Arr(count, element) => {
         let element = self.lower_ty(element);
         self.context.ty_array(element, *count)
+      }
+      Unit => {
+        self.lower_struct(&[])
       }
       Tuple(params) => {
         let l_params: Vec<llvm::Type<'ctx>> = params
@@ -261,31 +257,31 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn lower_func_ty(&mut self, ty: &Ty) -> llvm::Type<'ctx> {
     let (params, va, ret_ty) = ty.unwrap_func();
 
-    let params: Vec<llvm::Type<'ctx>> = params
-      .iter()
-      .map(|(_, ty)| {
+    let mut l_params = Vec::new();
+
+    params.iter()
+      .for_each(|(_, ty)| {
         match self.ty_semantics(ty) {
-          Semantics::Void => todo!(),
-          Semantics::Value => self.lower_ty(ty),
-          Semantics::Addr => self.context.ty_ptr(),
+          Semantics::Void => (),
+          Semantics::Value => l_params.push(self.lower_ty(ty)),
+          Semantics::Addr => l_params.push(self.context.ty_ptr()),
         }
-      })
-      .collect();
+      });
 
     match self.ty_semantics(ret_ty) {
       Semantics::Void | Semantics::Value => {
         let ret_ty = self.lower_ty(ret_ty);
-        self.context.ty_function(ret_ty, &params, va)
+        self.context.ty_function(ret_ty, &l_params, va)
       }
       Semantics::Addr => {
         let ret_ty = self.context.ty_void();
 
-        let params = concat(
+        let l_params = concat(
           vec![ self.context.ty_ptr() ],
-          params
+          l_params
         );
 
-        self.context.ty_function(ret_ty, &params, va)
+        self.context.ty_function(ret_ty, &l_params, va)
       }
     }
   }
@@ -327,17 +323,25 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           self.l_alloca_block = Some(self.new_block());
           self.enter_block(self.l_alloca_block.unwrap());
 
-          // Calculate parameter base index
-          let pbase = if let Semantics::Addr = self.ty_semantics(body.ty()) { 1 } else { 0 };
+          // Spill arguments
+          let mut lowered_index = if let Semantics::Addr
+            = self.ty_semantics(body.ty()) { 1 } else { 0 };
 
-          // Allocate parameters
           self.params.clear();
-          for (index, (_, ty)) in params.iter().enumerate() {
+          for (_, ty) in params.iter() {
             let l_alloca = self.allocate_local(ty);
-            let param = self.l_func.unwrap().get_param(pbase + index);
-            self.build_store(ty, l_alloca, param);
             self.params.push(l_alloca);
+
+            match self.ty_semantics(ty) {
+              Semantics::Void => (),
+              _ => {
+                let param = self.l_func.unwrap().get_param(lowered_index);
+                lowered_index += 1;
+                self.build_store(ty, l_alloca, param);
+              }
+            }
           }
+
           // Allocate locals
           self.locals.clear();
           for (_, ty) in locals.iter() {
@@ -557,7 +561,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       RValue::Load { ty, arg, .. } => {
         let addr = self.lower_lvalue(arg);
-        Some(self.build_load(ty, addr))
+        self.build_load(ty, addr)
       }
       RValue::Nil { ty, .. } => {
         Some(self.context.const_zeroed(self.lower_ty(ty)))
@@ -571,21 +575,24 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       RValue::Flt { ty, val, .. } => {
         Some(self.build_flt(ty, *val))
       }
-      RValue::Call { ty, arg, args, .. } => {
-        let l_func = self.lower_rvalue(arg).unwrap();
-        let l_args = args.iter()
-          .map(|arg| self.lower_rvalue(arg).unwrap())
-          .collect();
+      RValue::Call { ty, func, args, .. } => {
+        let l_func = self.lower_rvalue(func).unwrap();
+        let mut l_args = Vec::new();
+        args.iter()
+          .for_each(|arg| {
+            self.lower_rvalue(arg)
+              .map(|val| l_args.push(val));
+          });
 
         match self.ty_semantics(ty) {
           Semantics::Addr => {
             let storage = self.allocate_local(ty);
             let args = concat(vec![storage], l_args);
-            self.build_call(arg.ty(), l_func, &args);
+            self.build_call(func.ty(), l_func, &args);
             Some(storage)
           }
           _ => {
-            Some(self.build_call(arg.ty(), l_func, &l_args))
+            Some(self.build_call(func.ty(), l_func, &l_args))
           }
         }
       }
@@ -647,7 +654,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       RValue::Rmw { op, lhs, rhs, .. } => {
         // LHS: We need both the address and value
         let dest_addr = self.lower_lvalue(lhs);
-        let lhs_val = self.build_load(lhs.ty(), dest_addr);
+        let lhs_val = self.build_load(lhs.ty(), dest_addr).unwrap();
         // RHS: We need only the value
         let rhs_val = self.lower_rvalue(rhs).unwrap();
         // Then we can perform the computation and do the store
@@ -797,7 +804,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Build switch
         self.enter_block(start_block);
 
-        let tag = self.build_load(&Ty::Int32, addr);
+        let tag = self.build_load(&Ty::Int32, addr).unwrap();
         let tag_to_block: Vec<(llvm::Value<'ctx>, llvm::Block<'ctx>)> = (0..cases.len())
           .map(|index| (self.build_int(&Ty::Int32, index), blocks[index]))
           .collect();
@@ -897,18 +904,12 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   }
 
   fn allocate_local(&mut self, ty: &Ty) -> llvm::Value<'ctx> {
-    match self.ty_semantics(ty) {
-      Semantics::Void => todo!(),
-
-      Semantics::Addr | Semantics::Value => {
-        let prev = self.builder.get_block().unwrap();
-        let ty = self.lower_ty(ty);
-        self.enter_block(self.l_alloca_block.unwrap());
-        let alloca = self.builder.alloca(ty);
-        self.enter_block(prev);
-        alloca
-      }
-    }
+    let prev = self.builder.get_block().unwrap();
+    let ty = self.lower_ty(ty);
+    self.enter_block(self.l_alloca_block.unwrap());
+    let alloca = self.builder.alloca(ty);
+    self.enter_block(prev);
+    alloca
   }
 
   fn new_block(&mut self) -> llvm::Block<'ctx> {
@@ -944,13 +945,13 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     }
   }
 
-  fn build_load(&mut self, ty: &Ty, ptr: llvm::Value<'ctx>) -> llvm::Value<'ctx> {
+  fn build_load(&mut self, ty: &Ty, ptr: llvm::Value<'ctx>) -> Option<llvm::Value<'ctx>> {
     match self.ty_semantics(ty) {
-      Semantics::Void => todo!(),
-      Semantics::Addr => ptr,
+      Semantics::Void => None,
+      Semantics::Addr => Some(ptr),
       Semantics::Value => {
         let ty = self.lower_ty(ty);
-        self.builder.load(ty, ptr)
+        Some(self.builder.load(ty, ptr))
       }
     }
   }
@@ -974,10 +975,6 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn ty_semantics(&mut self, ty: &Ty) -> Semantics {
     use Ty::*;
 
-    // Get literal type
-    let ty = self.tctx.lit_ty(ty);
-
-    // Choose semantics
     match self.tctx.lit_ty(&ty) {
       Unit => Semantics::Void,
       Bool | Uint8 | Int8 | Uint16 |

@@ -209,7 +209,7 @@ pub enum RValue {
   Bool { ty: Ty, val: bool },
   Int { ty: Ty, val: usize },
   Flt { ty: Ty, val: f64 },
-  Call { ty: Ty, arg: Box<RValue>, args: Vec<RValue> },
+  Call { ty: Ty, func: Box<RValue>, args: Vec<RValue> },
   Adr { ty: Ty, arg: Box<LValue> },
   Un { ty: Ty, op: UnOp, arg: Box<RValue> },
   LNot { ty: Ty, arg: Box<RValue> },

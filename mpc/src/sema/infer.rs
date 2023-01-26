@@ -826,7 +826,7 @@ impl<'a> CheckCtx<'a> {
 
     Ok(RValue::Call {
       ty: ret_ty.clone(),
-      arg: Box::new(called_expr),
+      func: Box::new(called_expr),
       args,
     })
   }
