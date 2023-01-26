@@ -486,6 +486,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           .map(|val| self.build_store(field.ty(), storage, val));
         storage
       }
+      LValue::TupleLit { ty, fields, .. } |
       LValue::StructLit { ty, fields, .. } => {
         let storage = self.allocate_local(ty);
         for (index, field) in fields.iter().enumerate() {

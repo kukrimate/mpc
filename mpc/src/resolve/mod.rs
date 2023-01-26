@@ -154,6 +154,7 @@ pub enum ResolvedExpr {
   Str(Vec<u8>),
   CStr(Vec<u8>),
   Unit,
+  TupleLit(Vec<(RefStr, ResolvedExpr)>),
   ArrayLit(Vec<ResolvedExpr>),
   StructLit(DefId, Vec<(RefStr, ResolvedExpr)>),
   UnionLit(DefId, RefStr, Box<ResolvedExpr>),
@@ -482,6 +483,13 @@ impl<'a> ResolveCtx<'a> {
       Str(val) => ResolvedExpr::Str(val.clone()),
       CStr(val) => ResolvedExpr::CStr(val.clone()),
       Unit => ResolvedExpr::Unit,
+      Tuple(fields) => {
+        let fields = fields
+          .iter()
+          .map(|(name, val)| Ok((*name, self.resolve_expr(val)?)))
+          .monadic_collect2()?;
+        ResolvedExpr::TupleLit(fields)
+      }
       Arr(elements) => {
         let elements = elements
           .iter()

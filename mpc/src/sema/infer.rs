@@ -372,6 +372,20 @@ impl<'a> CheckCtx<'a> {
         is_mut: self.bindings[*index].0,
         index: *index
       },
+      TupleLit(resolved_fields) => {
+        let mut params = Vec::new();
+        let mut fields = Vec::new();
+        for (name, val) in resolved_fields.iter() {
+          let val = self.infer_rvalue(val)?;
+          params.push((*name, val.ty().clone()));
+          fields.push(val);
+        }
+        LValue::TupleLit {
+          ty: Ty::Tuple(params),
+          is_mut: IsMut::No,
+          fields
+        }
+      }
       ArrayLit(elements) => {
         let elem_ty = self.tctx.tvar(Ty::BoundAny);
         let elements = elements.iter()
@@ -383,7 +397,7 @@ impl<'a> CheckCtx<'a> {
         LValue::ArrayLit {
           ty: Ty::Arr(elements.len(), Box::new(elem_ty)),
           is_mut: IsMut::No,
-          elements,
+          elements
         }
       }
       StructLit(def_id, fields) => {
@@ -567,6 +581,7 @@ impl<'a> CheckCtx<'a> {
       ParamRef(..) |
       LetRef(..) |
       BindingRef(..) |
+      TupleLit(..) |
       ArrayLit(..) |
       StructLit(..) |
       UnionLit(..) |

@@ -93,6 +93,7 @@ pub enum Expr {
   Str(Vec<u8>),
   CStr(Vec<u8>),
   Unit,
+  Tuple(Vec<(RefStr, Expr)>),
   Arr(Vec<Expr>),
   Dot(Box<Expr>, RefStr),
   Call(Box<Expr>, Vec<(RefStr, Expr)>),

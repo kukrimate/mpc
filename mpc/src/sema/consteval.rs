@@ -105,6 +105,7 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         .monadic_collect()?;
       Ok(ConstVal::ArrLit { ty: ty.clone(), vals })
     }
+    LValue::TupleLit { ty, fields, .. } |
     LValue::StructLit { ty, fields, .. } => {
       let vals = fields
         .iter()

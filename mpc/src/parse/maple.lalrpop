@@ -284,16 +284,25 @@ PrimExpr: Expr = {
   "true" => Expr::Bool(true),
   "false" => Expr::Bool(false),
   "(" ")" => Expr::Unit,
-  "[" <list:ArrayExprList> "]" => Expr::Arr(list),
+  "(" <TupleFieldList> ")" => Expr::Tuple(<>),
+  "[" <ArrayElementList> "]" => Expr::Arr(<>),
   Integer => Expr::Int(<>),
   Float => Expr::Flt(<>),
   String => Expr::Str(<>),
   CString => Expr::CStr(<>),
 };
 
-ArrayExprList: Vec<Expr> = {
+TupleFieldList: Vec<(RefStr, Expr)> = {
+  <name:Identifier> ":" <val:Expr> => vec![(name, val)],
+  <mut list:TupleFieldList> "," <name:Identifier> ":" <val:Expr> => {
+    list.push((name, val));
+    list
+  }
+};
+
+ArrayElementList: Vec<Expr> = {
   Expr => vec![<>],
-  <mut list:ArrayExprList> "," <expr:Expr> => {
+  <mut list:ArrayElementList> "," <expr:Expr> => {
     list.push(expr);
     list
   }
