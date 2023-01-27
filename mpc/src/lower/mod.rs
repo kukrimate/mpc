@@ -608,7 +608,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         Some(self.lower_lvalue(arg))
       }
       RValue::Un { op, arg, .. } => {
-        let val =  self.lower_rvalue(arg).unwrap();
+        let val = self.lower_rvalue(arg).unwrap();
         Some(self.build_un(arg.ty(), *op, val))
       }
       RValue::Cast { ty, arg } => {
@@ -643,8 +643,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Create phi to choose value
         self.enter_block(phi_block);
 
-        let values = [ self.build_bool(true), self.build_bool(false) ];
-        Some(self.builder.phi(self.context.ty_int1(), &values, &[ true_block, false_block ]))
+        let values = [self.build_bool(true), self.build_bool(false)];
+        Some(self.builder.phi(self.context.ty_int1(), &values, &[true_block, false_block]))
       }
       RValue::Block { body, .. } => {
         let mut val = None;
@@ -730,12 +730,22 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         self.enter_block(end_block);
 
         // Create phi node
-        match (then_val, else_val) {
-          (Some(then_val), Some(else_val)) => {
-            let ty = self.lower_ty(ty);
-            Some(self.builder.phi(ty, &[then_val, else_val], &[then_block, else_block]))
+        match self.ty_semantics(ty) {
+          Semantics::Void => {
+            None
           }
-          _ => None
+          Semantics::Value => {
+            let ty = self.lower_ty(ty);
+            Some(self.builder.phi(ty,
+                                  &[then_val.unwrap(), else_val.unwrap()],
+                                  &[then_block, else_block]))
+          }
+          Semantics::Addr => {
+            let ty = self.context.ty_ptr();
+            Some(self.builder.phi(ty,
+                                  &[then_val.unwrap(), else_val.unwrap()],
+                                  &[then_block, else_block]))
+          }
         }
       }
       RValue::While { cond, body, .. } => {
@@ -807,11 +817,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
             let binding = self.build_gep(cond.ty(), addr, 1);
             self.bindings.push(binding);
           }
-          self.lower_rvalue(val)
-            .map(|val| {
-              vals.push(val);
-              blocks.push(block);
-            });
+          vals.push(self.lower_rvalue(val));
+          blocks.push(self.builder.get_block().unwrap());
           self.exit_block_br(end_block);
         }
 
@@ -824,13 +831,26 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Merge values into a phi at the end
         self.enter_block(end_block);
 
-        if vals.len() > 0 {
-          let ty = self.lower_ty(ty);
-          vals.push(self.context.const_zeroed(ty));
-          blocks.push(start_block);
-          Some(self.builder.phi(ty,&vals, &blocks))
-        } else {
-          None
+        match self.ty_semantics(ty) {
+          Semantics::Void => {
+            None
+          }
+          Semantics::Value => {
+            let ty = self.lower_ty(ty);
+            let vals: Vec<llvm::Value<'ctx>> = vals
+              .into_iter()
+              .map(|x| x.unwrap())
+              .collect();
+            Some(self.builder.phi(ty, &vals, &blocks))
+          }
+          Semantics::Addr => {
+            let ty = self.context.ty_ptr();
+            let vals: Vec<llvm::Value<'ctx>> = vals
+              .into_iter()
+              .map(|x| x.unwrap())
+              .collect();
+            Some(self.builder.phi(ty, &vals, &blocks))
+          }
         }
       }
     }
