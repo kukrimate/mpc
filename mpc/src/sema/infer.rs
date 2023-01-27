@@ -941,8 +941,29 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   fn infer_match(&mut self, cond: &ResolvedExpr, cases: &[(Option<usize>, RefStr, ResolvedExpr)]) -> MRes<RValue> {
+    // FIXME: struct variant binding semantics on rvalue enums are hacky at best :(
+    //
+    // Enums are **always** lvalues at the LLVM level (even when semantically they were rvalues).
+    // Thus we can cheat, and create non-mut lvalue bindings for fields of struct variants when
+    // matched on enum rvalues.
+    //
+    // There are no good cleaner solutions in the current corner. What Rust does is to always
+    // copy/move when doing matches on non-references, and only allow assignable bindings
+    // through reference based matches.
+    // I really, really do not want matches to be aware of pointers in Maple, thus this is not
+    // a good solution.
+    //
+    // The cleanest solution would probably be to eliminate the existence of aggregate lvalues,
+    // and aggregate loads (which are no-ops anyways) at the semantic level from MPC, but
+    // this would require more work then I have time for at the moment.
+
     // Infer condition + find enum variants
-    let cond = self.infer_lvalue(cond)?;
+    let cond = self.infer_rvalue(cond)?;
+    // NOTE: the match below accomplishes the hack described above
+    let binding_mut = match &cond {
+      RValue::Load { arg, .. } => arg.is_mut(),
+      _ => IsMut::No
+    };
     let variants = match self.global.tctx.cur_bound(cond.ty()) {
       Ty::EnumRef(_, id) => {
         if let Inst::Enum { variants: Some(variants), .. }
@@ -978,7 +999,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
       if let Some(binding) = binding {
         assert_eq!(self.bindings.len(), binding);
-        self.bindings.push((cond.is_mut(), ty));
+        self.bindings.push((binding_mut, ty));
       }
 
       inferred_cases.push((binding, self.infer_rvalue(val)?));

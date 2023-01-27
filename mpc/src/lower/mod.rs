@@ -798,7 +798,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       RValue::Match { ty, cond, cases, .. } => {
         let start_block = self.builder.get_block().unwrap();
-        let addr = self.lower_lvalue(cond);
+        let addr = self.lower_rvalue(cond).unwrap();
 
         let end_block = self.new_block();
 

@@ -253,7 +253,7 @@ pub enum RValue {
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
-  Match { ty: Ty, cond: Box<LValue>, cases: Vec<(Option<usize>, RValue)> }
+  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Option<usize>, RValue)> }
 }
 
 impl LValue {
