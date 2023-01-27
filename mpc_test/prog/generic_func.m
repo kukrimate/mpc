@@ -16,7 +16,7 @@ function fib<T>(n: Uintn) -> T {
   } else if n == 1 {
     1
   } else {
-    fib(n: n-1) + fib(n: n-2)
+    fib(n - 1) + fib(n - 2)
   }
 }
 

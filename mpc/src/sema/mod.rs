@@ -83,6 +83,32 @@ pub enum Inst {
   }
 }
 
+impl Inst {
+  pub fn unwrap_struct(&self) -> (&RefStr, &Vec<(RefStr, Ty)>) {
+    if let Inst::Struct { name, params } = self {
+      (name, params.as_ref().unwrap())
+    } else {
+      unreachable!()
+    }
+  }
+
+  pub fn unwrap_union(&self) -> (&RefStr, &Vec<(RefStr, Ty)>) {
+    if let Inst::Union { name, params } = self {
+      (name, params.as_ref().unwrap())
+    } else {
+      unreachable!()
+    }
+  }
+
+  pub fn unwrap_enum(&self) -> (&RefStr, &Vec<Variant>) {
+    if let Inst::Enum { name, variants } = self {
+      (name, variants.as_ref().unwrap())
+    } else {
+      unreachable!()
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub enum Variant {
   Unit(RefStr),

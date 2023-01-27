@@ -196,7 +196,6 @@ pub enum ResolvedExpr {
   Match(Box<ResolvedExpr>, Vec<(Option<usize>, RefStr, ResolvedExpr)>)
 }
 
-
 #[derive(Debug)]
 pub enum ResolvedDef {
   Type(ResolvedTypeDef),
@@ -208,6 +207,44 @@ pub enum ResolvedDef {
   Func(ResolvedFuncDef),
   ExternData(ResolvedExternDataDef),
   ExternFunc(ResolvedExternFuncDef),
+}
+
+impl ResolvedDef {
+  pub fn unwrap_type(&self) -> &ResolvedTypeDef {
+    if let ResolvedDef::Type(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_struct(&self) -> &ResolvedStructDef {
+    if let ResolvedDef::Struct(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_union(&self) -> &ResolvedUnionDef {
+    if let ResolvedDef::Union(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_enum(&self) -> &ResolvedEnumDef {
+    if let ResolvedDef::Enum(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_const(&self) -> &ResolvedConstDef {
+    if let ResolvedDef::Const(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_data(&self) -> &ResolvedDataDef {
+    if let ResolvedDef::Data(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_func(&self) -> &ResolvedFuncDef {
+    if let ResolvedDef::Func(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_extern_data(&self) -> &ResolvedExternDataDef {
+    if let ResolvedDef::ExternData(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_extern_func(&self) -> &ResolvedExternFuncDef {
+    if let ResolvedDef::ExternFunc(def) = self { def } else { unreachable!( ) }
+  }
 }
 
 #[derive(Debug)]

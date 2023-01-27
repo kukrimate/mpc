@@ -57,6 +57,7 @@ impl TVarCtx {
     }
   }
 
+  /// Unify two type expressions
   pub fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
     use Ty::*;
     'error: loop {
@@ -202,97 +203,31 @@ impl TVarCtx {
     Err(Box::new(CannotUnifyError(ty1.clone(), ty2.clone())))
   }
 
-  /// Obtain the literal type for a type expression
-
-  pub fn lit_ty(&mut self, ty: &Ty) -> Ty {
-    use Ty::*;
-    match ty {
-      Bool => Bool,
-      Uint8 => Uint8,
-      Int8 => Int8,
-      Uint16 => Uint16,
-      Int16 => Int16,
-      Uint32 => Uint32,
-      Int32 => Int32,
-      Uint64 => Uint64,
-      Int64 => Int64,
-      Uintn => Uintn,
-      Intn => Intn,
-      Float => Float,
-      Double => Double,
-      StructRef(name, (id, targs)) => {
-        let targs = targs
-          .iter()
-          .map(|ty| self.lit_ty(ty))
-          .collect();
-        StructRef(*name, (*id, targs))
-      }
-      UnionRef(name, (id, targs)) => {
-        let targs = targs
-          .iter()
-          .map(|ty| self.lit_ty(ty))
-          .collect();
-        UnionRef(*name, (*id, targs))
-      }
-      EnumRef(name, (id, targs)) => {
-        let targs = targs
-          .iter()
-          .map(|ty| self.lit_ty(ty))
-          .collect();
-        EnumRef(*name, (*id, targs))
-      }
-      Ptr(is_mut, ty) => Ptr(*is_mut, Box::new(self.lit_ty(&**ty))),
-      Func(params, va, ty) => {
-        let params = params
-          .iter()
-          .map(|(name, ty)| (*name, self.lit_ty(ty)))
-          .collect();
-        Func(params, *va, Box::new(self.lit_ty(&**ty)))
-      }
-      Arr(cnt, ty) => Arr(*cnt, Box::new(self.lit_ty(&**ty))),
-      Unit => {
-        Unit
-      }
-      Tuple(params) => {
-        let params = params
-          .iter()
-          .map(|(name, ty)| (*name, self.lit_ty(ty)))
-          .collect();
-        Tuple(params)
-      }
-      TVar(idx) => {
-        // Find root element
-        let root = self.root(*idx);
-        // Obtain real type from its bound
-        self.lit_ty(&self.tvars[root].clone())
-      }
-      BoundAny => Tuple(vec![]),
-      BoundNum => Int32,
-      BoundInt => Int32,
-      BoundFlt => Float,
-      BoundEq => Int32
-    }
-  }
-
-  /// Literalize the outermost part of a type expression
-  pub fn lit_ty_nonrecusrive(&mut self, ty: &Ty) -> Ty {
+  /// Find the most specific current bound of a type expression
+  pub fn cur_bound(&mut self, ty: &Ty) -> Ty {
     match ty {
       Ty::TVar(idx) => {
-        // Find root element
         let root = self.root(*idx);
-        // Obtain real type from its bound
-        self.lit_ty(&self.tvars[root].clone())
+        self.tvars[root].clone()
       }
       _ => ty.clone()
     }
   }
 
-
-  pub fn root_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
-    type_args.iter().map(|ty| self.root_ty(ty)).collect()
+  /// Convert the final type bound of a type expression into a suitable type
+  pub fn bound_to_ty(&mut self, ty: &Ty) -> Ty {
+    match self.cur_bound(ty) {
+      Ty::BoundAny => Ty::Unit,
+      Ty::BoundNum => Ty::Int32,
+      Ty::BoundInt => Ty::Int32,
+      Ty::BoundFlt => Ty::Float,
+      Ty::BoundEq => Ty::Int32,
+      ty => ty.clone(),
+    }
   }
 
-  pub fn root_ty(&mut self, ty: &Ty) -> Ty {
+  /// Find the canonical form of a type expression
+  pub fn canonical_ty(&mut self, ty: &Ty) -> Ty {
     use Ty::*;
     match ty {
       Bool => Bool,
@@ -309,26 +244,26 @@ impl TVarCtx {
       Float => Float,
       Double => Double,
       StructRef(name, (id, type_args)) => {
-        StructRef(*name, (*id, self.root_type_args(type_args)))
+        StructRef(*name, (*id, self.canonical_type_args(type_args)))
       }
       UnionRef(name, (id, type_args)) => {
-        UnionRef(*name, (*id, self.root_type_args(type_args)))
+        UnionRef(*name, (*id, self.canonical_type_args(type_args)))
       }
       EnumRef(name, (id, type_args)) => {
-        EnumRef(*name, (*id, self.root_type_args(type_args)))
+        EnumRef(*name, (*id, self.canonical_type_args(type_args)))
       }
       Ptr(is_mut, ty) => {
-        Ptr(*is_mut, Box::new(self.root_ty(ty)))
+        Ptr(*is_mut, Box::new(self.canonical_ty(ty)))
       }
       Func(params, va, ty) => {
         let params = params
           .iter()
-          .map(|(name, ty)| (*name, self.root_ty(ty)))
+          .map(|(name, ty)| (*name, self.canonical_ty(ty)))
           .collect();
-        Func(params, *va, Box::new(self.root_ty(ty)))
+        Func(params, *va, Box::new(self.canonical_ty(ty)))
       }
       Arr(cnt, ty) => {
-        Arr(*cnt, Box::new(self.root_ty(ty)))
+        Arr(*cnt, Box::new(self.canonical_ty(ty)))
       }
       Unit => {
         Unit
@@ -336,7 +271,7 @@ impl TVarCtx {
       Tuple(params) => {
         let params = params
           .iter()
-          .map(|(name, ty)| (*name, self.root_ty(ty)))
+          .map(|(name, ty)| (*name, self.canonical_ty(ty)))
           .collect();
         Tuple(params)
       }
@@ -349,6 +284,11 @@ impl TVarCtx {
       BoundFlt => BoundFlt,
       BoundEq => BoundEq
     }
+  }
+
+  /// Find the canonical form of a list of type expressions
+  pub fn canonical_type_args(&mut self, type_args: &Vec<Ty>) -> Vec<Ty> {
+    type_args.iter().map(|ty| self.canonical_ty(ty)).collect()
   }
 }
 
