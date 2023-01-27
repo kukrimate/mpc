@@ -269,7 +269,11 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       });
 
     match self.ty_semantics(ret_ty) {
-      Semantics::Void | Semantics::Value => {
+      Semantics::Void => {
+        let ret_ty = self.context.ty_void();
+        self.context.ty_function(ret_ty, &l_params, va)
+      }
+      Semantics::Value => {
         let ret_ty = self.lower_ty(ret_ty);
         self.context.ty_function(ret_ty, &l_params, va)
       }
@@ -585,14 +589,18 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           });
 
         match self.ty_semantics(ty) {
+          Semantics::Void => {
+            self.build_call(func.ty(), l_func, &l_args);
+            None
+          }
+          Semantics::Value => {
+            Some(self.build_call(func.ty(), l_func, &l_args))
+          }
           Semantics::Addr => {
             let storage = self.allocate_local(ty);
             let args = concat(vec![storage], l_args);
             self.build_call(func.ty(), l_func, &args);
             Some(storage)
-          }
-          _ => {
-            Some(self.build_call(func.ty(), l_func, &l_args))
           }
         }
       }
