@@ -784,9 +784,15 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Lower case bodies
         let mut vals = Vec::new();
         let mut blocks = Vec::new();
+        let mut tag_to_block = Vec::new();
 
         for (binding, val) in cases.iter() {
           let block = self.new_block();
+          tag_to_block.push((
+            self.build_int(&Ty::Int32, tag_to_block.len()),
+            block
+          ));
+
           self.enter_block(block);
           if let Some(binding) = binding {
             assert_eq!(*binding, self.bindings.len());
@@ -803,12 +809,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
         // Build switch
         self.enter_block(start_block);
-
         let tag = self.build_load(&Ty::Int32, addr).unwrap();
-        let tag_to_block: Vec<(llvm::Value<'ctx>, llvm::Block<'ctx>)> = (0..cases.len())
-          .map(|index| (self.build_int(&Ty::Int32, index), blocks[index]))
-          .collect();
-
         self.builder.switch(tag, &tag_to_block, end_block);
 
 
