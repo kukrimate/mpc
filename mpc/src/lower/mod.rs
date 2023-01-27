@@ -657,6 +657,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         let dest = self.lower_lvalue(lhs);
         self.lower_rvalue(rhs)
           .map(|src| self.build_store(lhs.ty(), dest, src));
+        // Void value
         None
       }
       RValue::Rmw { op, lhs, rhs, .. } => {
@@ -671,41 +672,40 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Void value
         None
       }
-      RValue::Continue { .. } => {
+      RValue::Continue { ty, .. } => {
         // Jump to continue point
         self.exit_block_br(*self.continue_to.last().unwrap());
         // Throw away code until next useful location
         let dead_block = self.new_block();
         self.enter_block(dead_block);
-        // Void value
-        None
+        // Unreachable value
+        self.build_unreachable(ty)
       }
-      RValue::Break { .. } => {
+      RValue::Break { ty, .. } => {
         // Jump to break point
         self.exit_block_br(*self.break_to.last().unwrap());
         // Throw away code until next useful location
         let dead_block = self.new_block();
         self.enter_block(dead_block);
-        // Void value
-        None
+        // Unreachable value
+        self.build_unreachable(ty)
       }
-      RValue::Return { arg, .. } => {
+      RValue::Return { ty, arg, .. } => {
         let retval = self.lower_rvalue(&*arg);
         self.exit_block_ret(arg.ty(), retval);
         // Throw away code until next useful location
         let dead_block = self.new_block();
         self.enter_block(dead_block);
-        // Void value
-        None
+        // Unreachable value
+        self.build_unreachable(ty)
       }
       RValue::Let { index, init, .. } => {
         let l_local = self.locals[*index];
-
         if let Some(init) = init {
           self.lower_rvalue(init)
             .map(|val| self.build_store(init.ty(), l_local, val));
         }
-
+        // Void value
         None
       }
       RValue::If { ty, cond, tbody, ebody, .. } => {
@@ -773,7 +773,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
         None
       }
-      RValue::Loop { body, .. } => {
+      RValue::Loop { ty, body, .. } => {
         let body_block = self.new_block();
         let end_block = self.new_block();
 
@@ -791,6 +791,9 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // End of the loop
         self.enter_block(end_block);
 
+        // FIXME: this might very much need a phi if there are non-void break values
+        assert!(matches!(self.ty_semantics(ty), Semantics::Void));
+        // Yield void values for now
         None
       }
       RValue::Match { ty, cond, cases, .. } => {
@@ -919,6 +922,20 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
   fn build_flt(&mut self, ty: &Ty, val: f64) -> llvm::Value<'ctx> {
     self.context.const_flt(self.lower_ty(ty), val)
+  }
+
+  fn build_unreachable(&mut self, ty: &Ty) -> Option<llvm::Value<'ctx>> {
+    match self.ty_semantics(ty) {
+      Semantics::Void => None,
+      Semantics::Value => {
+        let ty = self.lower_ty(ty);
+        Some(self.context.const_zeroed(ty))
+      }
+      Semantics::Addr => {
+        let ty = self.context.ty_ptr();
+        Some(self.context.const_zeroed(ty))
+      }
+    }
   }
 
   fn build_const_gep(&mut self, ty: &Ty, l_ptr: llvm::Value<'ctx>, idx: usize) -> llvm::Value<'ctx> {
