@@ -21,10 +21,53 @@ type Ullong = Uint64
 // stdio.h
 struct FILE()
 
+const SEEK_SET: Int = 0
+const SEEK_CUR: Int = 1
+const SEEK_END: Int = 2
+
+const EOF: Int = -1
+
 extern {
-  function printf(fmt: *Char, ...) -> Int
+  function remove(filename: *Char) -> Int
+  function rename(old: *Char, new: *Char) -> Int
+  function tmpfile() -> *mut FILE
+  function tmpnam(s: *mut Char) -> *mut Char
+  function fclose(stream: *mut FILE) -> Int
+  function fflush(stream: *mut FILE) -> Int
+  function fopen(filename: *Char, mode: *Char) -> *mut FILE
+  function freopen(filename: *Char, mode: *Char) -> *mut FILE
+  function setbuf(stream: *mut FILE, buf: *Char)
+  function setvbuf(stream: *mut FILE, buf: *Char, mode: Int, size: Uintn) -> Int
   function fprintf(stream: *mut FILE, fmt: *Char, ...) -> Int
-  function puts(str: *Char) -> Int
+  function fscanf(stream: *mut FILE, fmt: *Char, ...) -> Int
+  function printf(fmt: *Char, ...) -> Int
+  function scanf(fmt: *Char, ...) -> Int
+  function snprintf(s: *mut Char, n: Uintn, fmt: *Char, ...) -> Int
+  function sprintf(s: *mut Char, fmt: *Char, ...) -> Int
+  function sscanf(s: *mut Char, fmt: *Char, ...) -> Int
+  // TODO(va_list support): vfprintf, vfscanf, vprintf, vscanf, vsnprintf, vsprintf, vsscanf
+  function fgetc(stream: *mut FILE) -> Int
+  function fgets(s: *mut Char, n: Int, stream: *mut FILE) -> *mut Char
+  function fputc(c: Int, stream: *mut FILE) -> Int
+  function fputs(s: *Char, stream: *mut FILE) -> Int
+  function getc(stream: *mut FILE) -> Int
+  function getchar() -> Int
+  function gets(s: *mut Char) -> *mut Char
+  function putc(c: Int, stream: *mut FILE) -> Int
+  function putchar(c: Int) -> Int
+  function puts(s: *Char) -> Int
+  function ungetc(c: Int, stream: *mut FILE) -> Int
+  function fread(ptr: *mut Void, size: Uintn, nmemb: Uintn, stream: *mut FILE) -> Uintn
+  function fwrite(ptr: *mut Void, size: Uintn, nmemb: Uintn, stream: *mut FILE) -> Uintn
+  // TODO(platform dependent): fgetpos
+  function fseek(stream: *mut FILE, offset: Long, whence: Int) -> Int
+  // TODO(platform dependent): fsetpos
+  function ftell(stream: *mut FILE) -> Long
+  function rewind(stream: *mut FILE)
+  function clearerr(stream: *mut FILE)
+  function feof(stream: *mut FILE) -> Int
+  function ferror(stream: *mut FILE) -> Int
+  function perror(s: *Char)
 
   data stdin: *mut FILE
   data stdout: *mut FILE
