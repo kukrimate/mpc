@@ -717,7 +717,6 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
         self.enter_block(then_block);
         let then_val = self.lower_rvalue(tbody);
-        // NOTE: we need to save the final blocks for the phi
         then_block = self.builder.get_block().unwrap();
         self.exit_block_br(end_block);
 
@@ -726,27 +725,9 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         else_block = self.builder.get_block().unwrap();
         self.exit_block_br(end_block);
 
-        // End of if statementLLVMBuildTrunc
+        // Merge then and else values in a PHI
         self.enter_block(end_block);
-
-        // Create phi node
-        match self.ty_semantics(ty) {
-          Semantics::Void => {
-            None
-          }
-          Semantics::Value => {
-            let ty = self.lower_ty(ty);
-            Some(self.builder.phi(ty,
-                                  &[then_val.unwrap(), else_val.unwrap()],
-                                  &[then_block, else_block]))
-          }
-          Semantics::Addr => {
-            let ty = self.context.ty_ptr();
-            Some(self.builder.phi(ty,
-                                  &[then_val.unwrap(), else_val.unwrap()],
-                                  &[then_block, else_block]))
-          }
-        }
+        self.build_phi(ty, &[then_val, else_val], &[then_block, else_block])
       }
       RValue::While { cond, body, .. } => {
         let test_block = self.new_block();
@@ -803,9 +784,9 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         let end_block = self.new_block();
 
         // Lower case bodies
-        let mut vals = Vec::new();
-        let mut blocks = Vec::new();
         let mut tag_to_block = Vec::new();
+        let mut values = Vec::new();
+        let mut blocks = Vec::new();
 
         for (binding, val) in cases.iter() {
           let block = self.new_block();
@@ -820,41 +801,25 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
             let binding = self.build_gep(cond.ty(), addr, 1);
             self.bindings.push(binding);
           }
-          vals.push(self.lower_rvalue(val));
+          values.push(self.lower_rvalue(val));
           blocks.push(self.builder.get_block().unwrap());
           self.exit_block_br(end_block);
         }
 
-        // Build switch
+        // There are no cases => we are still in the start block and can just yield None
+        if tag_to_block.len() == 0 { return None }
+
+        // Go back to the start block and build a switch for the multi-way branch
+        // NOTE: matches are always exhaustive, and LLVM always wants a default case,
+        //       thus we just treat the last case as the default
         self.enter_block(start_block);
         let tag = self.build_load(&Ty::Int32, addr).unwrap();
-        self.builder.switch(tag, &tag_to_block, end_block);
+        self.builder.switch(tag, &tag_to_block[..tag_to_block.len() - 1],
+                                      tag_to_block[tag_to_block.len() - 1].1);
 
-
-        // Merge values into a phi at the end
+        // Build PHI to merge case values at the end
         self.enter_block(end_block);
-
-        match self.ty_semantics(ty) {
-          Semantics::Void => {
-            None
-          }
-          Semantics::Value => {
-            let ty = self.lower_ty(ty);
-            let vals: Vec<llvm::Value<'ctx>> = vals
-              .into_iter()
-              .map(|x| x.unwrap())
-              .collect();
-            Some(self.builder.phi(ty, &vals, &blocks))
-          }
-          Semantics::Addr => {
-            let ty = self.context.ty_ptr();
-            let vals: Vec<llvm::Value<'ctx>> = vals
-              .into_iter()
-              .map(|x| x.unwrap())
-              .collect();
-            Some(self.builder.phi(ty, &vals, &blocks))
-          }
-        }
+        self.build_phi(ty, &values, &blocks)
       }
     }
   }
@@ -1045,6 +1010,30 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       self.build_int(&Ty::Int32, index),
     ];
     self.builder.gep(ty, base, &indices)
+  }
+
+  fn build_phi(&mut self, ty: &Ty, values: &[Option<llvm::Value<'ctx>>], blocks: &[llvm::Block<'ctx>]) -> Option<llvm::Value<'ctx>> {
+    match self.ty_semantics(ty) {
+      Semantics::Void => {
+        None
+      }
+      Semantics::Value => {
+        let ty = self.lower_ty(ty);
+        let values: Vec<llvm::Value<'ctx>> = values
+          .into_iter()
+          .map(|x| x.unwrap())
+          .collect();
+        Some(self.builder.phi(ty, &values, &blocks))
+      }
+      Semantics::Addr => {
+        let ty = self.context.ty_ptr();
+        let values: Vec<llvm::Value<'ctx>> = values
+          .into_iter()
+          .map(|x| x.unwrap())
+          .collect();
+        Some(self.builder.phi(ty, &values, &blocks))
+      }
+    }
   }
 
   fn build_index(&mut self, ty: &Ty, base: llvm::Value<'ctx>, index: llvm::Value<'ctx>) -> llvm::Value<'ctx> {
