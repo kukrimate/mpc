@@ -64,7 +64,10 @@ struct LowerCtx<'a, 'ctx> {
 
   // Break and continue blocks
   break_to: Vec<llvm::Block<'ctx>>,
-  continue_to: Vec<llvm::Block<'ctx>>
+  continue_to: Vec<llvm::Block<'ctx>>,
+
+  // Break values and source blocks
+  break_vals: Vec<(Vec<Option<llvm::Value<'ctx>>>, Vec<llvm::Block<'ctx>>)>
 }
 
 impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
@@ -102,7 +105,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       bindings: Vec::new(),
 
       break_to: Vec::new(),
-      continue_to: Vec::new()
+      continue_to: Vec::new(),
+      break_vals: Vec::new()
     }
   }
 
@@ -689,7 +693,13 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Unreachable value
         self.build_unreachable(ty)
       }
-      RValue::Break { ty, .. } => {
+      RValue::Break { ty, arg } => {
+        // Lower break argument
+        let val = self.lower_rvalue(arg);
+        // Add break source to loop
+        let (vals, blocks) = self.break_vals.last_mut().unwrap();
+        vals.push(val);
+        blocks.push(self.builder.get_block().unwrap());
         // Jump to break point
         self.exit_block_br(*self.break_to.last().unwrap());
         // Throw away code until next useful location
@@ -772,18 +782,20 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         self.enter_block(body_block);
         self.continue_to.push(body_block);
         self.break_to.push(end_block);
+        self.break_vals.push((Vec::new(), Vec::new()));
         self.lower_rvalue(body);
         self.continue_to.pop();
         self.break_to.pop();
+        let (vals, blocks) = self.break_vals.pop().unwrap();
         self.exit_block_br(body_block);
 
-        // End of the loop
+        // Merge break values
         self.enter_block(end_block);
-
-        // FIXME: this might very much need a phi if there are non-void break values
-        assert!(matches!(self.ty_semantics(ty), Semantics::Void));
-        // Yield void values for now
-        None
+        if vals.len() > 0 { // Loop was actually broken
+          self.build_phi(ty, &vals, &blocks)
+        } else { // Infinite loop without breaks
+          self.build_unreachable(ty)
+        }
       }
       RValue::Match { ty, cond, cases, .. } => {
         let start_block = self.builder.get_block().unwrap();
