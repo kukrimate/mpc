@@ -353,6 +353,9 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
             self.locals.push(l_alloca);
           }
 
+          // Clear bindings
+          self.bindings.clear();
+
           // Create LLVM function body
           let body_block = self.new_block();
           self.enter_block(body_block);
