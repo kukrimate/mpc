@@ -10,6 +10,8 @@ use lalrpop_util::{self,lalrpop_mod};
 use std::collections::HashMap;
 use std::{error, fs, fmt, io};
 use std::fmt::Formatter;
+use std::hash::Hash;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
 mod lexer;
@@ -235,6 +237,7 @@ pub struct Repository {
   def_cnt: usize,
   search_dirs: Vec<PathBuf>,
   current_scope: Vec<DefId>,
+  ino_to_module: HashMap<u64, DefId>,
   parent_scope: HashMap<DefId, DefId>,
   pub parsed_defs: HashMap<DefId, Def>,
   pub resolved_defs: HashMap<DefId, ResolvedDef>,
@@ -248,6 +251,7 @@ impl Repository {
       def_cnt: 0,
       search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
       current_scope: Vec::new(),
+      ino_to_module: HashMap::new(),
       parent_scope: HashMap::new(),
       parsed_defs: HashMap::new(),
       resolved_defs: HashMap::new(),
@@ -314,11 +318,20 @@ impl Repository {
   }
 
   fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, Error> {
+    // Return previous copy if we've parsed a module with the same inode number
+    let ino = fs::metadata(path)
+      .map_err(|error| Error::IoError(path.to_path_buf(), error))?
+      .ino();
+    if let Some(def_id) = self.ino_to_module.get(&ino) {
+      return Ok(*def_id)
+    }
+    // Otherwise we can go ahead and parse it
     let input = fs::read_to_string(path)
       .map_err(|error| Error::IoError(path.to_path_buf(), error))?;
     let lexer = lexer::Lexer::new(&input);
     let parser = maple::ModuleParser::new();
     let module_id = self.new_id();
+    self.ino_to_module.insert(ino, module_id);
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
     self.current_scope.push(module_id);
     let result = match parser.parse(self, lexer) {
