@@ -8,7 +8,7 @@
 import libc
 
 struct AlignOfHelper<T> (byte: Uint8, val: T)
-struct SizeOfHelper<T> (byte: Uint8, val: T)
+struct SizeOfHelper<T> (val: T, end: Uint8)
 
 // Yields the minimum alignment of T in bytes
 function align_of<T>(dummy: *T) -> Uintn {
@@ -19,7 +19,7 @@ function align_of<T>(dummy: *T) -> Uintn {
 // Yields the size of T in bytes
 function size_of<T>(dummy: *T) -> Uintn {
   let ptr: *SizeOfHelper<T> = nil;
-  (&(*ptr).val) as <Uintn>
+  (&(*ptr).end) as <Uintn>
 }
 
 // Allocate memory to hold one instance of T
