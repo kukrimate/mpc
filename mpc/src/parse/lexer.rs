@@ -253,7 +253,7 @@ impl<'input> Lexer<'input> {
             Some(b'\'') => {
               let s = self.slice();
               match unescape(start_loc, &s[1..s.len() - 1]) {
-                Ok(v) if v.len() != 1 => {
+                Ok(v) if v.len() == 1 => {
                   break Token::IntLit(v[0] as usize)
                 }
                 Ok(_) => {
