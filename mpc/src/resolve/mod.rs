@@ -692,13 +692,13 @@ impl<'a> ResolveCtx<'a> {
         let mut resolved_cases = Vec::new();
 
         for (name, variant, val) in cases.iter() {
+          self.newscope();
           let index = name.map(|name| {
             let index = self.bindings;
             self.define(name, Sym::Binding(index));
             self.bindings += 1;
             index
           });
-          self.newscope();
           let result = self.resolve_expr(val);
           self.popscope();
           resolved_cases.push((index, *variant, result?));
