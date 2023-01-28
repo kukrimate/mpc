@@ -140,14 +140,8 @@ pub enum Ty {
   Arr(usize, Box<Ty>),
   Unit,
   Tuple(Vec<(RefStr, Ty)>),
-  // Type variables
-  TVar(usize),
-  // Type bounds
-  BoundAny,
-  BoundNum,
-  BoundInt,
-  BoundFlt,
-  BoundEq
+  // Type variable
+  Var(usize)
 }
 
 impl Ty {
@@ -177,9 +171,16 @@ impl fmt::Debug for Ty {
       Intn => write!(f, "Intn"),
       Float => write!(f, "Float"),
       Double => write!(f, "Double"),
-      StructRef(name, ..) => write!(f, "{}", name),
-      UnionRef(name, ..) => write!(f, "{}", name),
-      EnumRef(name, ..) => write!(f, "{}", name),
+      StructRef(name, type_args) |
+      UnionRef(name, type_args) |
+      EnumRef(name, type_args) => {
+        write!(f, "{}", name)?;
+        if type_args.1.len() > 0 {
+          write_comma_separated(f, type_args.1.iter(), |f, ty| ty.fmt(f))
+        } else {
+          Ok(())
+        }
+      },
       Ptr(is_mut, ty) => write!(f, "*{}{:?}", is_mut, ty),
       Func(params, _va, ty) => {
         write!(f, "Function")?;
@@ -195,12 +196,7 @@ impl fmt::Debug for Ty {
         write_comma_separated(f,
                               params.iter(), |f, (name, ty)| write!(f, "{}: {:?}", name, ty))
       }
-      TVar(idx) => write!(f, "'{}", idx),
-      BoundAny => write!(f, "Any"),
-      BoundNum => write!(f, "Num"),
-      BoundInt => write!(f, "Int"),
-      BoundFlt => write!(f, "Flt"),
-      BoundEq => write!(f, "Eq"),
+      Var(idx) => write!(f, "'{}", idx)
     }
   }
 }

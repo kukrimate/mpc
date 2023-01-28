@@ -107,7 +107,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   }
 
   fn get_type(&mut self, id: &(DefId, Vec<Ty>)) -> llvm::Type<'ctx> {
-    let id = (id.0, self.tctx.canonical_type_args(&id.1));
+    let id = (id.0, self.tctx.final_type_args(&id.1));
     if let Some(ty) = self.types.get(&id) {
       *ty
     } else {
@@ -206,9 +206,13 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   }
 
   fn lower_ty(&mut self, ty: &Ty) -> llvm::Type<'ctx> {
-    use Ty::*;
+    let ty = self.tctx.final_ty(ty);
+    self.lower_ty_r(&ty)
+  }
 
-    match self.tctx.bound_to_ty(ty) {
+  fn lower_ty_r(&mut self, ty: &Ty) -> llvm::Type<'ctx> {
+    use Ty::*;
+    match ty {
       Bool => self.context.ty_int1(),
       Uint8 | Int8 => self.context.ty_int8(),
       Uint16 | Int16 => self.context.ty_int16(),
@@ -228,7 +232,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       Arr(count, element) => {
         let element = self.lower_ty(&element);
-        self.context.ty_array(element, count)
+        self.context.ty_array(element, *count)
       }
       Unit => {
         self.lower_struct(&[])
@@ -244,6 +248,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     }
   }
 
+
   fn lower_intn(&mut self) -> llvm::Type<'ctx> {
     // FIXME: make the width of Uintn and Intn per target
     self.context.ty_int64()
@@ -254,7 +259,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   }
 
   fn lower_func_ty(&mut self, ty: &Ty) -> llvm::Type<'ctx> {
-    let ty = self.tctx.bound_to_ty(ty);
+    let ty = self.tctx.final_ty(ty);
     let (params, va, ret_ty) = ty.unwrap_func();
 
     let mut l_params = Vec::new();
@@ -852,7 +857,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   }
 
   fn get_value(&mut self, id: &(DefId, Vec<Ty>)) -> llvm::Value<'ctx> {
-    let tmp = (id.0, self.tctx.canonical_type_args(&id.1));
+    let tmp = (id.0, self.tctx.final_type_args(&id.1));
     *self.values.get(&tmp).unwrap()
   }
 
@@ -989,7 +994,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn ty_semantics(&mut self, ty: &Ty) -> Semantics {
     use Ty::*;
 
-    match self.tctx.bound_to_ty(&ty) {
+    match self.tctx.final_ty(&ty) {
       Unit => Semantics::Void,
       Bool | Uint8 | Int8 | Uint16 |
       Int16 |Uint32 | Int32 | Uint64 |
@@ -1057,7 +1062,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     use Ty::*;
     use UnOp::*;
 
-    match (op, self.tctx.bound_to_ty(ty)) {
+    match (op, self.tctx.final_ty(ty)) {
       (UPlus, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn | Float | Double) => {
         arg
       }
@@ -1077,8 +1082,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn build_cast(&mut self, dest_ty: &Ty, src_ty: &Ty, val: llvm::Value<'ctx>) -> llvm::Value<'ctx> {
     use Ty::*;
 
-    let lit_dest = self.tctx.bound_to_ty(dest_ty);
-    let lit_src = self.tctx.bound_to_ty(src_ty);
+    let lit_dest = self.tctx.final_ty(dest_ty);
+    let lit_src = self.tctx.final_ty(src_ty);
 
     if lit_dest == lit_src { // Nothing to cast
       return val
@@ -1150,7 +1155,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     use Ty::*;
     use BinOp::*;
 
-    match (op, self.tctx.bound_to_ty(ty)) {
+    match (op, self.tctx.final_ty(ty)) {
       // Integer multiply
       (Mul, Uint8 | Int8 | Uint16 | Int16 | Uint32 | Int32 | Uint64 | Int64 | Uintn | Intn) => {
         self.builder.mul(lhs, rhs)
