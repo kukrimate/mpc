@@ -384,6 +384,10 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn lower_const_val(&mut self, val: &ConstVal) -> llvm::Value<'ctx> {
     use ConstVal::*;
     match val {
+      Nil { ty } => {
+        let ty = self.lower_ty(ty);
+        self.context.const_zeroed(ty)
+      }
       FuncPtr { id } => self.get_value(id),
       DataPtr { ptr } => self.lower_const_ptr(ptr),
       BoolLit { val } => self.build_bool(*val),
@@ -423,6 +427,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       FuncPtr { .. } |
       DataPtr { .. } |
       CStrLit { .. } => self.context.ty_ptr(),
+
+      Nil { ty } => self.lower_ty(ty),
 
       BoolLit { .. } => self.context.ty_int1(),
 

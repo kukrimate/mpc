@@ -29,6 +29,7 @@ impl ConstPtr {
 
 #[derive(Debug)]
 pub enum ConstVal {
+  Nil { ty: Ty },
   FuncPtr { id: (DefId, Vec<Ty>) },
   DataPtr { ptr: ConstPtr },
   BoolLit { val: bool },
@@ -161,6 +162,9 @@ pub(super) fn consteval(rvalue: &RValue) -> MRes<ConstVal> {
     }
     RValue::FuncRef { id, .. } => {
       Ok(FuncPtr { id: id.clone() })
+    }
+    RValue::Nil { ty, .. } => {
+      Ok(Nil { ty: ty.clone() })
     }
     RValue::CStr { val, .. } => {
       Ok(CStrLit { val: val.clone() })
