@@ -27,7 +27,7 @@ function allocate<T>() -> *mut T {
   libc::malloc(size_of(nil as <*T>)) as <*mut T>
 }
 
-// Allocate memory to hold n instance of T
+// Allocate memory to hold n instances of T
 function allocate_contiguous<T>(n: Uintn) -> *mut T {
   libc::malloc(size_of(nil as <*T>) * n) as <*mut T>
 }

@@ -21,7 +21,7 @@ fn string_table_intern(s: &str) -> &'static str {
   let mut locked = STRING_TABLE.lock().unwrap();
   locked
     .get_or_insert_with(|| HashSet::new())
-    .get_or_insert(Box::leak(s))
+    .get_or_insert_with(&*s, |s| Box::leak(str::to_owned(s).into_boxed_str()))
 }
 
 fn to_owned_c(s: &str) -> Box<str> {
