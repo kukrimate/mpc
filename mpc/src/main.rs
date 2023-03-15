@@ -25,6 +25,10 @@ fn main() {
       .help("Output file")
       .required(true)
       .takes_value(true))
+    .arg(Arg::with_name("target")
+      .long("target")
+      .help("Target triplet")
+      .takes_value(true))
     .get_matches();
 
   let compile_to = if args.occurrences_of("llvm-ir") > 0 {
@@ -36,8 +40,8 @@ fn main() {
   };
 
   let status = match compile(Path::new(args.value_of_os("input").unwrap()),
-                  Path::new(args.value_of_os("output").unwrap()),
-                  compile_to) {
+                             Path::new(args.value_of_os("output").unwrap()),
+                             compile_to, args.value_of("target")) {
     Ok(()) => 0,
     Err(error) => {
       eprintln!("{} :(", error);

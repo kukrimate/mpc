@@ -19,7 +19,7 @@ use llvm_sys::target_machine::*;
 pub use llvm_sys::{LLVMIntPredicate::*,
                    LLVMRealPredicate::*};
 
-use std::ffi::c_char;
+use std::ffi::{c_char, CString};
 use std::io;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -145,6 +145,45 @@ impl Target {
       }
     }
   }
+
+  pub fn from_triplet(triple: &str) -> Option<Target> {
+    unsafe {
+      LLVM_InitializeAllTargetInfos();
+      LLVM_InitializeAllTargets();
+      LLVM_InitializeAllTargetMCs();
+      LLVM_InitializeAllAsmParsers();
+      LLVM_InitializeAllAsmPrinters();
+
+
+      let c_triple = CString::new(triple).unwrap();
+      let l_triple = LLVMCreateMessage(c_triple.as_ptr());
+
+      let mut l_target = std::ptr::null_mut();
+      let mut l_errors = std::ptr::null_mut();
+      LLVMGetTargetFromTriple(l_triple, &mut l_target, &mut l_errors);
+      if !l_errors.is_null() { return None }
+
+      let l_machine = LLVMCreateTargetMachine(
+        l_target,
+        l_triple,
+        empty_cstr(),
+        empty_cstr(),
+        LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
+        LLVMRelocMode::LLVMRelocPIC,
+        LLVMCodeModel::LLVMCodeModelDefault);
+
+      let l_layout = LLVMCreateTargetDataLayout(l_machine);
+      let l_layout_str = LLVMCopyStringRepOfTargetData(l_layout);
+
+      Some(Target {
+        l_machine,
+        l_layout,
+        l_triple,
+        l_layout_str
+      })
+    }
+  }
+
   pub fn align_of(&mut self, ty: Type<'_>) -> usize {
     unsafe {
       LLVMPreferredAlignmentOfType(self.l_layout, ty.l_type) as _

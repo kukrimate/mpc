@@ -23,8 +23,8 @@ pub enum CompileTo {
   Object
 }
 
-pub fn compile(input_path: &Path, output_path: &Path, compile_to: CompileTo) -> MRes<()> {
+pub fn compile(input_path: &Path, output_path: &Path, compile_to: CompileTo, triple: Option<&str>) -> MRes<()> {
   let parsed_repo = parse::parse_bundle(input_path)?;
   let mut inst_collection = sema::analyze(&parsed_repo)?;
-  lower::compile(&mut inst_collection, output_path, compile_to)
+  lower::compile(&mut inst_collection, output_path, compile_to, triple)
 }

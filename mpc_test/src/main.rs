@@ -29,7 +29,7 @@ fn main() {
       .join(&file_name)
       .with_extension("");
 
-    match mpc::compile(&src_path, &obj_path, mpc::CompileTo::Object)
+    match mpc::compile(&src_path, &obj_path, mpc::CompileTo::Object, None)
       .and_then(|_| link(&obj_path, &bin_path))
       .and_then(|_| run_and_check(&src_path, &bin_path))
     {

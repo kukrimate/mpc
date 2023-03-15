@@ -9,10 +9,16 @@ use crate::parse::{DefId,BinOp,UnOp};
 use mpc_llvm as llvm;
 use std::collections::HashMap;
 
-pub fn compile(collection: &mut Collection, output: &Path, compile_to: CompileTo) -> MRes<()> {
+pub fn compile(collection: &mut Collection,
+               output: &Path,
+               compile_to: CompileTo,
+               triple: Option<&str>) -> MRes<()> {
   let context = llvm::Context::new();
-  let mut ctx = LowerCtx::new(
-    &mut collection.tctx, &collection.insts, &context, RefStr::new(""));
+  let mut ctx = LowerCtx::new(&mut collection.tctx,
+                              &collection.insts,
+                              &context,
+                              RefStr::new(""),
+                              triple);
 
   ctx.lower_defs();
   if let Some(_) = option_env!("MPC_SPEW") {
@@ -74,9 +80,14 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn new(tctx: &'a mut TVarCtx,
          insts: &'a HashMap<(DefId, Vec<Ty>), Inst>,
          context: &'ctx llvm::Context,
-         name: RefStr) -> Self {
+         name: RefStr,
+         triple: Option<&str>) -> Self {
 
-    let target = llvm::Target::native();
+    let target = if let Some(triple) = triple {
+      llvm::Target::from_triplet(triple).unwrap()
+    } else {
+      llvm::Target::native()
+    };
 
     let builder = context.builder();
     let module = context.module(name.borrow_c());
