@@ -779,9 +779,11 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         self.enter_block(body_block);
         self.continue_to.push(test_block);
         self.break_to.push(end_block);
+        self.break_vals.push((Vec::new(), Vec::new()));
         self.lower_rvalue(body);
         self.continue_to.pop();
         self.break_to.pop();
+        self.break_vals.pop().unwrap();
         self.exit_block_br(test_block);
 
         // End of the loop
