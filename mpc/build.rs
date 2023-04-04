@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
-use lalrpop;
 use std::env;
 use std::path;
 
@@ -18,7 +17,4 @@ fn main() {
       .join("mpc_std");
     println!("cargo:rustc-env=MPC_STD_DIR={}", std_path.to_str().unwrap());
   }
-
-  // Build lalrpop grammar
-  lalrpop::process_root().unwrap();
 }

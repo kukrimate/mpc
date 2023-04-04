@@ -5,18 +5,17 @@
 
 use crate::util::{MRes, RefStr};
 use crate::resolve::{ResolvedDef,resolve_defs};
-use lexer::Token;
-use lalrpop_util::{self,lalrpop_mod};
+
 use std::collections::HashMap;
 use std::{error, fs, fmt, io};
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
+use crate::parse::lexer::Token;
 
 mod lexer;
-
-lalrpop_mod!(maple, "/parse/maple.rs");
+mod parser;
 
 /// Syntax tree produced by the parser
 
@@ -319,27 +318,33 @@ impl Repository {
 
   fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, Error> {
     // Return previous copy if we've parsed a module with the same inode number
+    // Otherwise we can go ahead and parse it
+
     let ino = fs::metadata(path)
       .map_err(|error| Error::IoError(path.to_path_buf(), error))?
       .ino();
     if let Some(def_id) = self.ino_to_module.get(&ino) {
       return Ok(*def_id)
     }
-    // Otherwise we can go ahead and parse it
-    let input = fs::read_to_string(path)
-      .map_err(|error| Error::IoError(path.to_path_buf(), error))?;
-    let lexer = lexer::Lexer::new(&input);
-    let parser = maple::ModuleParser::new();
+
+    // Create module context
     let module_id = self.new_id();
     self.ino_to_module.insert(ino, module_id);
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
     self.current_scope.push(module_id);
-    let result = match parser.parse(self, lexer) {
+
+    let input = fs::read_to_string(path).map_err(|error| Error::IoError(path.to_path_buf(), error))?;
+
+    let lexer = lexer::Lexer::new(&input);
+    let result = match parser::Parser::new(self, lexer).parse() {
       Ok(()) => Ok(module_id),
-      Err(err) => Err(Error::from_lalrpop(err))
+      Err(err) => Err(err)
     };
+
+    // Exit module context
     self.current_scope.pop();
     self.search_dirs.pop();
+
     result
   }
 }
@@ -365,32 +370,9 @@ pub enum Error {
   UnterminatedChar(Location),
   UnterminatedComment(Location),
   InvalidChar(Location),
-  UnexpectedToken(Location),
-  UnexpectedEndOfFile(Location),
+  UnexpectedToken(Location, Token),
   UnknownModule(Location, RefStr),
   Redefinition(Location, RefStr)
-}
-
-impl Error {
-  fn from_lalrpop(err: lalrpop_util::ParseError<Location, Token, Error>) -> Error {
-    match err {
-      // Parser expected a different token
-      lalrpop_util::ParseError::UnrecognizedToken { token: (location, ..), .. } => {
-        Error::UnexpectedToken(location)
-      }
-      // Parser expected token instead of EOF
-      lalrpop_util::ParseError::UnrecognizedEOF { location, .. } => {
-        Error::UnexpectedEndOfFile(location)
-      }
-      // Lexer errors propagate to here
-      lalrpop_util::ParseError::User { error } => {
-        error
-      }
-      // NOTE: the following two are not generated using our setup
-      lalrpop_util::ParseError::InvalidToken { .. } => unreachable!(),
-      lalrpop_util::ParseError::ExtraToken { .. } => unreachable!()
-    }
-  }
 }
 
 impl fmt::Display for Error {
@@ -403,12 +385,11 @@ impl fmt::Display for Error {
       Error::UnterminatedChar(location) => write!(fmt, "Error at {}: Unterminated character literal", location),
       Error::UnterminatedComment(location) => write!(fmt, "Error at {}: Unterminated block comment", location),
       Error::InvalidChar(location) => write!(fmt, "Error at {}: Invalid char literal", location),
-      Error::UnexpectedToken(location) => write!(fmt, "Error at {}: Unexpected token", location),
-      Error::UnexpectedEndOfFile(location) => write!(fmt, "Error at {}: Unexpected end of file", location),
+      Error::UnexpectedToken(location, token) => write!(fmt, "Error at {}: Unexpected token {:?}", location, token),
       Error::UnknownModule(location, name) => write!(fmt, "Error at {}: Unknown module {}", location, name),
       Error::Redefinition(location, name) => write!(fmt, "Error at {}: Re-definition of {}", location, name)
     }
   }
 }
-
 impl error::Error for Error {}
+

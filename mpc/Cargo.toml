@@ -3,10 +3,6 @@ name = "mpc"
 version = "0.1.0"
 edition = "2018"
 
-[build-dependencies]
-lalrpop = "0.19.8"
-
 [dependencies]
 clap = "2.33.3"
-lalrpop-util = "0.19.8"
 mpc_llvm = { path = "../mpc_llvm" }

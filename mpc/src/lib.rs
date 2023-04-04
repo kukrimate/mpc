@@ -6,6 +6,8 @@
 #![feature(hash_set_entry)]
 #![feature(hash_raw_entry)]
 
+extern crate core;
+
 mod parse;
 mod resolve;
 mod sema;

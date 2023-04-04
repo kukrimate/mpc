@@ -19,6 +19,7 @@ pub struct Lexer<'input> {
 
 #[derive(Clone, Debug)]
 pub enum Token {
+  EndOfFile,
   Ident(RefStr),    // [_a-zA-Z][_a-zA-Z0-9]*
   IntLit(usize),    // [0-9]+
                     // 0[xX][a-fA-f0-9]+
@@ -111,14 +112,6 @@ pub enum Token {
   Varargs           // ...
 }
 
-impl<'input> Iterator for Lexer<'input> {
-  type Item = Result<(Location, Token, Location), Error>;
-
-  fn next(&mut self) -> Option<Self::Item> {
-    self.read_token()
-  }
-}
-
 impl<'input> Lexer<'input> {
   pub fn new(input: &'input str) -> Self {
     let keywords = HashMap::from([
@@ -171,18 +164,18 @@ impl<'input> Lexer<'input> {
     }
   }
 
-  pub fn read_token(&mut self) -> Option<Result<(Location, Token, Location), Error>> {
+  pub fn token(&mut self) -> Result<Token, Error> {
     loop {
       // Save beginning of token
       self.begin = self.end;
-      // Save starting location of token
+      // Save starting location
       let start_loc = self.location();
 
       // Read character or bail on EOF
       let byte = if let Some(byte) = self.consume_byte() {
         byte
       } else {
-        return None
+        return Ok(Token::EndOfFile)
       };
 
       // Decide next state after seeing initial char
@@ -197,13 +190,13 @@ impl<'input> Lexer<'input> {
         b'c' if self.consume(b'"') => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Some(Err(Error::UnterminatedStr(self.location())))
+              return Err(Error::UnterminatedStr(self.location()))
             }
             Some(b'"') => {
               let s = self.slice();
               match unescape(start_loc, &s[2..s.len() - 1]) {
                 Ok(v) => break Token::CStrLit(v),
-                Err(err) => return Some(Err(err)),
+                Err(err) => return Err(err),
               }
             },
             Some(_) => (),
@@ -232,13 +225,13 @@ impl<'input> Lexer<'input> {
         b'"' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Some(Err(Error::UnterminatedStr(self.location())))
+              return Err(Error::UnterminatedStr(self.location()))
             }
             Some(b'"') => {
               let s = self.slice();
               match unescape(start_loc, &s[1..s.len() - 1]) {
                 Ok(v) => break Token::StrLit(v),
-                Err(err) => return Some(Err(err)),
+                Err(err) => return Err(err),
               }
             },
             Some(_) => (),
@@ -248,7 +241,7 @@ impl<'input> Lexer<'input> {
         b'\'' => loop {
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Some(Err(Error::UnterminatedChar(self.location())))
+              return Err(Error::UnterminatedChar(self.location()))
             }
             Some(b'\'') => {
               let s = self.slice();
@@ -257,10 +250,10 @@ impl<'input> Lexer<'input> {
                   break Token::IntLit(v[0] as usize)
                 }
                 Ok(_) => {
-                  return Some(Err(Error::InvalidChar(start_loc)))
+                  return Err(Error::InvalidChar(start_loc))
                 }
                 Err(err) => {
-                  return Some(Err(err))
+                  return Err(err)
                 }
               }
             },
@@ -368,7 +361,7 @@ impl<'input> Lexer<'input> {
             self.consume_byte();
             while match self.consume_byte() {
               None => {
-                return Some(Err(Error::UnterminatedComment(self.location())))
+                return Err(Error::UnterminatedComment(self.location()))
               }
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
@@ -443,10 +436,10 @@ impl<'input> Lexer<'input> {
             Token::Colon
           }
         }
-        _ => return Some(Err(Error::UnknownToken(self.location())))
+        _ => return Err(Error::UnknownToken(self.location()))
       };
 
-      return Some(Ok((start_loc, token, self.location())))
+      return Ok(token)
     }
   }
 
@@ -583,7 +576,7 @@ impl<'input> Lexer<'input> {
   }
 
   #[inline(always)]
-  fn location(&self) -> Location { Location { line: self.line, column: self.column } }
+  pub fn location(&self) -> Location { Location { line: self.line, column: self.column } }
 
   #[inline(always)]
   fn slice(&self) -> &'input str {
