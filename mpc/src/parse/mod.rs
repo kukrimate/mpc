@@ -8,9 +8,6 @@ use crate::util::RefStr;
 use crate::resolve::{ResolvedDef,resolve_defs};
 
 use std::collections::HashMap;
-use std::{fs, fmt};
-use std::fmt::Formatter;
-use std::hash::Hash;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 
@@ -83,7 +80,7 @@ impl Repository {
     id
   }
 
-  fn sym(&mut self, location: Location, name: RefStr, def: DefId) -> Result<(), CompileError> {
+  fn sym(&mut self, location: SourceLocation, name: RefStr, def: DefId) -> Result<(), CompileError> {
     let scope = self.syms
       .entry(*self.current_scope.last().unwrap())
       .or_insert_with(|| HashMap::new());
@@ -96,7 +93,7 @@ impl Repository {
     }
   }
 
-  fn find_module(&mut self, location: Location, name: RefStr) -> Result<PathBuf, CompileError> {
+  fn find_module(&mut self, location: SourceLocation, name: RefStr) -> Result<PathBuf, CompileError> {
     for dir in self.search_dirs.iter().rev() {
       let path = dir
         .join(std::path::Path::new(name.borrow_rs()))
@@ -110,7 +107,7 @@ impl Repository {
     // Return previous copy if we've parsed a module with the same inode number
     // Otherwise we can go ahead and parse it
 
-    let ino = fs::metadata(path)
+    let ino = std::fs::metadata(path)
       .map_err(|error| CompileError::IoError(path.to_path_buf(), error))?
       .ino();
     if let Some(def_id) = self.ino_to_module.get(&ino) {
@@ -123,9 +120,12 @@ impl Repository {
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
     self.current_scope.push(module_id);
 
-    let input = fs::read_to_string(path).map_err(|error| CompileError::IoError(path.to_path_buf(), error))?;
+    let file = std::sync::Arc::new(SourceFile {
+      path: path.to_owned(),
+      data: std::fs::read_to_string(path).map_err(|error| CompileError::IoError(path.to_path_buf(), error))?
+    });
 
-    let lexer = lexer::Lexer::new(&input);
+    let lexer = Lexer::new(file);
     let result = match parser::Parser::new(self, lexer).parse() {
       Ok(()) => Ok(module_id),
       Err(err) => Err(err)

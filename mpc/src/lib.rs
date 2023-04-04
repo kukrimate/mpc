@@ -14,17 +14,24 @@ pub mod util;
 
 use crate::util::*;
 
-/// Source location
+/// Source file in memory
+#[derive(Clone,Default,Debug)]
+pub struct SourceFile {
+  pub path: std::path::PathBuf,
+  pub data: String
+}
 
-#[derive(Clone,Copy,Default,Debug)]
-pub struct Location {
+/// Location in a source file
+#[derive(Clone,Default,Debug)]
+pub struct SourceLocation {
+  pub file: std::sync::Arc<SourceFile>,
   pub line: usize,
   pub column: usize
 }
 
-impl std::fmt::Display for Location {
+impl std::fmt::Display for SourceLocation {
   fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-    write!(fmt, "line {} column {}", self.line, self.column)
+    write!(fmt, "file {} line {} column {}", self.file.path.to_string_lossy(), self.line, self.column)
   }
 }
 
@@ -33,42 +40,41 @@ impl std::fmt::Display for Location {
 #[derive(Debug)]
 pub enum CompileError {
   IoError(std::path::PathBuf, std::io::Error),
-  UnknownToken(Location),
-  UnknownEscape(Location),
-  UnterminatedStr(Location),
-  UnterminatedChar(Location),
-  UnterminatedComment(Location),
-  InvalidChar(Location),
-  UnexpectedToken(Location, parse::Token),
-  UnknownModule(Location, RefStr),
-  Redefinition(Location, RefStr),
-  UnresolvedPath(parse::Path),
-  InvalidValueName(parse::Path),
-  InvalidTypeName(parse::Path),
-  InvalidUnionLiteral,
-  CannotUnifyBounds(sema::Bound, sema::Bound),
-  CannotUnifyTypes(sema::Ty, sema::Ty),
-  TypeDoesNotHaveBound(sema::Ty, sema::Bound),
-  TypeError(String),
-  IncorrectNumberOfTypeArguments,
-  TypeHasNoField(sema::Ty, RefStr),
-  CannotIndexType(sema::Ty),
-  CannotDereferenceType(sema::Ty),
-  CannotCallType(sema::Ty),
-  IncorrectNumberOfArguments(sema::Ty),
-  CannotMatchType(sema::Ty),
-  CannotAssignImmutable,
-  StructVariantExpectedArguments,
-  UnitVariantUnexpectedArguments,
-  InvalidLvalueExpression,
-  ContinueOutsideLoop,
-  BreakOutsideLoop,
-  ReturnOutsideFunction,
-  IncorrectArgumentLabel(RefStr),
-  DuplicateMatchCase,
-  MissingMatchCase,
-  IncorrectMatchCase,
-  InvalidConstantExpression
+  UnknownToken(SourceLocation),
+  UnknownEscape(SourceLocation),
+  UnterminatedStr(SourceLocation),
+  UnterminatedChar(SourceLocation),
+  UnterminatedComment(SourceLocation),
+  InvalidChar(SourceLocation),
+  UnexpectedToken(SourceLocation, parse::Token),
+  UnknownModule(SourceLocation, RefStr),
+  Redefinition(SourceLocation, RefStr),
+  UnresolvedPath(SourceLocation, parse::Path),
+  InvalidValueName(SourceLocation, parse::Path),
+  InvalidTypeName(SourceLocation, parse::Path),
+  InvalidUnionLiteral(SourceLocation),
+  CannotUnifyBounds(SourceLocation, sema::Bound, sema::Bound),
+  CannotUnifyTypes(SourceLocation, sema::Ty, sema::Ty),
+  TypeDoesNotHaveBound(SourceLocation, sema::Ty, sema::Bound),
+  IncorrectNumberOfTypeArguments(SourceLocation),
+  TypeHasNoField(SourceLocation, sema::Ty, RefStr),
+  CannotIndexType(SourceLocation, sema::Ty),
+  CannotDereferenceType(SourceLocation, sema::Ty),
+  CannotCallType(SourceLocation, sema::Ty),
+  IncorrectNumberOfArguments(SourceLocation, sema::Ty),
+  CannotMatchType(SourceLocation, sema::Ty),
+  CannotAssignImmutable(SourceLocation),
+  StructVariantExpectedArguments(SourceLocation),
+  UnitVariantUnexpectedArguments(SourceLocation),
+  InvalidLvalueExpression(SourceLocation),
+  ContinueOutsideLoop(SourceLocation),
+  BreakOutsideLoop(SourceLocation),
+  ReturnOutsideFunction(SourceLocation),
+  IncorrectArgumentLabel(SourceLocation, RefStr),
+  DuplicateMatchCase(SourceLocation),
+  MissingMatchCase(SourceLocation),
+  IncorrectMatchCase(SourceLocation),
+  InvalidConstantExpression(SourceLocation)
 }
 
 impl std::fmt::Display for CompileError {
@@ -84,41 +90,32 @@ impl std::fmt::Display for CompileError {
       CompileError::UnexpectedToken(location, token) => write!(f, "Error at {}: Unexpected token {:?}", location, token),
       CompileError::UnknownModule(location, name) => write!(f, "Error at {}: Unknown module {}", location, name),
       CompileError::Redefinition(location, name) => write!(f, "Error at {}: Re-definition of {}", location, name),
-      CompileError::UnresolvedPath(path) => write!(f, "Unresolved path {}", path),
-      CompileError::InvalidValueName(path) => write!(f, "{} does not refer to a value", path),
-      CompileError::InvalidTypeName(path) => write!(f, "{} does not refer to a type", path),
-      CompileError::InvalidUnionLiteral => write!(f, "Union literal with more than one argument"),
-      CompileError::CannotUnifyBounds(b1, b2) => {
-        write!(f, "Incompatible type bounds {:?} and {:?}", b1, b2)
-      }
-      CompileError::CannotUnifyTypes(ty1, ty2) => {
-        write!(f, "Cannot unify types {:?} and {:?}", ty1, ty2)
-      }
-      CompileError::TypeDoesNotHaveBound(ty, bound) => {
-        write!(f, "Cannot bound type {:?} by {:?}", ty, bound)
-      }
-      CompileError::TypeError(s) => {
-        write!(f, "{}", s)
-      }
-      CompileError::IncorrectNumberOfTypeArguments => write!(f, "Incorrect number of type arguments"),
-      CompileError::TypeHasNoField(ty, field)  => write!(f, "Type {:?} has no field named {}", ty, field),
-      CompileError::CannotIndexType(ty)  => write!(f, "Type {:?} cannot be indexed", ty),
-      CompileError::CannotDereferenceType(ty)  => write!(f, "Type {:?} cannot be dereferenced", ty),
-      CompileError::CannotCallType(ty)  => write!(f, "Type {:?} cannot be called", ty),
-      CompileError::IncorrectNumberOfArguments(ty) => write!(f, "Wrong number of arguments for {:?}", ty),
-      CompileError::CannotMatchType(ty) => write!(f, "Cannot match on non-enum type {:?}", ty),
-      CompileError::CannotAssignImmutable => write!(f, "Cannot assign to immutable location"),
-      CompileError::StructVariantExpectedArguments => write!(f, "Missing arguments for struct variant"),
-      CompileError::UnitVariantUnexpectedArguments => write!(f, "Junk arguments for unit variants"),
-      CompileError::InvalidLvalueExpression => write!(f, "Invalid lvalue expression"),
-      CompileError::ContinueOutsideLoop => write!(f, "Continue outside loop"),
-      CompileError::BreakOutsideLoop => write!(f, "Break outside loop"),
-      CompileError::ReturnOutsideFunction => write!(f, "Return outside function"),
-      CompileError::IncorrectArgumentLabel(label) => write!(f, "Incorrect argument label {}", label),
-      CompileError::DuplicateMatchCase => write!(f, "Duplicate match case"),
-      CompileError::MissingMatchCase => write!(f, "Missing match case"),
-      CompileError::IncorrectMatchCase => write!(f, "Incorrec match casefunction"),
-      CompileError::InvalidConstantExpression => write!(f, "Invalid constant expression"),
+      CompileError::UnresolvedPath(location, path) => write!(f, "Error at {}: Unresolved path {}", location, path),
+      CompileError::InvalidValueName(location, path) => write!(f, "Error at {}: {} does not refer to a value", location, path),
+      CompileError::InvalidTypeName(location, path) => write!(f, "Error at {}: {} does not refer to a type", location, path),
+      CompileError::InvalidUnionLiteral(location) => write!(f, "Error at {}: Union literal with more than one argument", location),
+      CompileError::CannotUnifyBounds(location, b1, b2) => write!(f, "Error at {}: Incompatible type bounds {:?} and {:?}", location, b1, b2),
+      CompileError::CannotUnifyTypes(location, ty1, ty2) => write!(f, "Error at {}: Cannot unify types {:?} and {:?}", location, ty1, ty2),
+      CompileError::TypeDoesNotHaveBound(location, ty, bound) => write!(f, "Error at {}: Cannot bound type {:?} by {:?}", location, ty, bound),
+      CompileError::IncorrectNumberOfTypeArguments(location) => write!(f, "Error at {}: Incorrect number of type arguments", location),
+      CompileError::TypeHasNoField(location, ty, field)  => write!(f, "Error at {}: Type {:?} has no field named {}", location, ty, field),
+      CompileError::CannotIndexType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be indexed", location, ty),
+      CompileError::CannotDereferenceType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be dereferenced", location, ty),
+      CompileError::CannotCallType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be called", location, ty),
+      CompileError::IncorrectNumberOfArguments(location, ty) => write!(f, "Error at {}: Wrong number of arguments for {:?}", location, ty),
+      CompileError::CannotMatchType(location, ty) => write!(f, "Error at {}: Cannot match on non-enum type {:?}", location, ty),
+      CompileError::CannotAssignImmutable(location) => write!(f, "Error at {}: Cannot assign to immutable location", location),
+      CompileError::StructVariantExpectedArguments(location ) => write!(f, "Error at {}: Missing arguments for struct variant", location),
+      CompileError::UnitVariantUnexpectedArguments(location) => write!(f, "Error at {}: Junk arguments for unit variants", location),
+      CompileError::InvalidLvalueExpression(location) => write!(f, "Error at {}: Invalid lvalue expression", location),
+      CompileError::ContinueOutsideLoop(location) => write!(f, "Error at {}: Continue outside loop", location),
+      CompileError::BreakOutsideLoop(location) => write!(f, "Error at {}: Break outside loop", location),
+      CompileError::ReturnOutsideFunction(location) => write!(f, "Error at {}: Return outside function", location),
+      CompileError::IncorrectArgumentLabel(location, label) => write!(f, "Error at {}: Incorrect argument label {}", location, label),
+      CompileError::DuplicateMatchCase(location) => write!(f, "Error at {}: Duplicate match case", location),
+      CompileError::MissingMatchCase(location) => write!(f, "Error at {}: Missing match case", location),
+      CompileError::IncorrectMatchCase(location) => write!(f, "Error at {}: Incorrect match case", location),
+      CompileError::InvalidConstantExpression(location) => write!(f, "Error at {}: Invalid constant expression", location),
 
     }
   }

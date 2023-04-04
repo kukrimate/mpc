@@ -8,8 +8,8 @@ use super::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IsMut { Yes, No }
 
-impl fmt::Display for IsMut {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for IsMut {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       IsMut::Yes => write!(f, "mut "),
       IsMut::No => write!(f, ""),
@@ -24,8 +24,8 @@ impl Path {
   pub fn crumbs(&self) -> &Vec<RefStr> { &self.0 }
 }
 
-impl fmt::Display for Path {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for Path {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     // There is always at least one crumb
     self.crumbs()[0].borrow_rs().fmt(f)?;
     // Then the rest can be prefixed with ::
@@ -39,25 +39,25 @@ impl fmt::Display for Path {
 
 #[derive(Clone, Debug)]
 pub enum Ty {
-  Bool,
-  Uint8,
-  Int8,
-  Uint16,
-  Int16,
-  Uint32,
-  Int32,
-  Uint64,
-  Int64,
-  Uintn,
-  Intn,
-  Float,
-  Double,
-  Inst(Path, Vec<Ty>),
-  Ptr(IsMut, Box<Ty>),
-  Func(Vec<(RefStr, Ty)>, Box<Ty>),
-  Arr(Box<Expr>, Box<Ty>),
-  Unit,
-  Tuple(Vec<(RefStr, Ty)>),
+  Bool(SourceLocation),
+  Uint8(SourceLocation),
+  Int8(SourceLocation),
+  Uint16(SourceLocation),
+  Int16(SourceLocation),
+  Uint32(SourceLocation),
+  Int32(SourceLocation),
+  Uint64(SourceLocation),
+  Int64(SourceLocation),
+  Uintn(SourceLocation),
+  Intn(SourceLocation),
+  Float(SourceLocation),
+  Double(SourceLocation),
+  Inst(SourceLocation, Path, Vec<Ty>),
+  Ptr(SourceLocation, IsMut, Box<Ty>),
+  Func(SourceLocation, Vec<(RefStr, Ty)>, Box<Ty>),
+  Arr(SourceLocation, Box<Expr>, Box<Ty>),
+  Unit(SourceLocation),
+  Tuple(SourceLocation, Vec<(RefStr, Ty)>),
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -72,45 +72,85 @@ pub enum BinOp {
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-  Path(Path),
-  Nil,
-  Bool(bool),
-  Int(usize),
-  Flt(f64),
-  Str(Vec<u8>),
-  CStr(Vec<u8>),
-  Unit,
-  Tuple(Vec<(RefStr, Expr)>),
-  Arr(Vec<Expr>),
-  Dot(Box<Expr>, RefStr),
-  Call(Box<Expr>, Vec<(RefStr, Expr)>),
-  Index(Box<Expr>, Box<Expr>),
-  Adr(Box<Expr>),
-  Ind(Box<Expr>),
-  Un(UnOp, Box<Expr>),
-  LNot(Box<Expr>),
-  Cast(Box<Expr>, Ty),
-  Bin(BinOp, Box<Expr>, Box<Expr>),
-  LAnd(Box<Expr>, Box<Expr>),
-  LOr(Box<Expr>, Box<Expr>),
-  Block(Vec<Expr>),
-  As(Box<Expr>, Box<Expr>),
-  Rmw(BinOp, Box<Expr>, Box<Expr>),
-  Continue,
-  Break(Box<Expr>),
-  Return(Box<Expr>),
-  Let(RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
-  If(Box<Expr>, Box<Expr>, Box<Expr>),
-  While(Box<Expr>, Box<Expr>),
-  Loop(Box<Expr>),
-  Match(Box<Expr>, Vec<(Option<RefStr>, RefStr, Expr)>)
+  Path(SourceLocation, Path),
+  Nil(SourceLocation),
+  Bool(SourceLocation, bool),
+  Int(SourceLocation, usize),
+  Flt(SourceLocation, f64),
+  Str(SourceLocation, Vec<u8>),
+  CStr(SourceLocation, Vec<u8>),
+  Unit(SourceLocation),
+  Tuple(SourceLocation, Vec<(RefStr, Expr)>),
+  Arr(SourceLocation, Vec<Expr>),
+  Dot(SourceLocation, Box<Expr>, RefStr),
+  Call(SourceLocation, Box<Expr>, Vec<(RefStr, Expr)>),
+  Index(SourceLocation, Box<Expr>, Box<Expr>),
+  Adr(SourceLocation, Box<Expr>),
+  Ind(SourceLocation, Box<Expr>),
+  Un(SourceLocation, UnOp, Box<Expr>),
+  LNot(SourceLocation, Box<Expr>),
+  Cast(SourceLocation, Box<Expr>, Ty),
+  Bin(SourceLocation, BinOp, Box<Expr>, Box<Expr>),
+  LAnd(SourceLocation, Box<Expr>, Box<Expr>),
+  LOr(SourceLocation, Box<Expr>, Box<Expr>),
+  Block(SourceLocation, Vec<Expr>),
+  As(SourceLocation, Box<Expr>, Box<Expr>),
+  Rmw(SourceLocation, BinOp, Box<Expr>, Box<Expr>),
+  Continue(SourceLocation),
+  Break(SourceLocation, Box<Expr>),
+  Return(SourceLocation, Box<Expr>),
+  Let(SourceLocation, RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
+  If(SourceLocation, Box<Expr>, Box<Expr>, Box<Expr>),
+  While(SourceLocation, Box<Expr>, Box<Expr>),
+  Loop(SourceLocation, Box<Expr>),
+  Match(SourceLocation, Box<Expr>, Vec<(Option<RefStr>, RefStr, Expr)>)
+}
+
+impl Expr {
+  #[allow(dead_code)]
+  pub fn loc(&self) -> &SourceLocation {
+    match self {
+      Expr::Path(loc, _) => loc,
+      Expr::Nil(loc) => loc,
+      Expr::Bool(loc, _) => loc,
+      Expr::Int(loc, _) => loc,
+      Expr::Flt(loc, _) => loc,
+      Expr::Str(loc, _) => loc,
+      Expr::CStr(loc, _) => loc,
+      Expr::Unit(loc) => loc,
+      Expr::Tuple(loc, _) => loc,
+      Expr::Arr(loc, _) => loc,
+      Expr::Dot(loc, _, _) => loc,
+      Expr::Call(loc, _, _) => loc,
+      Expr::Index(loc, _, _) => loc,
+      Expr::Adr(loc, _) => loc,
+      Expr::Ind(loc, _) => loc,
+      Expr::Un(loc, _, _) => loc,
+      Expr::LNot(loc, _) => loc,
+      Expr::Cast(loc, _, _) => loc,
+      Expr::Bin(loc, _, _, _) => loc,
+      Expr::LAnd(loc, _, _) => loc,
+      Expr::LOr(loc, _, _) => loc,
+      Expr::Block(loc, _) => loc,
+      Expr::As(loc, _, _) => loc,
+      Expr::Rmw(loc, _, _, _) => loc,
+      Expr::Continue(loc) => loc,
+      Expr::Break(loc, _) => loc,
+      Expr::Return(loc, _) => loc,
+      Expr::Let(loc, _, _, _, _) => loc,
+      Expr::If(loc, _, _, _) => loc,
+      Expr::While(loc, _, _) => loc,
+      Expr::Loop(loc, _) => loc,
+      Expr::Match(loc, _, _) => loc,
+    }
+  }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DefId(pub usize);
 
-impl fmt::Debug for DefId {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.0.fmt(f) }
+impl std::fmt::Debug for DefId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
 }
 
 #[derive(Clone, Debug)]
@@ -129,12 +169,14 @@ pub enum Def {
 
 #[derive(Clone, Debug)]
 pub struct TypeDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub ty: Ty
 }
 
 #[derive(Clone, Debug)]
 pub struct StructDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
@@ -142,6 +184,7 @@ pub struct StructDef {
 
 #[derive(Clone, Debug)]
 pub struct UnionDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
@@ -149,6 +192,7 @@ pub struct UnionDef {
 
 #[derive(Clone, Debug)]
 pub struct EnumDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub variants: Vec<Variant>
@@ -156,6 +200,7 @@ pub struct EnumDef {
 
 #[derive(Clone, Debug)]
 pub struct VariantDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub parent_enum: DefId,
   pub variant_index: usize
@@ -163,12 +208,13 @@ pub struct VariantDef {
 
 #[derive(Clone, Debug)]
 pub enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, Ty)>),
+  Unit(SourceLocation, RefStr),
+  Struct(SourceLocation, RefStr, Vec<(RefStr, Ty)>),
 }
 
 #[derive(Clone, Debug)]
 pub struct ConstDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub ty: Ty,
   pub val: Expr
@@ -176,6 +222,7 @@ pub struct ConstDef {
 
 #[derive(Clone, Debug)]
 pub struct DataDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: Ty,
@@ -184,17 +231,17 @@ pub struct DataDef {
 
 #[derive(Clone, Debug)]
 pub struct FuncDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub params: Vec<ParamDef>,
+  pub params: Vec<(RefStr, IsMut, Ty)>,
   pub ret_ty: Ty,
   pub body: Expr
 }
 
-pub type ParamDef = (RefStr, IsMut, Ty);
-
 #[derive(Clone, Debug)]
 pub struct ExternDataDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: Ty
@@ -202,6 +249,7 @@ pub struct ExternDataDef {
 
 #[derive(Clone, Debug)]
 pub struct ExternFuncDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub params: Vec<(RefStr, Ty)>,
   pub varargs: bool,

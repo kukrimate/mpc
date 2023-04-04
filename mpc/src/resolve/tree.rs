@@ -7,82 +7,132 @@ use super::*;
 
 #[derive(Debug)]
 pub enum ResolvedTy {
-  Bool,
-  Uint8,
-  Int8,
-  Uint16,
-  Int16,
-  Uint32,
-  Int32,
-  Uint64,
-  Int64,
-  Uintn,
-  Intn,
-  Float,
-  Double,
-  TParam(usize),
-  AliasRef(DefId, Vec<ResolvedTy>),
-  StructRef(DefId, Vec<ResolvedTy>),
-  UnionRef(DefId, Vec<ResolvedTy>),
-  EnumRef(DefId, Vec<ResolvedTy>),
-  Ptr(IsMut, Box<ResolvedTy>),
-  Func(Vec<(RefStr, ResolvedTy)>, Box<ResolvedTy>),
-  Arr(Box<ResolvedExpr>, Box<ResolvedTy>),
-  Unit,
-  Tuple(Vec<(RefStr, ResolvedTy)>),
+  Bool(SourceLocation),
+  Uint8(SourceLocation),
+  Int8(SourceLocation),
+  Uint16(SourceLocation),
+  Int16(SourceLocation),
+  Uint32(SourceLocation),
+  Int32(SourceLocation),
+  Uint64(SourceLocation),
+  Int64(SourceLocation),
+  Uintn(SourceLocation),
+  Intn(SourceLocation),
+  Float(SourceLocation),
+  Double(SourceLocation),
+  TParam(SourceLocation, usize),
+  AliasRef(SourceLocation, DefId, Vec<ResolvedTy>),
+  StructRef(SourceLocation, DefId, Vec<ResolvedTy>),
+  UnionRef(SourceLocation, DefId, Vec<ResolvedTy>),
+  EnumRef(SourceLocation, DefId, Vec<ResolvedTy>),
+  Ptr(SourceLocation, IsMut, Box<ResolvedTy>),
+  Func(SourceLocation, Vec<(RefStr, ResolvedTy)>, Box<ResolvedTy>),
+  Arr(SourceLocation, Box<ResolvedExpr>, Box<ResolvedTy>),
+  Unit(SourceLocation),
+  Tuple(SourceLocation, Vec<(RefStr, ResolvedTy)>),
 }
 
 
 #[derive(Debug)]
 pub enum ResolvedExpr {
   // Literals
-  Nil,
-  Bool(bool),
-  Int(usize),
-  Flt(f64),
-  Str(Vec<u8>),
-  CStr(Vec<u8>),
-  Unit,
-  TupleLit(Vec<(RefStr, ResolvedExpr)>),
-  ArrayLit(Vec<ResolvedExpr>),
-  StructLit(DefId, Vec<(RefStr, ResolvedExpr)>),
-  UnionLit(DefId, RefStr, Box<ResolvedExpr>),
-  UnitVariantLit(DefId, usize),
-  StructVariantLit(DefId, usize, Vec<(RefStr, ResolvedExpr)>),
+  Nil(SourceLocation),
+  Bool(SourceLocation, bool),
+  Int(SourceLocation, usize),
+  Flt(SourceLocation, f64),
+  Str(SourceLocation, Vec<u8>),
+  CStr(SourceLocation, Vec<u8>),
+  Unit(SourceLocation),
+  TupleLit(SourceLocation, Vec<(RefStr, ResolvedExpr)>),
+  ArrayLit(SourceLocation, Vec<ResolvedExpr>),
+  StructLit(SourceLocation, DefId, Vec<(RefStr, ResolvedExpr)>),
+  UnionLit(SourceLocation, DefId, RefStr, Box<ResolvedExpr>),
+  UnitVariantLit(SourceLocation, DefId, usize),
+  StructVariantLit(SourceLocation, DefId, usize, Vec<(RefStr, ResolvedExpr)>),
 
   // References
-  FuncRef(DefId),
-  ExternFuncRef(DefId),
-  ConstRef(DefId),
-  DataRef(DefId),
-  ExternDataRef(DefId),
-  ParamRef(usize),
-  LetRef(usize),
-  BindingRef(usize),
+  FuncRef(SourceLocation, DefId),
+  ExternFuncRef(SourceLocation, DefId),
+  ConstRef(SourceLocation, DefId),
+  DataRef(SourceLocation, DefId),
+  ExternDataRef(SourceLocation, DefId),
+  ParamRef(SourceLocation, usize),
+  LetRef(SourceLocation, usize),
+  BindingRef(SourceLocation, usize),
 
   // Compound expressions
-  Dot(Box<ResolvedExpr>, RefStr),
-  Call(Box<ResolvedExpr>, Vec<(RefStr, ResolvedExpr)>),
-  Index(Box<ResolvedExpr>, Box<ResolvedExpr>),
-  Adr(Box<ResolvedExpr>),
-  Ind(Box<ResolvedExpr>),
-  Un(UnOp, Box<ResolvedExpr>),
-  LNot(Box<ResolvedExpr>),
-  Cast(Box<ResolvedExpr>, ResolvedTy),
-  Bin(BinOp, Box<ResolvedExpr>, Box<ResolvedExpr>),
-  LAnd(Box<ResolvedExpr>, Box<ResolvedExpr>),
-  LOr(Box<ResolvedExpr>, Box<ResolvedExpr>),
-  Block(Vec<ResolvedExpr>),
-  As(Box<ResolvedExpr>, Box<ResolvedExpr>),
-  Rmw(BinOp, Box<ResolvedExpr>, Box<ResolvedExpr>),
-  Continue,
-  Break(Box<ResolvedExpr>),
-  Return(Box<ResolvedExpr>),
-  Let(usize, Option<Box<ResolvedExpr>>),
-  If(Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
-  While(Box<ResolvedExpr>, Box<ResolvedExpr>),
-  Loop(Box<ResolvedExpr>),
-  Match(Box<ResolvedExpr>, Vec<(Option<usize>, RefStr, ResolvedExpr)>)
+  Dot(SourceLocation, Box<ResolvedExpr>, RefStr),
+  Call(SourceLocation, Box<ResolvedExpr>, Vec<(RefStr, ResolvedExpr)>),
+  Index(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  Adr(SourceLocation, Box<ResolvedExpr>),
+  Ind(SourceLocation, Box<ResolvedExpr>),
+  Un(SourceLocation, UnOp, Box<ResolvedExpr>),
+  LNot(SourceLocation, Box<ResolvedExpr>),
+  Cast(SourceLocation, Box<ResolvedExpr>, ResolvedTy),
+  Bin(SourceLocation, BinOp, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  LAnd(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  LOr(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  Block(SourceLocation, Vec<ResolvedExpr>),
+  As(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  Rmw(SourceLocation, BinOp, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  Continue(SourceLocation),
+  Break(SourceLocation, Box<ResolvedExpr>),
+  Return(SourceLocation, Box<ResolvedExpr>),
+  Let(SourceLocation, usize, Option<Box<ResolvedExpr>>),
+  If(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  While(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
+  Loop(SourceLocation, Box<ResolvedExpr>),
+  Match(SourceLocation, Box<ResolvedExpr>, Vec<(Option<usize>, RefStr, ResolvedExpr)>)
+}
+
+impl ResolvedExpr {
+  pub fn loc(&self) -> &SourceLocation {
+    match self {
+      ResolvedExpr::Nil(loc) => loc,
+      ResolvedExpr::Bool(loc, _) => loc,
+      ResolvedExpr::Int(loc, _) => loc,
+      ResolvedExpr::Flt(loc, _) => loc,
+      ResolvedExpr::Str(loc, _) => loc,
+      ResolvedExpr::CStr(loc, _) => loc,
+      ResolvedExpr::Unit(loc) => loc,
+      ResolvedExpr::Dot(loc, _, _) => loc,
+      ResolvedExpr::Call(loc, _, _) => loc,
+      ResolvedExpr::Index(loc, _, _) => loc,
+      ResolvedExpr::Adr(loc, _) => loc,
+      ResolvedExpr::Ind(loc, _) => loc,
+      ResolvedExpr::Un(loc, _, _) => loc,
+      ResolvedExpr::LNot(loc, _) => loc,
+      ResolvedExpr::Cast(loc, _, _) => loc,
+      ResolvedExpr::Bin(loc, _, _, _) => loc,
+      ResolvedExpr::LAnd(loc, _, _) => loc,
+      ResolvedExpr::LOr(loc, _, _) => loc,
+      ResolvedExpr::Block(loc, _) => loc,
+      ResolvedExpr::As(loc, _, _) => loc,
+      ResolvedExpr::Rmw(loc, _, _, _) => loc,
+      ResolvedExpr::Continue(loc) => loc,
+      ResolvedExpr::Break(loc, _) => loc,
+      ResolvedExpr::Return(loc, _) => loc,
+      ResolvedExpr::If(loc, _, _, _) => loc,
+      ResolvedExpr::While(loc, _, _) => loc,
+      ResolvedExpr::Loop(loc, _) => loc,
+      ResolvedExpr::Match(loc, _, _) => loc,
+      ResolvedExpr::TupleLit(loc, _) => loc,
+      ResolvedExpr::ArrayLit(loc, _) => loc,
+      ResolvedExpr::StructLit(loc, _, _) => loc,
+      ResolvedExpr::UnionLit(loc, _, _, _) => loc,
+      ResolvedExpr::UnitVariantLit(loc, _, _) => loc,
+      ResolvedExpr::StructVariantLit(loc, _, _, _) => loc,
+      ResolvedExpr::FuncRef(loc, _) => loc,
+      ResolvedExpr::ExternFuncRef(loc, _) => loc,
+      ResolvedExpr::ConstRef(loc, _) => loc,
+      ResolvedExpr::DataRef(loc, _) => loc,
+      ResolvedExpr::ExternDataRef(loc, _) => loc,
+      ResolvedExpr::ParamRef(loc, _) => loc,
+      ResolvedExpr::LetRef(loc, _) => loc,
+      ResolvedExpr::BindingRef(loc, _) => loc,
+      ResolvedExpr::Let(loc, _, _) => loc,
+    }
+  }
 }
 
 #[derive(Debug)]
@@ -138,12 +188,14 @@ impl ResolvedDef {
 
 #[derive(Debug)]
 pub struct ResolvedTypeDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub ty: ResolvedTy,
 }
 
 #[derive(Debug)]
 pub struct ResolvedStructDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
   pub params: Vec<(RefStr, ResolvedTy)>,
@@ -151,6 +203,7 @@ pub struct ResolvedStructDef {
 
 #[derive(Debug)]
 pub struct ResolvedUnionDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
   pub params: Vec<(RefStr, ResolvedTy)>,
@@ -158,6 +211,7 @@ pub struct ResolvedUnionDef {
 
 #[derive(Debug)]
 pub struct ResolvedEnumDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
   pub variants: Vec<ResolvedVariant>,
@@ -165,12 +219,13 @@ pub struct ResolvedEnumDef {
 
 #[derive(Debug)]
 pub enum ResolvedVariant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, ResolvedTy)>),
+  Unit(SourceLocation, RefStr),
+  Struct(SourceLocation, RefStr, Vec<(RefStr, ResolvedTy)>),
 }
 
 #[derive(Debug)]
 pub struct ResolvedConstDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub ty: ResolvedTy,
   pub val: ResolvedExpr,
@@ -178,6 +233,7 @@ pub struct ResolvedConstDef {
 
 #[derive(Debug)]
 pub struct ResolvedDataDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: ResolvedTy,
@@ -186,6 +242,7 @@ pub struct ResolvedDataDef {
 
 #[derive(Debug)]
 pub struct ResolvedFuncDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
   pub params: Vec<(RefStr, IsMut, ResolvedTy)>,
@@ -196,6 +253,7 @@ pub struct ResolvedFuncDef {
 
 #[derive(Debug)]
 pub struct ResolvedExternDataDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: ResolvedTy,
@@ -203,6 +261,7 @@ pub struct ResolvedExternDataDef {
 
 #[derive(Debug)]
 pub struct ResolvedExternFuncDef {
+  pub loc: SourceLocation,
   pub name: RefStr,
   pub params: Vec<(RefStr, ResolvedTy)>,
   pub varargs: bool,

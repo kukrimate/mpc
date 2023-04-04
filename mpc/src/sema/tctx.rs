@@ -27,7 +27,7 @@
 
 
 use std::fmt::Formatter;
-use crate::CompileError;
+use crate::{CompileError, SourceLocation};
 use super::*;
 
 pub struct TVarCtx {
@@ -72,7 +72,7 @@ impl TVarCtx {
   }
 
   /// Unify two type expressions
-  pub fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> Result<Ty, CompileError> {
+  pub fn unify(&mut self, loc: SourceLocation, ty1: &Ty, ty2: &Ty) -> Result<Ty, CompileError> {
     match (ty1, ty2) {
       (Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
       (Ty::Uint8, Ty::Uint8) => Ok(Ty::Uint8),
@@ -91,7 +91,7 @@ impl TVarCtx {
         let targs = targs1
           .iter()
           .zip(targs2.iter())
-          .map(|(ty1, ty2)| self.unify(ty1, ty2))
+          .map(|(ty1, ty2)| self.unify(loc.clone(), ty1, ty2))
           .monadic_collect()?;
         Ok(Ty::StructRef(*name, (*def_id, targs)))
       }
@@ -99,7 +99,7 @@ impl TVarCtx {
         let targs = targs1
           .iter()
           .zip(targs2.iter())
-          .map(|(ty1, ty2)| self.unify(ty1, ty2))
+          .map(|(ty1, ty2)| self.unify(loc.clone(),  ty1, ty2))
           .monadic_collect()?;
         Ok(Ty::UnionRef(*name, (*def_id, targs)))
       }
@@ -107,7 +107,7 @@ impl TVarCtx {
         let targs = targs1
           .iter()
           .zip(targs2.iter())
-          .map(|(ty1, ty2)| self.unify(ty1, ty2))
+          .map(|(ty1, ty2)| self.unify(loc.clone(), ty1, ty2))
           .monadic_collect()?;
         Ok(Ty::EnumRef(*name, (*def_id, targs)))
       }
@@ -115,19 +115,19 @@ impl TVarCtx {
         let mut par = Vec::new();
         for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
           if n1 != n2 {
-            Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
+            Err(CompileError::CannotUnifyTypes(loc.clone(), ty1.clone(), ty2.clone()))?
           }
-          par.push((*n1, self.unify(t1, t2)?));
+          par.push((*n1, self.unify(loc.clone(), t1, t2)?));
         }
-        Ok(Ty::Func(par, *va1,Box::new(self.unify(ret1, ret2)?)))
+        Ok(Ty::Func(par, *va1,Box::new(self.unify(loc, ret1, ret2)?)))
       }
       (Ty::Ptr(is_mut1, base1), Ty::Ptr(is_mut2, base2)) => {
         let is_mut = if *is_mut1 == IsMut::Yes
           && *is_mut2 == IsMut::Yes { IsMut::Yes } else { IsMut::No };
-        Ok(Ty::Ptr(is_mut, Box::new(self.unify(base1, base2)?)))
+        Ok(Ty::Ptr(is_mut, Box::new(self.unify(loc, base1, base2)?)))
       }
       (Ty::Arr(siz1, elem1), Ty::Arr(siz2, elem2)) if siz1 == siz2 => {
-        Ok(Ty::Arr(*siz1, Box::new(self.unify(elem1, elem2)?)))
+        Ok(Ty::Arr(*siz1, Box::new(self.unify(loc, elem1, elem2)?)))
       }
       (Ty::Unit, Ty::Unit) => {
         Ok(Ty::Unit)
@@ -136,9 +136,9 @@ impl TVarCtx {
         let mut par = Vec::new();
         for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
           if n1 != n2 {
-            Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
+            Err(CompileError::CannotUnifyTypes(loc.clone(), ty1.clone(), ty2.clone()))?
           }
-          par.push((*n1, self.unify(t1, t2)?));
+          par.push((*n1, self.unify(loc.clone(), t1, t2)?));
         }
         Ok(Ty::Tuple(par))
       }
@@ -150,7 +150,7 @@ impl TVarCtx {
         // Apply union-find if they are different
         if root1 != root2 {
           // Unify bounds
-          let unified = self.unify_bounds(&bound1, &bound2)?;
+          let unified = self.unify_bounds(loc, &bound1, &bound2)?;
           // Store unified bound in root1
           self.tvars[root1] = unified;
           // Point root2 to root1
@@ -163,24 +163,24 @@ impl TVarCtx {
         // Find root node
         let (root, prev) = self.root(*idx);
         // Unify bounds
-        let unified = self.unify_bounds(&prev, &Bound::Is(ty.clone()))?;
+        let unified = self.unify_bounds(loc, &prev, &Bound::Is(ty.clone()))?;
         // Store unified bound
         self.tvars[root] = unified;
         // Return reference to root
         Ok(Ty::Var(root))
       }
-      _ => Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
+      _ => Err(CompileError::CannotUnifyTypes(loc, ty1.clone(), ty2.clone()))?
     }
   }
 
   /// Bound a type expression
-  pub fn bound(&mut self, ty: &Ty, bound: &Bound) -> Result<Ty, CompileError> {
+  pub fn bound(&mut self, loc: SourceLocation, ty: &Ty, bound: &Bound) -> Result<Ty, CompileError> {
     match ty {
       Ty::Var(idx) => {
         // Find root node
         let (root, prev) = self.root(*idx);
         // Unify bounds
-        let unified = self.unify_bounds(&prev, bound)?;
+        let unified = self.unify_bounds(loc, &prev, bound)?;
         // Store unified bound
         self.tvars[root] = unified;
         // Return reference to root
@@ -188,17 +188,17 @@ impl TVarCtx {
       }
       _ => {
         // Check type against bound
-        self.unify_bounds(&Bound::Is(ty.clone()), bound)?;
+        self.unify_bounds(loc, &Bound::Is(ty.clone()), bound)?;
         // Return clone of type
         Ok(ty.clone())
       }
     }
   }
 
-  fn unify_bounds(&mut self, b1: &Bound, b2: &Bound) -> Result<Bound, CompileError> {
+  fn unify_bounds(&mut self, loc: SourceLocation, b1: &Bound, b2: &Bound) -> Result<Bound, CompileError> {
     match (b1, b2) {
       // Compare two literal types
-      (Bound::Is(ty1), Bound::Is(ty2)) => Ok(Bound::Is(self.unify(ty1, ty2)?)),
+      (Bound::Is(ty1), Bound::Is(ty2)) => Ok(Bound::Is(self.unify(loc, ty1, ty2)?)),
 
       // Check literal type for bound
       (Bound::Is(ty), bound) |
@@ -221,7 +221,7 @@ impl TVarCtx {
 
           => Ok(Bound::Is(ty.clone())),
 
-          _ => Err(CompileError::TypeDoesNotHaveBound(ty.clone(), bound.clone()))
+          _ => Err(CompileError::TypeDoesNotHaveBound(loc, ty.clone(), bound.clone()))
         }
       }
 
@@ -243,7 +243,7 @@ impl TVarCtx {
 
       => Ok(bound.clone()),
 
-      _ => Err(CompileError::CannotUnifyBounds(b1.clone(), b1.clone()))
+      _ => Err(CompileError::CannotUnifyBounds(loc, b1.clone(), b1.clone()))
     }
   }
 

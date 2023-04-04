@@ -56,7 +56,7 @@ impl<'a> ResolveCtx<'a> {
   fn new_func(repo: &'a Repository,
               parent_id: DefId,
               type_params: &Vec<RefStr>,
-              params: &Vec<parse::ParamDef>) -> Self {
+              params: &Vec<(RefStr, IsMut, parse::Ty)>) -> Self {
     let mut ctx = ResolveCtx::new(repo, parent_id);
     ctx.newscope();
     for (index, name) in type_params.iter().enumerate() {
@@ -84,7 +84,7 @@ impl<'a> ResolveCtx<'a> {
   }
 
   /// Resolve symbol by name
-  fn lookup(&self, path: &parse::Path) -> Result<Sym, CompileError> {
+  fn lookup(&self, loc: SourceLocation, path: &parse::Path) -> Result<Sym, CompileError> {
     // Single crumb paths can refer to locals
     if path.crumbs().len() == 1 {
       for scope in self.scopes.iter().rev() {
@@ -99,26 +99,26 @@ impl<'a> ResolveCtx<'a> {
       return Ok(Sym::Def(def_id));
     }
 
-    Err(CompileError::UnresolvedPath(path.clone()))
+    Err(CompileError::UnresolvedPath(loc, path.clone()))
   }
 
   fn resolve_ty(&mut self, ty: &parse::Ty) -> Result<ResolvedTy, CompileError> {
     use parse::Ty::*;
     Ok(match ty {
-      Bool => ResolvedTy::Bool,
-      Uint8 => ResolvedTy::Uint8,
-      Int8 => ResolvedTy::Int8,
-      Uint16 => ResolvedTy::Uint16,
-      Int16 => ResolvedTy::Int16,
-      Uint32 => ResolvedTy::Uint32,
-      Int32 => ResolvedTy::Int32,
-      Uint64 => ResolvedTy::Uint64,
-      Int64 => ResolvedTy::Int64,
-      Uintn => ResolvedTy::Uintn,
-      Intn => ResolvedTy::Intn,
-      Float => ResolvedTy::Float,
-      Double => ResolvedTy::Double,
-      Inst(path, type_args) => {
+      Bool(loc) => ResolvedTy::Bool(loc.clone()),
+      Uint8(loc) => ResolvedTy::Uint8(loc.clone()),
+      Int8(loc) => ResolvedTy::Int8(loc.clone()),
+      Uint16(loc) => ResolvedTy::Uint16(loc.clone()),
+      Int16(loc) => ResolvedTy::Int16(loc.clone()),
+      Uint32(loc) => ResolvedTy::Uint32(loc.clone()),
+      Int32(loc) => ResolvedTy::Int32(loc.clone()),
+      Uint64(loc) => ResolvedTy::Uint64(loc.clone()),
+      Int64(loc) => ResolvedTy::Int64(loc.clone()),
+      Uintn(loc) => ResolvedTy::Uintn(loc.clone()),
+      Intn(loc) => ResolvedTy::Intn(loc.clone()),
+      Float(loc) => ResolvedTy::Float(loc.clone()),
+      Double(loc) => ResolvedTy::Double(loc.clone()),
+      Inst(loc, path, type_args) => {
         // Resolve type arguments
         let type_args = type_args
           .iter()
@@ -126,41 +126,41 @@ impl<'a> ResolveCtx<'a> {
           .monadic_collect()?;
 
         // Resolve path
-        match self.lookup(path)? {
+        match self.lookup(loc.clone(), path)? {
           Sym::Def(def_id) => {
             match self.repo.parsed_by_id(def_id) {
-              parse::Def::Type(..) => ResolvedTy::AliasRef(def_id, type_args),
-              parse::Def::Struct(..) => ResolvedTy::StructRef(def_id, type_args),
-              parse::Def::Union(..) => ResolvedTy::UnionRef(def_id, type_args),
-              parse::Def::Enum(..) => ResolvedTy::EnumRef(def_id, type_args),
-              _ => Err(CompileError::InvalidTypeName(path.clone()))?
+              parse::Def::Type(..) => ResolvedTy::AliasRef(loc.clone(), def_id, type_args),
+              parse::Def::Struct(..) => ResolvedTy::StructRef(loc.clone(), def_id, type_args),
+              parse::Def::Union(..) => ResolvedTy::UnionRef(loc.clone(), def_id, type_args),
+              parse::Def::Enum(..) => ResolvedTy::EnumRef(loc.clone(), def_id, type_args),
+              _ => Err(CompileError::InvalidTypeName(loc.clone(), path.clone()))?
             }
           }
-          Sym::TParam(index) => ResolvedTy::TParam(index),
+          Sym::TParam(index) => ResolvedTy::TParam(loc.clone(), index),
           Sym::Local(..) |
           Sym::Binding(..) |
-          Sym::Param(..) => Err(CompileError::InvalidTypeName(path.clone()))?,
+          Sym::Param(..) => Err(CompileError::InvalidTypeName(loc.clone(), path.clone()))?,
         }
       }
-      Ptr(is_mut, base_ty) => {
-        ResolvedTy::Ptr(*is_mut, Box::new(self.resolve_ty(base_ty)?))
+      Ptr(loc, is_mut, base_ty) => {
+        ResolvedTy::Ptr(loc.clone(), *is_mut, Box::new(self.resolve_ty(base_ty)?))
       }
-      Func(params, ret_ty) => {
+      Func(loc, params, ret_ty) => {
         let params = self.resolve_params(params)?;
         let ret_ty = self.resolve_ty(ret_ty)?;
-        ResolvedTy::Func(params, Box::new(ret_ty))
+        ResolvedTy::Func(loc.clone(), params, Box::new(ret_ty))
       }
-      Arr(elem_cnt, elem_ty) => {
+      Arr(loc, elem_cnt, elem_ty) => {
         let elem_cnt = self.resolve_expr(elem_cnt)?;
         let elem_ty = self.resolve_ty(elem_ty)?;
-        ResolvedTy::Arr(Box::new(elem_cnt), Box::new(elem_ty))
+        ResolvedTy::Arr(loc.clone(), Box::new(elem_cnt), Box::new(elem_ty))
       }
-      Unit => {
-        ResolvedTy::Unit
+      Unit(loc) => {
+        ResolvedTy::Unit(loc.clone())
       }
-      Tuple(params) => {
+      Tuple(loc, params) => {
         let params = self.resolve_params(params)?;
-        ResolvedTy::Tuple(params)
+        ResolvedTy::Tuple(loc.clone(), params)
       }
     })
   }
@@ -176,71 +176,72 @@ impl<'a> ResolveCtx<'a> {
     use parse::Expr::*;
 
     Ok(match expr {
-      Path(path) => {
-        match self.lookup(path)? {
+      Path(loc, path) => {
+        match self.lookup(loc.clone(), path)? {
           Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
             parse::Def::Const(..) => {
-              ResolvedExpr::ConstRef(def_id)
+              ResolvedExpr::ConstRef(loc.clone(), def_id)
             }
             parse::Def::ExternData(..) => {
-              ResolvedExpr::ExternDataRef(def_id)
+              ResolvedExpr::ExternDataRef(loc.clone(), def_id)
             }
             parse::Def::Data(..) => {
-              ResolvedExpr::DataRef(def_id)
+              ResolvedExpr::DataRef(loc.clone(), def_id)
             }
             parse::Def::ExternFunc(..) => {
-              ResolvedExpr::ExternFuncRef(def_id)
+              ResolvedExpr::ExternFuncRef(loc.clone(), def_id)
             }
             parse::Def::Func(..) => {
-              ResolvedExpr::FuncRef(def_id)
+              ResolvedExpr::FuncRef(loc.clone(), def_id)
             }
             parse::Def::Variant(def) => {
-              ResolvedExpr::UnitVariantLit(def.parent_enum, def.variant_index)
+              ResolvedExpr::UnitVariantLit(loc.clone(), def.parent_enum, def.variant_index)
             }
-            _ => Err(CompileError::InvalidValueName(path.clone()))?
+            _ => Err(CompileError::InvalidValueName(loc.clone(), path.clone()))?
           }
-          Sym::Local(index) => ResolvedExpr::LetRef(index),
-          Sym::Param(index) => ResolvedExpr::ParamRef(index),
-          Sym::Binding(index) => ResolvedExpr::BindingRef(index),
-          Sym::TParam(..) => Err(CompileError::InvalidValueName(path.clone()))?
+          Sym::Local(index) => ResolvedExpr::LetRef(loc.clone(), index),
+          Sym::Param(index) => ResolvedExpr::ParamRef(loc.clone(), index),
+          Sym::Binding(index) => ResolvedExpr::BindingRef(loc.clone(), index),
+          Sym::TParam(..) => Err(CompileError::InvalidValueName(loc.clone(), path.clone()))?
         }
       }
-      Nil => ResolvedExpr::Nil,
-      Bool(val) => ResolvedExpr::Bool(*val),
-      Int(val) => ResolvedExpr::Int(*val),
-      Flt(val) => ResolvedExpr::Flt(*val),
-      Str(val) => ResolvedExpr::Str(val.clone()),
-      CStr(val) => ResolvedExpr::CStr(val.clone()),
-      Unit => ResolvedExpr::Unit,
-      Tuple(fields) => {
+      Nil(loc) => ResolvedExpr::Nil(loc.clone()),
+      Bool(loc, val) => ResolvedExpr::Bool(loc.clone(), *val),
+      Int(loc, val) => ResolvedExpr::Int(loc.clone(), *val),
+      Flt(loc, val) => ResolvedExpr::Flt(loc.clone(), *val),
+      Str(loc, val) => ResolvedExpr::Str(loc.clone(), val.clone()),
+      CStr(loc, val) => ResolvedExpr::CStr(loc.clone(), val.clone()),
+      Unit(loc) => ResolvedExpr::Unit(loc.clone()),
+      Tuple(loc, fields) => {
         let fields = fields
           .iter()
           .map(|(name, val)| Ok((*name, self.resolve_expr(val)?)))
           .monadic_collect()?;
-        ResolvedExpr::TupleLit(fields)
+        ResolvedExpr::TupleLit(loc.clone(), fields)
       }
-      Arr(elements) => {
+      Arr(loc, elements) => {
         let elements = elements
           .iter()
           .map(|x| self.resolve_expr(x))
           .monadic_collect()?;
-        ResolvedExpr::ArrayLit(elements)
+        ResolvedExpr::ArrayLit(loc.clone(), elements)
       }
-      Dot(base, field) => {
+      Dot(loc, base, field) => {
         let base = self.resolve_expr(base)?;
-        ResolvedExpr::Dot(Box::new(base), *field)
+        ResolvedExpr::Dot(loc.clone(), Box::new(base), *field)
       }
-      Index(base, index) => {
+      Index(loc, base, index) => {
         let base = self.resolve_expr(base)?;
         let index = self.resolve_expr(index)?;
-        ResolvedExpr::Index(Box::new(base),
+        ResolvedExpr::Index(loc.clone(),
+                            Box::new(base),
                             Box::new(index))
       }
-      Ind(ptr) => {
+      Ind(loc, ptr) => {
         let ptr = self.resolve_expr(ptr)?;
-        ResolvedExpr::Ind(Box::new(ptr))
+        ResolvedExpr::Ind(loc.clone(), Box::new(ptr))
       }
-      Call(called, args) => {
+      Call(loc, called, args) => {
         // Resolve arguments
         let args = args
           .iter()
@@ -249,24 +250,26 @@ impl<'a> ResolveCtx<'a> {
 
         loop {
           // Check for aggregate constructor
-          if let Path(path) = &**called {
-            match self.lookup(path)? {
+          if let Path(_, path) = &**called {
+            match self.lookup(loc.clone(), path)? {
               Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
                 parse::Def::Type(..) => { todo!() }
                 parse::Def::Struct(..) => {
-                  break ResolvedExpr::StructLit(def_id, args);
+                  break ResolvedExpr::StructLit(loc.clone(), def_id, args);
                 }
                 parse::Def::Union(..) if args.len() == 1 => {
                   let (name, val) = args.into_iter().nth(0).unwrap();
-                  break ResolvedExpr::UnionLit(def_id,
+                  break ResolvedExpr::UnionLit(loc.clone(),
+                                               def_id,
                                                name,
                                                Box::new(val));
                 }
                 parse::Def::Union(..) => {
-                  Err(CompileError::InvalidUnionLiteral)?
+                  Err(CompileError::InvalidUnionLiteral(loc.clone()))?
                 }
                 parse::Def::Variant(def) => {
-                  break ResolvedExpr::StructVariantLit(def.parent_enum,
+                  break ResolvedExpr::StructVariantLit(loc.clone(),
+                                                       def.parent_enum,
                                                        def.variant_index,
                                                        args);
                 }
@@ -278,43 +281,44 @@ impl<'a> ResolveCtx<'a> {
 
           // Regular call expression
           let called = self.resolve_expr(called)?;
-          break ResolvedExpr::Call(Box::new(called),
+          break ResolvedExpr::Call(loc.clone(),
+                                   Box::new(called),
                                    args);
         }
       }
-      Adr(arg) => {
+      Adr(loc, arg) => {
         let arg = self.resolve_expr(arg)?;
-        ResolvedExpr::Adr(Box::new(arg))
+        ResolvedExpr::Adr(loc.clone(), Box::new(arg))
       }
-      Un(op, arg) => {
+      Un(loc, op, arg) => {
         let arg = self.resolve_expr(arg)?;
-        ResolvedExpr::Un(*op, Box::new(arg))
+        ResolvedExpr::Un(loc.clone(), *op, Box::new(arg))
       }
-      LNot(arg) => {
+      LNot(loc, arg) => {
         let arg = self.resolve_expr(arg)?;
-        ResolvedExpr::LNot(Box::new(arg))
+        ResolvedExpr::LNot(loc.clone(), Box::new(arg))
       }
-      Cast(arg, ty) => {
+      Cast(loc, arg, ty) => {
         let arg = self.resolve_expr(arg)?;
         let ty = self.resolve_ty(ty)?;
-        ResolvedExpr::Cast(Box::new(arg), ty)
+        ResolvedExpr::Cast(loc.clone(), Box::new(arg), ty)
       }
-      Bin(op, lhs, rhs) => {
+      Bin(loc, op, lhs, rhs) => {
         let lhs = self.resolve_expr(lhs)?;
         let rhs = self.resolve_expr(rhs)?;
-        ResolvedExpr::Bin(*op, Box::new(lhs), Box::new(rhs))
+        ResolvedExpr::Bin(loc.clone(), *op, Box::new(lhs), Box::new(rhs))
       }
-      LAnd(lhs, rhs) => {
+      LAnd(loc, lhs, rhs) => {
         let lhs = self.resolve_expr(lhs)?;
         let rhs = self.resolve_expr(rhs)?;
-        ResolvedExpr::LAnd(Box::new(lhs), Box::new(rhs))
+        ResolvedExpr::LAnd(loc.clone(), Box::new(lhs), Box::new(rhs))
       }
-      LOr(lhs, rhs) => {
+      LOr(loc, lhs, rhs) => {
         let lhs = self.resolve_expr(lhs)?;
         let rhs = self.resolve_expr(rhs)?;
-        ResolvedExpr::LOr(Box::new(lhs), Box::new(rhs))
+        ResolvedExpr::LOr(loc.clone(), Box::new(lhs), Box::new(rhs))
       }
-      Block(body) => {
+      Block(loc, body) => {
         self.newscope();
         let body = body
           .iter()
@@ -322,28 +326,28 @@ impl<'a> ResolveCtx<'a> {
           .monadic_collect();
         self.popscope();
 
-        ResolvedExpr::Block(body?)
+        ResolvedExpr::Block(loc.clone(), body?)
       }
-      As(lhs, rhs) => {
+      As(loc, lhs, rhs) => {
         let lhs = self.resolve_expr(lhs)?;
         let rhs = self.resolve_expr(rhs)?;
-        ResolvedExpr::As(Box::new(lhs), Box::new(rhs))
+        ResolvedExpr::As(loc.clone(), Box::new(lhs), Box::new(rhs))
       }
-      Rmw(op, lhs, rhs) => {
+      Rmw(loc, op, lhs, rhs) => {
         let lhs = self.resolve_expr(lhs)?;
         let rhs = self.resolve_expr(rhs)?;
-        ResolvedExpr::Rmw(*op, Box::new(lhs), Box::new(rhs))
+        ResolvedExpr::Rmw(loc.clone(), *op, Box::new(lhs), Box::new(rhs))
       }
-      Continue => ResolvedExpr::Continue,
-      Break(arg) => {
+      Continue(loc) => ResolvedExpr::Continue(loc.clone()),
+      Break(loc, arg) => {
         let arg = self.resolve_expr(&*arg)?;
-        ResolvedExpr::Break(Box::new(arg))
+        ResolvedExpr::Break(loc.clone(), Box::new(arg))
       }
-      Return(arg) => {
+      Return(loc, arg) => {
         let arg = self.resolve_expr(&*arg)?;
-        ResolvedExpr::Return(Box::new(arg))
+        ResolvedExpr::Return(loc.clone(), Box::new(arg))
       }
-      Let(name, is_mut, ty, init) => {
+      Let(loc, name, is_mut, ty, init) => {
         let ty = if let Some(ty) = ty {
           Some(self.resolve_ty(ty)?)
         } else {
@@ -359,27 +363,29 @@ impl<'a> ResolveCtx<'a> {
         self.locals.push((*is_mut, ty));
         self.define(*name, Sym::Local(index));
 
-        ResolvedExpr::Let(index, init)
+        ResolvedExpr::Let(loc.clone(), index, init)
       }
-      If(cond, tbody, ebody) => {
+      If(loc, cond, tbody, ebody) => {
         let cond = self.resolve_expr(cond)?;
         let tbody = self.resolve_expr(tbody)?;
         let ebody = self.resolve_expr(ebody)?;
-        ResolvedExpr::If(Box::new(cond),
+        ResolvedExpr::If(loc.clone(),
+                         Box::new(cond),
                          Box::new(tbody),
                          Box::new(ebody))
       }
-      While(cond, body) => {
+      While(loc, cond, body) => {
         let cond = self.resolve_expr(cond)?;
         let body = self.resolve_expr(body)?;
-        ResolvedExpr::While(Box::new(cond),
+        ResolvedExpr::While(loc.clone(),
+                            Box::new(cond),
                             Box::new(body))
       }
-      Loop(body) => {
+      Loop(loc, body) => {
         let body = self.resolve_expr(body)?;
-        ResolvedExpr::Loop(Box::new(body))
+        ResolvedExpr::Loop(loc.clone(), Box::new(body))
       }
-      Match(cond, cases) => {
+      Match(loc, cond, cases) => {
         let cond = self.resolve_expr(cond)?;
         let mut resolved_cases = Vec::new();
 
@@ -396,7 +402,8 @@ impl<'a> ResolveCtx<'a> {
           resolved_cases.push((index, *variant, result?));
         }
 
-        ResolvedExpr::Match(Box::new(cond),
+        ResolvedExpr::Match(loc.clone(),
+                            Box::new(cond),
                             resolved_cases)
       }
     })
@@ -410,6 +417,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Type(ResolvedTypeDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     ty: ctx.resolve_ty(&def.ty)?,
                                   }),
@@ -419,6 +427,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Struct(ResolvedStructDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
                                     params: ctx.resolve_params(&def.params)?,
@@ -428,6 +437,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Union(ResolvedUnionDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
                                     params: ctx.resolve_params(&def.params)?,
@@ -437,13 +447,20 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Enum(ResolvedEnumDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
                                     variants: def.variants
                                       .iter()
                                       .map(|variant| Ok(match variant {
-                                        parse::Variant::Unit(name) => ResolvedVariant::Unit(*name),
-                                        parse::Variant::Struct(name, params) => ResolvedVariant::Struct(*name, ctx.resolve_params(params)?)
+                                        parse::Variant::Unit(loc, name) => {
+                                          ResolvedVariant::Unit(loc.clone(), *name)
+                                        },
+                                        parse::Variant::Struct(loc, name, params) => {
+                                          ResolvedVariant::Struct(loc.clone(),
+                                                                  *name,
+                                                                  ctx.resolve_params(params)?)
+                                        }
                                       }))
                                       .monadic_collect()?,
                                   }));
@@ -455,6 +472,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Const(ResolvedConstDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     ty: ctx.resolve_ty(&def.ty)?,
                                     val: ctx.resolve_expr(&def.val)?,
@@ -464,6 +482,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Data(ResolvedDataDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     is_mut: def.is_mut,
                                     ty: ctx.resolve_ty(&def.ty)?,
@@ -475,6 +494,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
                                            &def.type_params, &def.params);
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Func(ResolvedFuncDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
                                     params: def.params
@@ -491,6 +511,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::ExternData(ResolvedExternDataDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     is_mut: def.is_mut,
                                     ty: ctx.resolve_ty(&def.ty)?,
@@ -500,6 +521,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::ExternFunc(ResolvedExternFuncDef {
+                                    loc: def.loc.clone(),
                                     name: def.name,
                                     varargs: def.varargs,
                                     params: ctx.resolve_params(&def.params)?,
