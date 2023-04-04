@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
-use std::fmt::Formatter;
+use crate::CompileError;
 use super::*;
 
 #[derive(Debug)]
@@ -41,18 +41,7 @@ pub enum ConstVal {
   CStrLit { val: Vec<u8> },
 }
 
-#[derive(Debug)]
-struct InvalidConstantExpressionError;
-
-impl fmt::Display for InvalidConstantExpressionError {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    write!(f, "Invalid constant expression")
-  }
-}
-
-impl error::Error for InvalidConstantExpressionError {}
-
-fn eval_constptr(lvalue: &LValue) -> MRes<ConstPtr> {
+fn eval_constptr(lvalue: &LValue) -> Result<ConstPtr, CompileError> {
   use ConstPtr::*;
   match lvalue {
     LValue::DataRef { ty, id, .. } => {
@@ -92,12 +81,12 @@ fn eval_constptr(lvalue: &LValue) -> MRes<ConstPtr> {
       })
     }
     _ => {
-      Err(Box::new(InvalidConstantExpressionError))
+      Err(CompileError::InvalidConstantExpression)
     }
   }
 }
 
-pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
+pub(super) fn eval_constload(lvalue: &LValue) -> Result<ConstVal, CompileError> {
   match lvalue {
     LValue::ArrayLit { ty, elements, .. } => {
       let vals = elements
@@ -123,7 +112,7 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         ConstVal::StructLit { vals, .. } => {
           Ok(vals.into_iter().nth(*idx).unwrap())
         }
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     LValue::UnionDot { arg, .. } => {
@@ -132,7 +121,7 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         ConstVal::UnionLit { .. } => {
           todo!()
         }
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     LValue::Index { arg, idx, .. } => {
@@ -142,16 +131,16 @@ pub(super) fn eval_constload(lvalue: &LValue) -> MRes<ConstVal> {
         ConstVal::ArrLit { vals, .. } if index < vals.len() => {
           Ok(vals.into_iter().nth(index).unwrap())
         }
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     _ => {
-      Err(Box::new(InvalidConstantExpressionError))
+      Err(CompileError::InvalidConstantExpression)
     }
   }
 }
 
-pub(super) fn consteval(rvalue: &RValue) -> MRes<ConstVal> {
+pub(super) fn consteval(rvalue: &RValue) -> Result<ConstVal, CompileError> {
   use UnOp::*;
   use BinOp::*;
   use ConstVal::*;
@@ -188,13 +177,13 @@ pub(super) fn consteval(rvalue: &RValue) -> MRes<ConstVal> {
         (UMinus, IntLit { ty, val, .. }) => Ok(IntLit { ty, val: -val }),
         (UMinus, FltLit { ty, val, .. }) => Ok(FltLit { ty, val: -val }),
         (Not, BoolLit { val }) => Ok(BoolLit { val: !val }),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     RValue::LNot { arg, .. } => {
       match consteval(arg)? {
         BoolLit { val } => Ok(BoolLit { val: !val }),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     RValue::Bin { op, lhs, rhs, .. } => {
@@ -225,39 +214,39 @@ pub(super) fn consteval(rvalue: &RValue) -> MRes<ConstVal> {
         (Gt, FltLit { val: lhs, .. }, FltLit { val: rhs, .. }) => Ok(BoolLit { val: lhs > rhs }),
         (Le, FltLit { val: lhs, .. }, FltLit { val: rhs, .. }) => Ok(BoolLit { val: lhs <= rhs }),
         (Ge, FltLit { val: lhs, .. }, FltLit { val: rhs, .. }) => Ok(BoolLit { val: lhs >= rhs }),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     RValue::LAnd { lhs, rhs, .. } => {
       match consteval(lhs)? {
         BoolLit { val: true } => Ok(BoolLit { val: true }),
         BoolLit { val: false } => consteval(rhs),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     RValue::LOr { lhs, rhs, .. } => {
       match consteval(lhs)? {
         BoolLit { val: true } => consteval(rhs),
         BoolLit { val: false } => Ok(BoolLit { val: false }),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     RValue::If { cond, tbody, ebody, .. } => {
       match consteval(cond)? {
         BoolLit { val: true } => consteval(tbody),
         BoolLit { val: false } => consteval(ebody),
-        _ => Err(Box::new(InvalidConstantExpressionError))
+        _ => Err(CompileError::InvalidConstantExpression)
       }
     }
     _ => {
-      Err(Box::new(InvalidConstantExpressionError))
+      Err(CompileError::InvalidConstantExpression)
     }
   }
 }
 
-pub(super) fn consteval_index(rvalue: &RValue) -> MRes<usize> {
+pub(super) fn consteval_index(rvalue: &RValue) -> Result<usize, CompileError> {
   match consteval(rvalue)? {
     ConstVal::IntLit { val, .. } if val >= 0 => Ok(val as usize),
-    _ => Err(Box::new(InvalidConstantExpressionError)),
+    _ => Err(CompileError::InvalidConstantExpression),
   }
 }

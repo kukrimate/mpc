@@ -27,6 +27,7 @@
 
 
 use std::fmt::Formatter;
+use crate::CompileError;
 use super::*;
 
 pub struct TVarCtx {
@@ -71,7 +72,7 @@ impl TVarCtx {
   }
 
   /// Unify two type expressions
-  pub fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> MRes<Ty> {
+  pub fn unify(&mut self, ty1: &Ty, ty2: &Ty) -> Result<Ty, CompileError> {
     match (ty1, ty2) {
       (Ty::Bool, Ty::Bool) => Ok(Ty::Bool),
       (Ty::Uint8, Ty::Uint8) => Ok(Ty::Uint8),
@@ -114,7 +115,7 @@ impl TVarCtx {
         let mut par = Vec::new();
         for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
           if n1 != n2 {
-            Err(Box::new(CannotUnifyError::Types(ty1.clone(), ty2.clone())))?
+            Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
           }
           par.push((*n1, self.unify(t1, t2)?));
         }
@@ -135,7 +136,7 @@ impl TVarCtx {
         let mut par = Vec::new();
         for ((n1, t1), (n2, t2)) in par1.iter().zip(par2.iter()) {
           if n1 != n2 {
-            Err(Box::new(CannotUnifyError::Types(ty1.clone(), ty2.clone())))?
+            Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
           }
           par.push((*n1, self.unify(t1, t2)?));
         }
@@ -168,12 +169,12 @@ impl TVarCtx {
         // Return reference to root
         Ok(Ty::Var(root))
       }
-      _ => Err(Box::new(CannotUnifyError::Types(ty1.clone(), ty2.clone())))?
+      _ => Err(CompileError::CannotUnifyTypes(ty1.clone(), ty2.clone()))?
     }
   }
 
   /// Bound a type expression
-  pub fn bound(&mut self, ty: &Ty, bound: &Bound) -> MRes<Ty> {
+  pub fn bound(&mut self, ty: &Ty, bound: &Bound) -> Result<Ty, CompileError> {
     match ty {
       Ty::Var(idx) => {
         // Find root node
@@ -194,7 +195,7 @@ impl TVarCtx {
     }
   }
 
-  fn unify_bounds(&mut self, b1: &Bound, b2: &Bound) -> MRes<Bound> {
+  fn unify_bounds(&mut self, b1: &Bound, b2: &Bound) -> Result<Bound, CompileError> {
     match (b1, b2) {
       // Compare two literal types
       (Bound::Is(ty1), Bound::Is(ty2)) => Ok(Bound::Is(self.unify(ty1, ty2)?)),
@@ -220,7 +221,7 @@ impl TVarCtx {
 
           => Ok(Bound::Is(ty.clone())),
 
-          _ => Err(Box::new(CannotUnifyError::TypeDoesNotHaveBound(ty.clone(), bound.clone())))
+          _ => Err(CompileError::TypeDoesNotHaveBound(ty.clone(), bound.clone()))
         }
       }
 
@@ -242,7 +243,7 @@ impl TVarCtx {
 
       => Ok(bound.clone()),
 
-      _ => Err(Box::new(CannotUnifyError::Bounds(b1.clone(), b1.clone())))
+      _ => Err(CompileError::CannotUnifyBounds(b1.clone(), b1.clone()))
     }
   }
 
@@ -409,31 +410,3 @@ impl fmt::Debug for TVarCtx {
     })
   }
 }
-
-#[derive(Debug)]
-enum CannotUnifyError {
-  // Cannot unify two bounds
-  Bounds(Bound, Bound),
-  // Cannot unify two types
-  Types(Ty, Ty),
-  // Type does not have bound
-  TypeDoesNotHaveBound(Ty, Bound)
-}
-
-impl fmt::Display for CannotUnifyError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      CannotUnifyError::Bounds(b1, b2) => {
-        write!(f, "Incompatible type bounds {:?} and {:?}", b1, b2)
-      }
-      CannotUnifyError::Types(ty1, ty2) => {
-        write!(f, "Cannot unify types {:?} and {:?}", ty1, ty2)
-      }
-      CannotUnifyError::TypeDoesNotHaveBound(ty, bound) => {
-        write!(f, "Cannot bound type {:?} by {:?}", ty, bound)
-      }
-    }
-  }
-}
-
-impl error::Error for CannotUnifyError {}

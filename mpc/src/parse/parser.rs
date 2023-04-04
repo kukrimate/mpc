@@ -17,7 +17,7 @@ macro_rules! want {
       }
       _ => {
         let (loc, tok) = $parser.get();
-        Err(Error::UnexpectedToken(loc, tok))
+        Err(CompileError::UnexpectedToken(loc, tok))
       }
     }
   }
@@ -67,7 +67,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.fifo.pop().unwrap()
   }
 
-  pub fn parse(&mut self) -> Result<(), Error> {
+  pub fn parse(&mut self) -> Result<(), CompileError> {
     // TODO: some sort of error recovery
     loop {
       match self.get() {
@@ -87,14 +87,14 @@ impl<'repo, 'input> Parser<'repo, 'input> {
         }
         // Invalid item
         (location, token) => {
-          Err(Error::UnexpectedToken(location, token))?
+          Err(CompileError::UnexpectedToken(location, token))?
         }
       }
     }
     Ok(())
   }
 
-  fn parse_type(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_type(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse type definition
     let name = want!(self, Token::Ident(name), *name)?;
     want!(self, Token::Eq, ())?;
@@ -105,7 +105,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_struct(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_struct(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse struct definition
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
@@ -118,7 +118,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_union(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_union(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse union definition
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
@@ -131,7 +131,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_enum(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_enum(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse enum definition
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
@@ -159,7 +159,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(())
   }
 
-  fn parse_variants(&mut self) -> Result<Vec<Variant>, Error> {
+  fn parse_variants(&mut self) -> Result<Vec<Variant>, CompileError> {
     let mut variants = Vec::new();
 
     want!(self, Token::LParen, ())?;
@@ -179,7 +179,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(variants)
   }
 
-  fn parse_const(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_const(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse const definition
     let name = want!(self, Token::Ident(name), *name)?;
     want!(self, Token::Colon, ())?;
@@ -192,7 +192,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_data(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_data(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse data definition
     let is_mut = self.parse_is_mut();
     let name = want!(self, Token::Ident(name), *name)?;
@@ -206,7 +206,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_function(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_function(&mut self, location: Location) -> Result<(), CompileError> {
     // Parse function definition
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
@@ -220,7 +220,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     self.repo.sym(location, name, def_id)
   }
 
-  fn parse_import(&mut self, location: Location) -> Result<(), Error> {
+  fn parse_import(&mut self, location: Location) -> Result<(), CompileError> {
     // Imported module name
     let name = want!(self, Token::Ident(name), *name)?;
 
@@ -230,7 +230,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
       .and_then(|id| self.repo.sym(location, name, id))
   }
 
-  fn parse_extern(&mut self, _: Location) -> Result<(), Error> {
+  fn parse_extern(&mut self, _: Location) -> Result<(), CompileError> {
     want!(self, Token::LCurly, ())?;
     while !maybe_want!(self, Token::RCurly) {
       // Read extern definition
@@ -253,14 +253,14 @@ impl<'repo, 'input> Parser<'repo, 'input> {
           self.repo.sym(location, name, def_id)?;
         }
         (location, token) => {
-          Err(Error::UnexpectedToken(location, token))?
+          Err(CompileError::UnexpectedToken(location, token))?
         }
       }
     }
     Ok(())
   }
 
-  fn parse_ty(&mut self) -> Result<Ty, Error> {
+  fn parse_ty(&mut self) -> Result<Ty, CompileError> {
     match self.get() {
       (_, Token::TyBool) => Ok(Ty::Bool),
       (_, Token::TyUint8) => Ok(Ty::Uint8),
@@ -309,12 +309,12 @@ impl<'repo, 'input> Parser<'repo, 'input> {
         Ok(Ty::Inst(Path(crumbs), type_args))
       }
       (location, token) => {
-        Err(Error::UnexpectedToken(location, token))
+        Err(CompileError::UnexpectedToken(location, token))
       }
     }
   }
 
-  fn parse_type_params(&mut self) -> Result<Vec<RefStr>, Error> {
+  fn parse_type_params(&mut self) -> Result<Vec<RefStr>, CompileError> {
     let mut type_params = Vec::new();
     // No type params
     if !maybe_want!(self, Token::LAngle) { return Ok(type_params) }
@@ -330,7 +330,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_type_args(&mut self) -> Result<Vec<Ty>, Error> {
+  fn parse_type_args(&mut self) -> Result<Vec<Ty>, CompileError> {
     let mut type_args = Vec::new();
     // No type args
     if !maybe_want!(self, Token::LAngle) { return Ok(type_args) }
@@ -346,7 +346,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_params(&mut self) -> Result<Vec<(RefStr, Ty)>, Error> {
+  fn parse_params(&mut self) -> Result<Vec<(RefStr, Ty)>, CompileError> {
     let mut params = Vec::new();
 
     // Empty params
@@ -366,7 +366,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(params)
   }
 
-  fn parse_params_with_varargs(&mut self) -> Result<(Vec<(RefStr, Ty)>, bool), Error> {
+  fn parse_params_with_varargs(&mut self) -> Result<(Vec<(RefStr, Ty)>, bool), CompileError> {
     let mut params = Vec::new();
     let mut varargs = false;
 
@@ -396,7 +396,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok((params, varargs))
   }
 
-  fn parse_param_defs(&mut self) -> Result<Vec<(RefStr, IsMut, Ty)>, Error> {
+  fn parse_param_defs(&mut self) -> Result<Vec<(RefStr, IsMut, Ty)>, CompileError> {
     let mut param_defs = Vec::new();
 
     want!(self, Token::LParen, ())?;
@@ -419,7 +419,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(param_defs)
   }
 
-  fn parse_ret_ty(&mut self) -> Result<Ty, Error> {
+  fn parse_ret_ty(&mut self) -> Result<Ty, CompileError> {
     if maybe_want!(self, Token::Arrow) {
       self.parse_ty()
     } else {
@@ -435,7 +435,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_expr(&mut self) -> Result<Expr, CompileError> {
     let expr = self.parse_nonassign_expr()?;
     if maybe_want!(self, Token::Eq) {
       Ok(Expr::As(Box::new(expr),
@@ -485,7 +485,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_nonassign_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_nonassign_expr(&mut self) -> Result<Expr, CompileError> {
     if maybe_want!(self, Token::LCurly) {
       self.parse_block_expr()
     } else if maybe_want!(self, Token::KwIf) {
@@ -531,7 +531,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_block_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_block_expr(&mut self) -> Result<Expr, CompileError> {
     // Empty block
     if maybe_want!(self, Token::RCurly) { return Ok(Expr::Unit) }
     // Parse item list
@@ -550,7 +550,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(Expr::Block(exprs))
   }
 
-  fn parse_if_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_if_expr(&mut self) -> Result<Expr, CompileError> {
     let cond = self.parse_expr()?;
 
     // True body
@@ -572,27 +572,27 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(Expr::If(Box::new(cond), Box::new(tbody), Box::new(ebody)))
   }
 
-  fn parse_loop_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_loop_expr(&mut self) -> Result<Expr, CompileError> {
     want!(self, Token::LCurly, ())?;
     let body = self.parse_block_expr()?;
     Ok(Expr::Loop(Box::new(body)))
   }
 
-  fn parse_while_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_while_expr(&mut self) -> Result<Expr, CompileError> {
     let cond = self.parse_expr()?;
     want!(self, Token::LCurly, ())?;
     let body = self.parse_block_expr()?;
     Ok(Expr::While(Box::new(cond), Box::new(body)))
   }
 
-  fn parse_match_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_match_expr(&mut self) -> Result<Expr, CompileError> {
     let cond = self.parse_expr()?;
     want!(self, Token::LCurly, ())?;
     let case_list = self.parse_match_case_list()?;
     Ok(Expr::Match(Box::new(cond), case_list))
   }
 
-  fn parse_match_case_list(&mut self) -> Result<Vec<(Option<RefStr>, RefStr, Expr)>, Error> {
+  fn parse_match_case_list(&mut self) -> Result<Vec<(Option<RefStr>, RefStr, Expr)>, CompileError> {
     let mut case_list = Vec::new();
     // Empty list
     if maybe_want!(self, Token::RCurly) { return Ok(case_list) }
@@ -605,7 +605,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(case_list)
   }
 
-  fn parse_match_case(&mut self) -> Result<(Option<RefStr>, RefStr, Expr), Error> {
+  fn parse_match_case(&mut self) -> Result<(Option<RefStr>, RefStr, Expr), CompileError> {
     let binding = if let ((_, Token::Ident(name)), (_, Token::Colon)) = (self.look(0).clone(), self.look(1)) {
       self.get();
       self.get();
@@ -618,7 +618,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok((binding, variant, self.parse_expr()?))
   }
 
-  fn parse_lor_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_lor_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_land_expr()?;
     while maybe_want!(self, Token::LogicOr) {
       expr = Expr::LOr(Box::new(expr),
@@ -627,7 +627,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_land_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_land_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_cmp_expr()?;
     while maybe_want!(self, Token::LogicAnd) {
       expr = Expr::LAnd(Box::new(expr),
@@ -636,7 +636,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_cmp_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_cmp_expr(&mut self) -> Result<Expr, CompileError> {
     let expr = self.parse_or_expr()?;
     if maybe_want!(self, Token::EqEq) {
       Ok(Expr::Bin(BinOp::Eq,
@@ -667,7 +667,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_or_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_or_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_xor_expr()?;
     while maybe_want!(self, Token::Pipe) {
       expr = Expr::Bin(BinOp::Or,
@@ -677,7 +677,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_xor_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_xor_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_and_expr()?;
     while maybe_want!(self, Token::Caret) {
       expr = Expr::Bin(BinOp::Xor,
@@ -687,7 +687,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_and_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_and_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_shift_expr()?;
     while maybe_want!(self, Token::Amp) {
       expr = Expr::Bin(BinOp::And,
@@ -697,7 +697,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_shift_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_shift_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_add_expr()?;
     loop {
       if maybe_want!(self, Token::LShift) {
@@ -715,7 +715,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_add_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_add_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_mul_expr()?;
     loop {
       if maybe_want!(self, Token::Plus) {
@@ -733,7 +733,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_mul_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_mul_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_cast_expr()?;
     loop {
       if maybe_want!(self, Token::Star) {
@@ -755,7 +755,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_cast_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_cast_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_pre_expr()?;
     while maybe_want!(self, Token::KwAs) {
       want!(self, Token::LAngle, ())?;
@@ -765,7 +765,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(expr)
   }
 
-  fn parse_pre_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_pre_expr(&mut self) -> Result<Expr, CompileError> {
     if maybe_want!(self, Token::Amp) {
       Ok(Expr::Adr(Box::new(self.parse_pre_expr()?)))
     } else if maybe_want!(self, Token::Star) {
@@ -783,7 +783,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_post_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_post_expr(&mut self) -> Result<Expr, CompileError> {
     let mut expr = self.parse_prim_expr()?;
     loop {
       if maybe_want!(self, Token::Dot) {
@@ -802,7 +802,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     }
   }
 
-  fn parse_argument_list(&mut self) -> Result<Vec<(RefStr, Expr)>, Error> {
+  fn parse_argument_list(&mut self) -> Result<Vec<(RefStr, Expr)>, CompileError> {
     let mut arguments = Vec::new();
 
     // Empty list
@@ -825,7 +825,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(arguments)
   }
 
-  fn parse_prim_expr(&mut self) -> Result<Expr, Error> {
+  fn parse_prim_expr(&mut self) -> Result<Expr, CompileError> {
     match self.get() {
       (_, Token::LParen) => {
         if maybe_want!(self, Token::RParen) { // Unit
@@ -870,12 +870,12 @@ impl<'repo, 'input> Parser<'repo, 'input> {
         Ok(Expr::CStr(val))
       }
       (location, token) => {
-        Err(Error::UnexpectedToken(location, token))
+        Err(CompileError::UnexpectedToken(location, token))
       }
     }
   }
 
-  fn parse_tuple_field_list(&mut self) -> Result<Vec<(RefStr, Expr)>, Error> {
+  fn parse_tuple_field_list(&mut self) -> Result<Vec<(RefStr, Expr)>, CompileError> {
     let mut fields = Vec::new();
 
     // Empty list
@@ -894,7 +894,7 @@ impl<'repo, 'input> Parser<'repo, 'input> {
     Ok(fields)
   }
 
-  fn parse_array_element_list(&mut self) -> Result<Vec<Expr>, Error> {
+  fn parse_array_element_list(&mut self) -> Result<Vec<Expr>, CompileError> {
     let mut elements = Vec::new();
     // Empty list
     if maybe_want!(self, Token::RSquare) { return Ok(elements) }

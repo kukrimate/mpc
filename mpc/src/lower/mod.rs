@@ -10,9 +10,9 @@ use mpc_llvm as llvm;
 use std::collections::HashMap;
 
 pub fn compile(collection: &mut Collection,
-               output: &Path,
+               output: &std::path::Path,
                compile_to: CompileTo,
-               triple: Option<&str>) -> MRes<()> {
+               triple: Option<&str>) -> Result<(), CompileError> {
   let context = llvm::Context::new();
   let mut ctx = LowerCtx::new(&mut collection.tctx,
                               &collection.insts,
@@ -24,12 +24,14 @@ pub fn compile(collection: &mut Collection,
   if let Some(_) = option_env!("MPC_SPEW") {
     ctx.module.dump();
   }
-  match compile_to {
-    CompileTo::LLVMIr => ctx.target.write_llvm_ir(ctx.module, output)?,
-    CompileTo::Assembly => ctx.target.write_machine_code(ctx.module, true, output)?,
-    CompileTo::Object => ctx.target.write_machine_code(ctx.module, false, output)?,
+
+  let result = match compile_to {
+    CompileTo::LLVMIr => ctx.target.write_llvm_ir(ctx.module, output),
+    CompileTo::Assembly => ctx.target.write_machine_code(ctx.module, true, output),
+    CompileTo::Object => ctx.target.write_machine_code(ctx.module, false, output),
   };
-  Ok(())
+
+  result.map_err(|err| CompileError::IoError(output.to_owned(), err))
 }
 
 /// Semantics of a type

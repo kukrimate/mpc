@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
-use std::fmt::Debug;
+use crate::CompileError;
 use crate::parse::Repository;
 use crate::resolve::*;
 use super::*;
 
-pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> MRes<HashMap<(DefId, Vec<Ty>), Inst>> {
+pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> Result<HashMap<(DefId, Vec<Ty>), Inst>, CompileError> {
   let mut ctx = GlobalCtx {
     repo,
     tctx,
@@ -77,19 +77,19 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     self.insts.get(id).unwrap()
   }
 
-  fn inst_alias(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+  fn inst_alias(&mut self, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
     let def = self.resolved_def(id.0).unwrap_type();
 
     DefCtx::new(self, id.1).infer_ty(&def.ty)
   }
 
-  fn inst_struct(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+  fn inst_struct(&mut self, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
     let def = self.resolved_def(id.0).unwrap_struct();
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::StructRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
     if def.type_params != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      return Err(CompileError::IncorrectNumberOfTypeArguments)
     }
     let mut def_ctx = DefCtx::new(self, id.1.clone());
     let params = def_ctx.infer_params(&def.params)?;
@@ -98,13 +98,13 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(Ty::StructRef(def.name, id))
   }
 
-  fn inst_union(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+  fn inst_union(&mut self, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
     let def = self.resolved_def(id.0).unwrap_union();
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::UnionRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
     if def.type_params != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      return Err(CompileError::IncorrectNumberOfTypeArguments)
     }
     let mut def_ctx = DefCtx::new(self, id.1.clone());
     let params = def_ctx.infer_params(&def.params)?;
@@ -113,13 +113,13 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(Ty::UnionRef(def.name, id))
   }
 
-  fn inst_enum(&mut self, id: (DefId, Vec<Ty>)) -> MRes<Ty> {
+  fn inst_enum(&mut self, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
     let def = self.resolved_def(id.0).unwrap_enum();
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::EnumRef(def.name, id)); }
 
     self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
     if def.type_params != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))))
+      return Err(CompileError::IncorrectNumberOfTypeArguments)
     }
 
     let mut def_ctx = DefCtx::new(self, id.1.clone());
@@ -129,7 +129,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(Ty::EnumRef(def.name, id))
   }
 
-  fn inst_data(&mut self, id: DefId) -> MRes<LValue> {
+  fn inst_data(&mut self, id: DefId) -> Result<LValue, CompileError> {
     let def = self.resolved_def(id).unwrap_data();
 
     let mut def_ctx = DefCtx::new(self, Vec::new());
@@ -148,7 +148,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
-  fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>)) -> MRes<RValue> {
+  fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>)) -> Result<RValue, CompileError> {
     let def = self.resolved_def(id.0).unwrap_func();
 
     // Crate context
@@ -183,12 +183,12 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     })
   }
 
-  fn inst_func_body(&mut self, id: (DefId, Vec<Ty>)) -> MRes<()> {
+  fn inst_func_body(&mut self, id: (DefId, Vec<Ty>)) -> Result<(), CompileError> {
     let def = self.resolved_def(id.0).unwrap_func();
 
     // check type argument count
     if def.type_params != id.1.len() {
-      return Err(Box::new(TypeError(format!("Incorrect number of type parameters"))));
+      Err(CompileError::IncorrectNumberOfTypeArguments)?
     }
 
     // Setup context
@@ -237,7 +237,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(())
   }
 
-  fn inst_extern_data(&mut self, id: DefId) -> MRes<LValue> {
+  fn inst_extern_data(&mut self, id: DefId) -> Result<LValue, CompileError> {
     let def = self.resolved_def(id).unwrap_extern_data();
 
     let ty = DefCtx::new(self, Vec::new()).infer_ty(&def.ty)?;
@@ -246,7 +246,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
-  fn inst_extern_func(&mut self, id: DefId) -> MRes<RValue> {
+  fn inst_extern_func(&mut self, id: DefId) -> Result<RValue, CompileError> {
     let def = self.resolved_def(id).unwrap_extern_func();
 
     let mut def_ctx = DefCtx::new(self, Vec::new());
@@ -291,7 +291,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
 
   /// Infer the semantic form of a type expression
-  fn infer_ty(&mut self, ty: &ResolvedTy) -> MRes<Ty> {
+  fn infer_ty(&mut self, ty: &ResolvedTy) -> Result<Ty, CompileError> {
     use ResolvedTy::*;
     Ok(match ty {
       Bool => Ty::Bool,
@@ -347,7 +347,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 
-  fn infer_params(&mut self, params: &Vec<(RefStr, ResolvedTy)>) -> MRes<Vec<(RefStr, Ty)>> {
+  fn infer_params(&mut self, params: &Vec<(RefStr, ResolvedTy)>) -> Result<Vec<(RefStr, Ty)>, CompileError> {
     let mut result = vec![];
     for (name, ty) in params {
       result.push((*name, self.infer_ty(ty)?));
@@ -355,7 +355,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(result)
   }
 
-  fn infer_variants(&mut self, variants: &Vec<ResolvedVariant>) -> MRes<Vec<Variant>> {
+  fn infer_variants(&mut self, variants: &Vec<ResolvedVariant>) -> Result<Vec<Variant>, CompileError> {
     let mut result = vec![];
     for variant in variants.iter() {
       result.push(match variant {
@@ -370,7 +370,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(result)
   }
 
-  fn infer_type_args(&mut self, type_args:&Vec<ResolvedTy>) -> MRes<Vec<Ty>> {
+  fn infer_type_args(&mut self, type_args:&Vec<ResolvedTy>) -> Result<Vec<Ty>, CompileError> {
     type_args
       .iter()
       .map(|ty| self.infer_ty(ty))
@@ -378,7 +378,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   /// Infer the semantic form of an expression in an lvalue context
-  fn infer_lvalue(&mut self, expr: &ResolvedExpr) -> MRes<LValue> {
+  fn infer_lvalue(&mut self, expr: &ResolvedExpr) -> Result<LValue, CompileError> {
     use ResolvedExpr::*;
 
     Ok(match expr {
@@ -462,7 +462,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         } else if let Some((_, param_ty)) = lin_search(&params, name) {
           self.global.tctx.unify(val.ty(), param_ty)?;
         } else {
-          Err(Box::new(TypeError(format!("Unknown union field {}", name))))?
+          Err(CompileError::TypeHasNoField(ty.clone(), *name))?
         }
 
         LValue::UnionLit {
@@ -481,7 +481,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         let variants = variants.clone();
         match &variants[*index] {
           Variant::Unit(..) => (),
-          Variant::Struct(..) => Err(Box::new(TypeError(format!("Expected arguments for struct variant"))))?
+          Variant::Struct(..) => Err(CompileError::StructVariantExpectedArguments)?
         }
         LValue::UnitVariantLit { ty, is_mut: IsMut::No, index: *index }
       }
@@ -494,7 +494,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
         let variants = variants.clone();
         match &variants[*index] {
-          Variant::Unit(..) => Err(Box::new(TypeError(format!("Unexpected arguments for unit variant"))))?,
+          Variant::Unit(..) => Err(CompileError::UnitVariantUnexpectedArguments)?,
           Variant::Struct(_, params) => {
             LValue::StructVariantLit {
               ty,
@@ -518,12 +518,12 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       Ind(arg) => {
         self.infer_ind(arg)?
       }
-      expr => return Err(Box::new(TypeError(format!("Expected lvalue instead of {:?}", expr))))
+      _ => Err(CompileError::InvalidLvalueExpression)?
     })
   }
 
   /// Infer the type of a member access expression
-  fn infer_dot(&mut self, arg: &ResolvedExpr, name: RefStr) -> MRes<LValue> {
+  fn infer_dot(&mut self, arg: &ResolvedExpr, name: RefStr) -> Result<LValue, CompileError> {
     // Infer argument type
     let arg = self.infer_lvalue(arg)?;
 
@@ -531,7 +531,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       // Find parameter list
       let ty = self.global.tctx.canonical_ty(arg.ty());
 
-      let (is_stru, params) = match &ty {
+      let (is_struct, params) = match &ty {
         Ty::StructRef(_, id) => {
           let (_, params) = self.global.find_inst(id).unwrap_struct();
           (true, params)
@@ -550,7 +550,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         None => break 'error
       };
 
-      return if is_stru {
+      return if is_struct {
         Ok(LValue::StruDot {
           ty: param_ty.clone(),
           is_mut: arg.is_mut(),
@@ -566,11 +566,11 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       };
     }
 
-    Err(Box::new(TypeError(format!("Type {:?} has no field named {}", arg.ty(), name))))
+    Err(CompileError::TypeHasNoField(arg.ty().clone(), name))
   }
 
   /// Infer the type of an array index expression
-  fn infer_index(&mut self, arg: &ResolvedExpr, idx: &ResolvedExpr) -> MRes<LValue> {
+  fn infer_index(&mut self, arg: &ResolvedExpr, idx: &ResolvedExpr) -> Result<LValue, CompileError> {
     // Infer array type
     let arg = self.infer_lvalue(arg)?;
 
@@ -578,7 +578,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     let ty = self.global.tctx.canonical_ty(arg.ty());
     let elem_ty = match &ty {
       Ty::Arr(_, elem_ty) => &**elem_ty,
-      _ => return Err(Box::new(TypeError(format!("Cannot index type {:?}", arg.ty()))))
+      _ => return Err(CompileError::CannotIndexType(arg.ty().clone()))
     };
 
     // Check index type
@@ -594,7 +594,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   /// Infer the type of a pointer indirection expression
-  fn infer_ind(&mut self, arg: &ResolvedExpr) -> MRes<LValue> {
+  fn infer_ind(&mut self, arg: &ResolvedExpr) -> Result<LValue, CompileError> {
     // Infer pointer type
     let arg = self.infer_rvalue(arg)?;
 
@@ -602,8 +602,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     let ty = self.global.tctx.canonical_ty(arg.ty());
     let (is_mut, base_ty) = match &ty {
       Ty::Ptr(is_mut, base_ty) => (*is_mut, &**base_ty),
-      _ => return Err(Box::new(
-        TypeError(format!("Cannot dereference type {:?}", arg.ty()))))
+      _ => return Err(CompileError::CannotDereferenceType(arg.ty().clone()))
     };
 
     Ok(LValue::Ind {
@@ -614,7 +613,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   /// Infer the semantic form of an expression in an rvalue context
-  fn infer_rvalue(&mut self, expr: &ResolvedExpr) -> MRes<RValue> {
+  fn infer_rvalue(&mut self, expr: &ResolvedExpr) -> Result<RValue, CompileError> {
     use ResolvedExpr::*;
 
     Ok(match expr {
@@ -741,8 +740,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         // Make sure lhs is mutable
         match lhs.is_mut() {
           IsMut::Yes => (),
-          _ => return Err(Box::new(
-            TypeError(format!("Cannot assign to immutable location {:?}", lhs)))),
+          _ => return Err(CompileError::CannotAssignImmutable),
         };
 
         RValue::As { ty: Ty::Unit, lhs: Box::new(lhs), rhs: Box::new(rhs) }
@@ -756,8 +754,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         // Make sure lhs is mutable
         match lhs.is_mut() {
           IsMut::Yes => (),
-          _ => return Err(Box::new(
-            TypeError(format!("Cannot assign to immutable location {:?}", lhs)))),
+          _ => return Err(CompileError::CannotAssignImmutable),
         };
 
         RValue::Rmw { ty: Ty::Unit, op: *op, lhs: Box::new(lhs), rhs: Box::new(rhs) }
@@ -766,8 +763,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         // Can only have continue inside a loop
         match self.loop_ty.last() {
           Some(..) => (),
-          None => return Err(Box::new(
-            TypeError(format!("Continue outside loop")))),
+          None => return Err(CompileError::ContinueOutsideLoop),
         };
 
         RValue::Continue { ty: self.global.tctx.new_var(Bound::Any) }
@@ -778,8 +774,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         // Can only have break inside a loop
         let loop_ty = match self.loop_ty.last() {
           Some(loop_ty) => loop_ty.clone(),
-          None => return Err(Box::new(
-            TypeError(format!("Break outside loop")))),
+          None => return Err(CompileError::BreakOutsideLoop),
         };
 
         // Unify function return type with the returned value's type
@@ -793,7 +788,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         // Can only have return inside a function
         let ret_ty = match self.ret_ty.as_ref() {
           Some(ret_ty) => ret_ty.clone(),
-          None => return Err(Box::new(TypeError(format!("Return outside function")))),
+          None => return Err(CompileError::ReturnOutsideFunction),
         };
 
         // Unify function return type with the returned value's type
@@ -857,7 +852,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 
-  fn infer_call(&mut self, called: &ResolvedExpr, args: &Vec<(RefStr, ResolvedExpr)>) -> MRes<RValue> {
+  fn infer_call(&mut self, called: &ResolvedExpr, args: &Vec<(RefStr, ResolvedExpr)>) -> Result<RValue, CompileError> {
     // Infer function type
     let called_expr = self.infer_rvalue(called)?;
 
@@ -866,15 +861,15 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
     let (params, va, ret_ty) = match &called_ty {
       Ty::Func(params, va, ret_ty) => (params, *va, &**ret_ty),
-      _ => return Err(Box::new(TypeError(format!("Cannot call type {:?}", called_expr.ty()))))
+      _ => Err(CompileError::CannotCallType(called_expr.ty().clone()))?
     };
 
     // Validate argument count
     if args.len() < params.len() {
-      return Err(Box::new(TypeError(format!("Not enough arguments for {:?}", called_expr.ty()))));
+      Err(CompileError::IncorrectNumberOfArguments(called_expr.ty().clone()))?
     }
     if va == false && args.len() > params.len() {
-      return Err(Box::new(TypeError(format!("Too many arguments for {:?}", called_expr.ty()))));
+      Err(CompileError::IncorrectNumberOfArguments(called_expr.ty().clone()))?
     }
 
     let args = self.infer_args(params, args)?;
@@ -886,7 +881,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 
-  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, ResolvedExpr)]) -> MRes<Vec<RValue>> {
+  fn infer_args(&mut self, params: &[(RefStr, Ty)], args: &[(RefStr, ResolvedExpr)]) -> Result<Vec<RValue>, CompileError> {
     let mut nargs = vec![];
     let mut params_iter = params.iter();
 
@@ -896,7 +891,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       // If there is a corresponding parameter name and type, check it
       if let Some((param_name, param_ty)) = params_iter.next() {
         if *arg_name != RefStr::new("") && arg_name != param_name {
-          return Err(Box::new(TypeError(format!("Incorrect argument label {}", arg_name))));
+          return Err(CompileError::IncorrectArgumentLabel(*arg_name))
         }
         self.global.tctx.unify(arg_val.ty(), param_ty)?;
       }
@@ -907,7 +902,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(nargs)
   }
 
-  fn infer_un(&mut self, op: UnOp, arg: &Ty) -> MRes<Ty> {
+  fn infer_un(&mut self, op: UnOp, arg: &Ty) -> Result<Ty, CompileError> {
     // Check argument type
     match op {
       UnOp::UPlus | UnOp::UMinus => {
@@ -919,7 +914,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     }
   }
 
-  fn infer_bin(&mut self, op: BinOp, lhs: &Ty, rhs: &Ty) -> MRes<Ty> {
+  fn infer_bin(&mut self, op: BinOp, lhs: &Ty, rhs: &Ty) -> Result<Ty, CompileError> {
     // Check argument types and infer result type
     match op {
       // Both arguments must have matching numeric types
@@ -957,7 +952,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     }
   }
 
-  fn infer_match(&mut self, cond: &ResolvedExpr, cases: &[(Option<usize>, RefStr, ResolvedExpr)]) -> MRes<RValue> {
+  fn infer_match(&mut self, cond: &ResolvedExpr, cases: &[(Option<usize>, RefStr, ResolvedExpr)]) -> Result<RValue, CompileError> {
     // FIXME: struct variant binding semantics on rvalue enums are hacky at best :(
     //
     // Enums are **always** lvalues at the LLVM level (even when semantically they were rvalues).
@@ -986,7 +981,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         let (_, variants) = self.global.find_inst(&id).unwrap_enum();
         variants.clone()
       },
-      _ => Err(Box::new(TypeError(format!("Cannot match on non-enum type {:?}", cond.ty()))))?
+      _ => Err(CompileError::CannotMatchType(cond.ty().clone()))?
     };
 
     // Create lookup table for cases
@@ -995,7 +990,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     for (binding, variant, val) in cases.iter() {
       // Check for duplicate case
       if case_lookup.contains_key(variant) {
-        Err(Box::new(TypeError(format!("Duplicate match case"))))?
+        Err(CompileError::DuplicateMatchCase)?
       }
       // Insert case
       case_lookup.insert(*variant, (*binding, val));
@@ -1012,7 +1007,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
       let (binding, val) = case_lookup
         .remove(&name)
-        .ok_or_else(|| TypeError(format!("Missing match case for variant {}", name)))?;
+        .ok_or_else(|| CompileError::MissingMatchCase)?;
 
       if let Some(binding) = binding {
         assert_eq!(self.bindings.len(), binding);
@@ -1024,7 +1019,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
     // Make sure there are no cases left over
     if case_lookup.len() > 0 {
-      Err(Box::new(TypeError(format!("Match case for unknown variant"))))?
+      Err(CompileError::IncorrectMatchCase)?
     }
 
     // Unify case types
@@ -1045,15 +1040,3 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 }
-
-/// Errors
-#[derive(Debug)]
-struct TypeError(String);
-
-impl fmt::Display for TypeError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.0)
-  }
-}
-
-impl error::Error for TypeError {}

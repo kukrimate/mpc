@@ -3,233 +3,23 @@
  * SPDX-License-Identifier: GPL-2.0-only
  */
 
-use crate::util::{MRes, RefStr};
+use crate::*;
+use crate::util::RefStr;
 use crate::resolve::{ResolvedDef,resolve_defs};
 
 use std::collections::HashMap;
-use std::{error, fs, fmt, io};
+use std::{fs, fmt};
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
-use crate::parse::lexer::Token;
 
 mod lexer;
 mod parser;
+mod tree;
 
-/// Syntax tree produced by the parser
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum IsMut { Yes, No }
-
-impl fmt::Display for IsMut {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    match self {
-      IsMut::Yes => write!(f, "mut "),
-      IsMut::No => write!(f, ""),
-    }
-  }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Path(Vec<RefStr>);
-
-impl Path {
-  pub fn crumbs(&self) -> &Vec<RefStr> { &self.0 }
-}
-
-impl fmt::Display for Path {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    // There is always at least one crumb
-    self.crumbs()[0].borrow_rs().fmt(f)?;
-    // Then the rest can be prefixed with ::
-    for crumb in self.crumbs()[1..].iter() {
-      write!(f, "::")?;
-      crumb.borrow_rs().fmt(f)?;
-    }
-    Ok(())
-  }
-}
-
-#[derive(Clone, Debug)]
-pub enum Ty {
-  Bool,
-  Uint8,
-  Int8,
-  Uint16,
-  Int16,
-  Uint32,
-  Int32,
-  Uint64,
-  Int64,
-  Uintn,
-  Intn,
-  Float,
-  Double,
-  Inst(Path, Vec<Ty>),
-  Ptr(IsMut, Box<Ty>),
-  Func(Vec<(RefStr, Ty)>, Box<Ty>),
-  Arr(Box<Expr>, Box<Ty>),
-  Unit,
-  Tuple(Vec<(RefStr, Ty)>),
-}
-
-#[derive(Clone,Copy,Debug)]
-pub enum UnOp {
-  UPlus, UMinus, Not
-}
-
-#[derive(Clone,Copy,Debug)]
-pub enum BinOp {
-  Mul, Div, Mod, Add, Sub, Lsh, Rsh, And, Xor, Or, Eq, Ne, Lt, Gt, Le, Ge
-}
-
-#[derive(Clone, Debug)]
-pub enum Expr {
-  Path(Path),
-  Nil,
-  Bool(bool),
-  Int(usize),
-  Flt(f64),
-  Str(Vec<u8>),
-  CStr(Vec<u8>),
-  Unit,
-  Tuple(Vec<(RefStr, Expr)>),
-  Arr(Vec<Expr>),
-  Dot(Box<Expr>, RefStr),
-  Call(Box<Expr>, Vec<(RefStr, Expr)>),
-  Index(Box<Expr>, Box<Expr>),
-  Adr(Box<Expr>),
-  Ind(Box<Expr>),
-  Un(UnOp, Box<Expr>),
-  LNot(Box<Expr>),
-  Cast(Box<Expr>, Ty),
-  Bin(BinOp, Box<Expr>, Box<Expr>),
-  LAnd(Box<Expr>, Box<Expr>),
-  LOr(Box<Expr>, Box<Expr>),
-  Block(Vec<Expr>),
-  As(Box<Expr>, Box<Expr>),
-  Rmw(BinOp, Box<Expr>, Box<Expr>),
-  Continue,
-  Break(Box<Expr>),
-  Return(Box<Expr>),
-  Let(RefStr, IsMut, Option<Ty>, Option<Box<Expr>>),
-  If(Box<Expr>, Box<Expr>, Box<Expr>),
-  While(Box<Expr>, Box<Expr>),
-  Loop(Box<Expr>),
-  Match(Box<Expr>, Vec<(Option<RefStr>, RefStr, Expr)>)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DefId(usize);
-
-impl fmt::Debug for DefId {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.0.fmt(f) }
-}
-
-#[derive(Clone, Debug)]
-pub enum Def {
-  Type(TypeDef),
-  Struct(StructDef),
-  Union(UnionDef),
-  Enum(EnumDef),
-  Variant(VariantDef),
-  Const(ConstDef),
-  Data(DataDef),
-  Func(FuncDef),
-  ExternData(ExternDataDef),
-  ExternFunc(ExternFuncDef)
-}
-
-#[derive(Clone, Debug)]
-pub struct TypeDef {
-  pub name: RefStr,
-  pub ty: Ty
-}
-
-#[derive(Clone, Debug)]
-pub struct StructDef {
-  pub name: RefStr,
-  pub type_params: Vec<RefStr>,
-  pub params: Vec<(RefStr, Ty)>
-}
-
-#[derive(Clone, Debug)]
-pub struct UnionDef {
-  pub name: RefStr,
-  pub type_params: Vec<RefStr>,
-  pub params: Vec<(RefStr, Ty)>
-}
-
-#[derive(Clone, Debug)]
-pub struct EnumDef {
-  pub name: RefStr,
-  pub type_params: Vec<RefStr>,
-  pub variants: Vec<Variant>
-}
-
-#[derive(Clone, Debug)]
-pub struct VariantDef {
-  pub name: RefStr,
-  pub parent_enum: DefId,
-  pub variant_index: usize
-}
-
-#[derive(Clone, Debug)]
-pub enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, Ty)>),
-}
-
-#[derive(Clone, Debug)]
-pub struct ConstDef {
-  pub name: RefStr,
-  pub ty: Ty,
-  pub val: Expr
-}
-
-#[derive(Clone, Debug)]
-pub struct DataDef {
-  pub name: RefStr,
-  pub is_mut: IsMut,
-  pub ty: Ty,
-  pub init: Expr
-}
-
-#[derive(Clone, Debug)]
-pub struct FuncDef {
-  pub name: RefStr,
-  pub type_params: Vec<RefStr>,
-  pub params: Vec<ParamDef>,
-  pub ret_ty: Ty,
-  pub body: Expr
-}
-
-pub type ParamDef = (RefStr, IsMut, Ty);
-
-#[derive(Clone, Debug)]
-pub struct ExternDataDef {
-  pub name: RefStr,
-  pub is_mut: IsMut,
-  pub ty: Ty
-}
-
-#[derive(Clone, Debug)]
-pub struct ExternFuncDef {
-  pub name: RefStr,
-  pub params: Vec<(RefStr, Ty)>,
-  pub varargs: bool,
-  pub ret_ty: Ty
-}
-
-/// Parser API
-
-pub fn parse_bundle(path: &std::path::Path) -> MRes<Repository> {
-  let mut repo = Repository::new();
-  repo.parse_module(path)?;
-  resolve_defs(&mut repo)?;
-  Ok(repo)
-}
+pub use lexer::*;
+pub use tree::*;
 
 #[derive(Debug)]
 pub struct Repository {
@@ -293,7 +83,7 @@ impl Repository {
     id
   }
 
-  fn sym(&mut self, location: Location, name: RefStr, def: DefId) -> Result<(), Error> {
+  fn sym(&mut self, location: Location, name: RefStr, def: DefId) -> Result<(), CompileError> {
     let scope = self.syms
       .entry(*self.current_scope.last().unwrap())
       .or_insert_with(|| HashMap::new());
@@ -301,27 +91,27 @@ impl Repository {
     match scope.insert(name, def) {
       None => Ok(()),         // No redefinition
       Some(..) => {           // Redefinition errors
-        Err(Error::Redefinition(location, name))
+        Err(CompileError::Redefinition(location, name))
       }
     }
   }
 
-  fn find_module(&mut self, location: Location, name: RefStr) -> Result<PathBuf, Error> {
+  fn find_module(&mut self, location: Location, name: RefStr) -> Result<PathBuf, CompileError> {
     for dir in self.search_dirs.iter().rev() {
       let path = dir
         .join(std::path::Path::new(name.borrow_rs()))
         .with_extension("m");
       if path.is_file() { return Ok(path) }
     }
-    Err(Error::UnknownModule(location, name))
+    Err(CompileError::UnknownModule(location, name))
   }
 
-  fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, Error> {
+  fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, CompileError> {
     // Return previous copy if we've parsed a module with the same inode number
     // Otherwise we can go ahead and parse it
 
     let ino = fs::metadata(path)
-      .map_err(|error| Error::IoError(path.to_path_buf(), error))?
+      .map_err(|error| CompileError::IoError(path.to_path_buf(), error))?
       .ino();
     if let Some(def_id) = self.ino_to_module.get(&ino) {
       return Ok(*def_id)
@@ -333,7 +123,7 @@ impl Repository {
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
     self.current_scope.push(module_id);
 
-    let input = fs::read_to_string(path).map_err(|error| Error::IoError(path.to_path_buf(), error))?;
+    let input = fs::read_to_string(path).map_err(|error| CompileError::IoError(path.to_path_buf(), error))?;
 
     let lexer = lexer::Lexer::new(&input);
     let result = match parser::Parser::new(self, lexer).parse() {
@@ -349,47 +139,9 @@ impl Repository {
   }
 }
 
-#[derive(Clone,Copy,Default,Debug)]
-pub struct Location {
-  pub line: usize,
-  pub column: usize
+pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, CompileError> {
+  let mut repo = Repository::new();
+  repo.parse_module(path)?;
+  resolve_defs(&mut repo)?;
+  Ok(repo)
 }
-
-impl fmt::Display for Location {
-  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    write!(fmt, "line {} column {}", self.line, self.column)
-  }
-}
-
-#[derive(Debug)]
-pub enum Error {
-  IoError(PathBuf, io::Error),
-  UnknownToken(Location),
-  UnknownEscape(Location),
-  UnterminatedStr(Location),
-  UnterminatedChar(Location),
-  UnterminatedComment(Location),
-  InvalidChar(Location),
-  UnexpectedToken(Location, Token),
-  UnknownModule(Location, RefStr),
-  Redefinition(Location, RefStr)
-}
-
-impl fmt::Display for Error {
-  fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    match self {
-      Error::IoError(path, error) => write!(fmt, "{}: {}", path.to_string_lossy(), error),
-      Error::UnknownToken(location) => write!(fmt, "Error at {}: Unknown token", location),
-      Error::UnknownEscape(location) => write!(fmt, "Error at {}: Unknown escape sequence", location),
-      Error::UnterminatedStr(location) => write!(fmt, "Error at {}: Unterminated string literal", location),
-      Error::UnterminatedChar(location) => write!(fmt, "Error at {}: Unterminated character literal", location),
-      Error::UnterminatedComment(location) => write!(fmt, "Error at {}: Unterminated block comment", location),
-      Error::InvalidChar(location) => write!(fmt, "Error at {}: Invalid char literal", location),
-      Error::UnexpectedToken(location, token) => write!(fmt, "Error at {}: Unexpected token {:?}", location, token),
-      Error::UnknownModule(location, name) => write!(fmt, "Error at {}: Unknown module {}", location, name),
-      Error::Redefinition(location, name) => write!(fmt, "Error at {}: Re-definition of {}", location, name)
-    }
-  }
-}
-impl error::Error for Error {}
-

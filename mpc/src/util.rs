@@ -4,14 +4,9 @@
  */
 
 use std::collections::HashSet;
-use std::error::Error;
 use std::fmt;
 use std::mem::MaybeUninit;
 use std::sync::Mutex;
-
-/// Boxed, type-erased error wrapper
-
-pub type MRes<T> = Result<T, Box<dyn Error + Send + Sync>>;
 
 /// Globally de-duped strings
 
@@ -110,30 +105,14 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
 
 /// Monadic collection over an iterator of results
 
-pub trait MonadicCollect<O> {
-  fn monadic_collect(&mut self) -> MRes<Vec<O>>;
+pub trait MonadicCollect<O, E> {
+  fn monadic_collect(&mut self) -> Result<Vec<O>, E>;
 }
 
-impl<I, O> MonadicCollect<O> for I
-  where I: Iterator<Item=MRes<O>>
-{
-  fn monadic_collect(&mut self) -> MRes<Vec<O>> {
-    let mut vec = Vec::new();
-    for item in self {
-      vec.push(item?);
-    }
-    Ok(vec)
-  }
-}
-
-pub trait MonadicCollect2<O, E> {
-  fn monadic_collect2(&mut self) -> Result<Vec<O>, E>;
-}
-
-impl<I, O, E> MonadicCollect2<O, E> for I
+impl<I, O, E> MonadicCollect<O, E> for I
   where I: Iterator<Item=Result<O, E>>
 {
-  fn monadic_collect2(&mut self) -> Result<Vec<O>, E> {
+  fn monadic_collect(&mut self) -> Result<Vec<O>, E> {
     let mut vec = Vec::new();
     for item in self {
       vec.push(item?);

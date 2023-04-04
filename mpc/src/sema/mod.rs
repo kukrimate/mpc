@@ -13,7 +13,6 @@
 use crate::parse::{self, IsMut, UnOp, BinOp, DefId};
 use crate::util::*;
 use std::collections::HashMap;
-use std::error;
 use std::fmt;
 
 mod consteval;
@@ -23,8 +22,9 @@ mod tctx;
 pub use consteval::*;
 use infer::*;
 pub use tctx::*;
+use crate::CompileError;
 
-pub fn analyze(repo: &parse::Repository) -> MRes<Collection> {
+pub fn analyze(repo: &parse::Repository) -> Result<Collection, CompileError> {
   let mut tctx = TVarCtx::new();
   let insts = infer(repo, &mut tctx)?;
   if let Some(_) = option_env!("MPC_SPEW") {
