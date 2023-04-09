@@ -210,7 +210,7 @@ Argument: () = {
 
 PrimExpr: () = {
   "(" Expr ")",
-  Path,
+  Path ("::" "<" TypeNameList ">")?,
   "nil",
   "true",
   "false",

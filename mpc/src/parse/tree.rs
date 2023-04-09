@@ -72,7 +72,7 @@ pub enum BinOp {
 
 #[derive(Clone, Debug)]
 pub enum Expr {
-  Path(SourceLocation, Path),
+  Inst(SourceLocation, Path, Vec<Ty>),
   Nil(SourceLocation),
   Bool(SourceLocation, bool),
   Int(SourceLocation, usize),
@@ -110,7 +110,7 @@ impl Expr {
   #[allow(dead_code)]
   pub fn loc(&self) -> &SourceLocation {
     match self {
-      Expr::Path(loc, _) => loc,
+      Expr::Inst(loc, _, _) => loc,
       Expr::Nil(loc) => loc,
       Expr::Bool(loc, _) => loc,
       Expr::Int(loc, _) => loc,

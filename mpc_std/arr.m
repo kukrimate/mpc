@@ -7,6 +7,7 @@
 
 import mem
 
-function length<T>(array: *T) -> Uintn {
-  mem::size_of(array) / mem::size_of(&(*array)[0])
+function length<T, U>(array: *T) -> Uintn {
+  let _: *U = &(*array)[0];
+  mem::size_of::<T>() / mem::size_of::<U>()
 }

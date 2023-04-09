@@ -19,7 +19,7 @@ struct ResolveCtx<'a> {
   parent_id: DefId,
 
   // Local variables
-  locals: Vec<(IsMut, Option<ResolvedTy>)>,
+  locals: usize,
 
   // Match bindings
   bindings: usize,
@@ -34,12 +34,12 @@ enum Sym {
   Param(usize),
   Local(usize),
   Binding(usize),
-  TParam(usize),
+  TParam(usize)
 }
 
 impl<'a> ResolveCtx<'a> {
   fn new(repo: &'a Repository, parent_id: DefId) -> Self {
-    ResolveCtx { repo, parent_id, locals: Vec::new(), bindings: 0, scopes: Vec::new() }
+    ResolveCtx { repo, parent_id, locals: 0, bindings: 0, scopes: Vec::new() }
   }
 
   fn new_generic(repo: &'a Repository,
@@ -120,10 +120,7 @@ impl<'a> ResolveCtx<'a> {
       Double(loc) => ResolvedTy::Double(loc.clone()),
       Inst(loc, path, type_args) => {
         // Resolve type arguments
-        let type_args = type_args
-          .iter()
-          .map(|ty| self.resolve_ty(ty))
-          .monadic_collect()?;
+        let type_args = self.resolve_ty_args(type_args)?;
 
         // Resolve path
         match self.lookup(loc.clone(), path)? {
@@ -165,6 +162,13 @@ impl<'a> ResolveCtx<'a> {
     })
   }
 
+  fn resolve_ty_args(&mut self, ty_args: &Vec<parse::Ty>) -> Result<Vec<ResolvedTy>, CompileError> {
+    ty_args
+      .iter()
+      .map(|ty| self.resolve_ty(ty))
+      .monadic_collect()
+  }
+
   fn resolve_params(&mut self, params: &Vec<(RefStr, parse::Ty)>) -> Result<Vec<(RefStr, ResolvedTy)>, CompileError> {
     params
       .iter()
@@ -176,7 +180,7 @@ impl<'a> ResolveCtx<'a> {
     use parse::Expr::*;
 
     Ok(match expr {
-      Path(loc, path) => {
+      Inst(loc, path, type_args) => {
         match self.lookup(loc.clone(), path)? {
           Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
             parse::Def::Const(..) => {
@@ -192,10 +196,15 @@ impl<'a> ResolveCtx<'a> {
               ResolvedExpr::ExternFuncRef(loc.clone(), def_id)
             }
             parse::Def::Func(..) => {
-              ResolvedExpr::FuncRef(loc.clone(), def_id)
+              ResolvedExpr::FuncRef(loc.clone(),
+                                    def_id,
+                                    self.resolve_ty_args(type_args)?)
             }
             parse::Def::Variant(def) => {
-              ResolvedExpr::UnitVariantLit(loc.clone(), def.parent_enum, def.variant_index)
+              ResolvedExpr::UnitVariantLit(loc.clone(),
+                                           def.parent_enum,
+                                           self.resolve_ty_args(type_args)?,
+                                           def.variant_index)
             }
             _ => Err(CompileError::InvalidValueName(loc.clone(), path.clone()))?
           }
@@ -250,17 +259,21 @@ impl<'a> ResolveCtx<'a> {
 
         loop {
           // Check for aggregate constructor
-          if let Path(_, path) = &**called {
+          if let Inst(_, path, type_args) = &**called {
             match self.lookup(loc.clone(), path)? {
               Sym::Def(def_id) => match self.repo.parsed_by_id(def_id) {
                 parse::Def::Type(..) => { todo!() }
                 parse::Def::Struct(..) => {
-                  break ResolvedExpr::StructLit(loc.clone(), def_id, args);
+                  break ResolvedExpr::StructLit(loc.clone(),
+                                                def_id,
+                                                self.resolve_ty_args(type_args)?,
+                                                args);
                 }
                 parse::Def::Union(..) if args.len() == 1 => {
                   let (name, val) = args.into_iter().nth(0).unwrap();
                   break ResolvedExpr::UnionLit(loc.clone(),
                                                def_id,
+                                               self.resolve_ty_args(type_args)?,
                                                name,
                                                Box::new(val));
                 }
@@ -270,6 +283,7 @@ impl<'a> ResolveCtx<'a> {
                 parse::Def::Variant(def) => {
                   break ResolvedExpr::StructVariantLit(loc.clone(),
                                                        def.parent_enum,
+                                                       self.resolve_ty_args(type_args)?,
                                                        def.variant_index,
                                                        args);
                 }
@@ -359,11 +373,11 @@ impl<'a> ResolveCtx<'a> {
           None
         };
 
-        let index = self.locals.len();
-        self.locals.push((*is_mut, ty));
+        let index = self.locals;
         self.define(*name, Sym::Local(index));
+        self.locals += 1;
 
-        ResolvedExpr::Let(loc.clone(), index, init)
+        ResolvedExpr::Let(loc.clone(), index, is_mut.clone(), ty, init)
       }
       If(loc, cond, tbody, ebody) => {
         let cond = self.resolve_expr(cond)?;
@@ -503,8 +517,7 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
                                         Ok((*name, *is_mut, ctx.resolve_ty(ty)?)))
                                       .monadic_collect()?,
                                     ret_ty: ctx.resolve_ty(&def.ret_ty)?,
-                                    body: ctx.resolve_expr(&def.body)?,
-                                    locals: ctx.locals,
+                                    body: ctx.resolve_expr(&def.body)?
                                   }));
       }
       parse::Def::ExternData(def) => {

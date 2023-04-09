@@ -19,7 +19,7 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> Result<HashMap<(De
   for (id, def) in repo.resolved_defs.iter() {
     match def {
       ResolvedDef::Func(def) if def.type_params == 0 => {
-        ctx.inst_func_sig((*id, Vec::new()))?;
+        ctx.inst_func_sig(def.loc.clone(), (*id, Vec::new()))?;
       }
       _ => ()
     }
@@ -42,7 +42,8 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> Result<HashMap<(De
     if queue.len() == 0 { break; }
 
     for (def_id, type_args) in queue.into_iter() {
-      ctx.inst_func_body((def_id, type_args))?;
+      let def = ctx.resolved_def(def_id).unwrap_func();
+      ctx.inst_func_body(def.loc.clone(), (def_id, type_args))?;
     }
   }
 
@@ -148,8 +149,13 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
-  fn inst_func_sig(&mut self, id: (DefId, Vec<Ty>)) -> Result<RValue, CompileError> {
+  fn inst_func_sig(&mut self, loc: SourceLocation, id: (DefId, Vec<Ty>)) -> Result<RValue, CompileError> {
     let def = self.resolved_def(id.0).unwrap_func();
+
+    // Check type argument count
+    if def.type_params != id.1.len() {
+      return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
+    }
 
     // Crate context
     let mut def_ctx = DefCtx::new(self, id.1.clone());
@@ -183,12 +189,13 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     })
   }
 
-  fn inst_func_body(&mut self, id: (DefId, Vec<Ty>)) -> Result<(), CompileError> {
+  fn inst_func_body(&mut self, loc: SourceLocation, id: (DefId, Vec<Ty>)) -> Result<(), CompileError> {
     let def = self.resolved_def(id.0).unwrap_func();
 
-    // check type argument count
-    // NOTE: this should be always correct as these cannot be user supplied
-    assert_eq!(def.type_params, id.1.len());
+    // Check type argument count
+    if def.type_params != id.1.len() {
+      return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
+    }
 
     // Setup context
     let mut def_ctx = DefCtx::new(self, id.1.clone());
@@ -202,16 +209,6 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
       let ty = def_ctx.infer_ty(ty)?;
       param_tys.push((*name, ty.clone()));
       def_ctx.params.push((*is_mut, ty));
-    }
-
-    // Local variables
-    for (is_mut, ty) in def.locals.iter() {
-      let ty = if let Some(ty) = ty {
-        def_ctx.infer_ty(ty)?
-      } else {
-        def_ctx.global.tctx.new_var(Bound::Any)
-      };
-      def_ctx.locals.push((*is_mut, ty));
     }
 
     // Return type
@@ -369,7 +366,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(result)
   }
 
-  fn infer_type_args(&mut self, type_args:&Vec<ResolvedTy>) -> Result<Vec<Ty>, CompileError> {
+  fn infer_type_args(&mut self, type_args: &Vec<ResolvedTy>) -> Result<Vec<Ty>, CompileError> {
     type_args
       .iter()
       .map(|ty| self.infer_ty(ty))
@@ -430,11 +427,15 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           elements
         }
       }
-      StructLit(loc, def_id, fields) => {
+      StructLit(loc, def_id, type_args, fields) => {
         let def = self.global.resolved_def(*def_id).unwrap_struct();
-        let type_args: Vec<Ty> = (0..def.type_params)
-          .map(|_| self.global.tctx.new_var(Bound::Any))
-          .collect();
+        let type_args: Vec<Ty> = if type_args.len() > 0 {
+          self.infer_type_args(type_args)?
+        } else {
+          (0..def.type_params)
+            .map(|_| self.global.tctx.new_var(Bound::Any))
+            .collect()
+        };
         let ty = self.global.inst_struct(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, params) = self.global.find_inst(&(*def_id, type_args)).unwrap_struct();
         let params = params.clone();
@@ -444,14 +445,18 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           fields: self.infer_args(loc.clone(), &params, fields)?
         }
       }
-      UnionLit(loc, def_id, name, val) => {
+      UnionLit(loc, def_id, type_args, name, val) => {
         let val = self.infer_rvalue(val)?;
 
         // Instantiate union type
         let def = self.global.resolved_def(*def_id).unwrap_union();
-        let type_args: Vec<Ty> = (0..def.type_params)
-          .map(|_| self.global.tctx.new_var(Bound::Any))
-          .collect();
+        let type_args: Vec<Ty> = if type_args.len() > 0 {
+          self.infer_type_args(type_args)?
+        } else {
+          (0..def.type_params)
+            .map(|_| self.global.tctx.new_var(Bound::Any))
+            .collect()
+        };
         let ty = self.global.inst_union(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, params) = self.global.find_inst(&(*def_id, type_args)).unwrap_union();
         let params = params.clone();
@@ -470,11 +475,15 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           field: val
         }
       }
-      UnitVariantLit(loc, def_id, index) => {
+      UnitVariantLit(loc, def_id, type_args, index) => {
         let def = self.global.resolved_def(*def_id).unwrap_enum();
-        let type_args: Vec<Ty> = (0..def.type_params)
-          .map(|_| self.global.tctx.new_var(Bound::Any))
-          .collect();
+        let type_args: Vec<Ty> = if type_args.len() > 0 {
+          self.infer_type_args(type_args)?
+        } else {
+          (0..def.type_params)
+            .map(|_| self.global.tctx.new_var(Bound::Any))
+            .collect()
+        };
         let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
         let variants = variants.clone();
@@ -484,11 +493,15 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         }
         LValue::UnitVariantLit { ty, is_mut: IsMut::No, index: *index }
       }
-      StructVariantLit(loc, def_id, index, fields) => {
+      StructVariantLit(loc, def_id, type_args, index, fields) => {
         let def = self.global.resolved_def(*def_id).unwrap_enum();
-        let type_args: Vec<Ty> = (0..def.type_params)
-          .map(|_| self.global.tctx.new_var(Bound::Any))
-          .collect();
+        let type_args: Vec<Ty> = if type_args.len() > 0 {
+          self.infer_type_args(type_args)?
+        } else {
+          (0..def.type_params)
+            .map(|_| self.global.tctx.new_var(Bound::Any))
+            .collect()
+        };
         let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
         let variants = variants.clone();
@@ -620,12 +633,16 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         let def = self.global.resolved_def(*def_id).unwrap_const();
         self.infer_rvalue(&def.val)?
       }
-      FuncRef(_loc, def_id) => {
+      FuncRef(loc, def_id, type_args) => {
         let def = self.global.resolved_def(*def_id).unwrap_func();
-        let type_args: Vec<Ty> = (0..def.type_params)
-          .map(|_| self.global.tctx.new_var(Bound::Any))
-          .collect();
-        self.global.inst_func_sig((*def_id, type_args))?
+        let type_args: Vec<Ty> = if type_args.len() > 0 {
+          self.infer_type_args(type_args)?
+        } else {
+          (0..def.type_params)
+            .map(|_| self.global.tctx.new_var(Bound::Any))
+            .collect()
+        };
+        self.global.inst_func_sig(loc.clone(), (*def_id, type_args))?
       },
       ExternFuncRef(_loc, def_id) => self.global.inst_extern_func(*def_id)?,
       DataRef(..) |
@@ -795,14 +812,23 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
         RValue::Return { ty: self.global.tctx.new_var(Bound::Any), arg: Box::new(arg) }
       }
-      Let(loc, index, init) => {
+      Let(loc, index, is_mut, ty, init) => {
+        let ty = if let Some(ty) = ty {
+          self.infer_ty(ty)?
+        } else {
+          self.global.tctx.new_var(Bound::Any)
+        };
+
         let init = if let Some(init) = init {
           let init = self.infer_rvalue(init)?;
-          self.global.tctx.unify(loc.clone(), &self.locals[*index].1, init.ty())?;
+          self.global.tctx.unify(loc.clone(), &ty, init.ty())?;
           Some(Box::new(init))
         } else {
           None
         };
+
+        assert_eq!(self.locals.len(), *index);
+        self.locals.push((*is_mut, ty));
 
         RValue::Let { ty: Ty::Unit, index: *index, init }
       }

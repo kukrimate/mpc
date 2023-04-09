@@ -907,10 +907,15 @@ impl<'repo> Parser<'repo> {
       }
       (loc, Token::Ident(s)) => {
         let mut crumbs = vec![s];
+        let mut type_args = Vec::new();
         while maybe_want!(self, Token::DColon) {
+          if let (_, Token::LAngle) = self.look(0) {
+            type_args = self.parse_type_args()?;
+            break;
+          }
           crumbs.push(want!(self, Token::Ident(name), *name)?);
         }
-        Ok(Expr::Path(loc, Path(crumbs)))
+        Ok(Expr::Inst(loc, Path(crumbs), type_args))
       }
       (loc, Token::KwNil) => {
         Ok(Expr::Nil(loc))
