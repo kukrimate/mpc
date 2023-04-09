@@ -1,0 +1,316 @@
+//
+// Copyright (c) 2022-2023, Mate Kukri
+// SPDX-License-Identifier: GPL-2.0-only
+//
+
+grammar;
+
+Path: () = {
+  Identifier,
+  Path "::" Identifier
+};
+
+// Types
+
+TypeName: () = {
+  "Bool",
+  "Uint8",
+  "Int8",
+  "Uint16",
+  "Int16",
+  "Uint32",
+  "Int32",
+  "Uint64",
+  "Int64",
+  "Uintn",
+  "Intn",
+  "Float",
+  "Double",
+  Path ("<" TypeNameList ">")?,
+  "*" "mut"? TypeName,
+  "Function" "(" ParameterList? ")" ("->" TypeName)?,
+  "[" Expr "]" TypeName,
+  "(" ParameterList? ")"
+};
+
+TypeNameList: () = {
+  TypeName,
+  TypeNameList "," TypeName
+};
+
+ParameterList: () = {
+  Parameter,
+  ParameterList "," Parameter
+};
+
+Parameter: () = Identifier ":" TypeName;
+
+// Expressions
+
+Expr: () = {
+  BlockExpr,
+  IfExpr,
+  LoopExpr,
+  MatchExpr,
+  LOrExpr
+};
+
+BlockExpr: () = {
+  "{" "}",
+  "{" <OpenItemList> "}",
+  "{" <ClosedItemList> "}",
+};
+
+OpenItemList: () = {
+  OpenItem,
+  ClosedItemList OpenItem
+};
+
+ClosedItemList: () = {
+  ClosedItem,
+  OpenItemList ";",
+  ClosedItemList ClosedItem
+};
+
+OpenItem: () = {
+  "let" "mut"? Identifier (":" TypeName)? "=" Expr,
+  "let" "mut"? Identifier (":" TypeName)? "=" "!",
+  "continue",
+  "break" Expr?,
+  "return" Expr?,
+
+  Expr "=" Expr,
+  Expr "*=" Expr,
+  Expr "/=" Expr,
+  Expr "%=" Expr,
+  Expr "+=" Expr,
+  Expr "-=" Expr,
+  Expr "<<=" Expr,
+  Expr ">>=" Expr,
+  Expr "&=" Expr,
+  Expr "^=" Expr,
+  Expr "|=" Expr,
+
+  LOrExpr
+};
+
+ClosedItem: () = {
+  BlockExpr,
+  IfExpr,
+  LoopExpr,
+  MatchExpr,
+  ";"
+};
+
+IfExpr: () = {
+  "if" Expr BlockExpr,
+  "if" Expr BlockExpr "else" BlockExpr,
+  "if" Expr BlockExpr "else" IfExpr,
+};
+
+LoopExpr: () = {
+  "loop" BlockExpr,
+  "while" Expr BlockExpr
+};
+
+MatchExpr: () = "match" Expr "{" MatchCaseList? "}";
+
+MatchCaseList: () = {
+  MatchCase,
+  MatchCaseList "," MatchCase
+};
+
+MatchCase = (Identifier ":")? Identifier "=>" Expr;
+
+LOrExpr: () = {
+  LAndExpr,
+  LOrExpr "||" LAndExpr
+};
+
+LAndExpr: () = {
+  CmpExpr,
+  LAndExpr "&&" CmpExpr
+};
+
+CmpExpr: () = {
+  OrExpr,
+  OrExpr "==" OrExpr,
+  OrExpr "!=" OrExpr,
+  OrExpr "<" OrExpr,
+  OrExpr ">" OrExpr,
+  OrExpr "<=" OrExpr,
+  OrExpr ">=" OrExpr
+};
+
+OrExpr: () = {
+  XorExpr,
+  OrExpr "|" XorExpr
+};
+
+XorExpr: () = {
+  AndExpr,
+  XorExpr "^" AndExpr
+};
+
+AndExpr: () = {
+  ShiftExpr,
+  AndExpr "&" ShiftExpr
+};
+
+ShiftExpr: () = {
+  AddExpr,
+  ShiftExpr "<<" AddExpr,
+  ShiftExpr ">>" AddExpr
+};
+
+AddExpr: () = {
+  MulExpr,
+  AddExpr "+" MulExpr,
+  AddExpr "-" MulExpr
+};
+
+MulExpr: () = {
+  CastExpr,
+  MulExpr "*" CastExpr,
+  MulExpr "/" CastExpr,
+  MulExpr "%" CastExpr
+};
+
+CastExpr: () = {
+  PreExpr,
+  CastExpr "as" "<" TypeName ">"
+};
+
+PreExpr: () = {
+  PostExpr,
+  "&" PreExpr,
+  "*" PreExpr,
+  "+" PreExpr,
+  "-" PreExpr,
+  "~" PreExpr,
+  "!" PreExpr,
+};
+
+PostExpr: () = {
+  PrimExpr,
+  PostExpr "." Identifier,
+  PostExpr "(" ArgumentList? ")",
+  PostExpr "[" Expr "]"
+};
+
+ArgumentList: () = {
+  Argument,
+  ArgumentList "," Argument
+};
+
+Argument: () = {
+  Expr,
+  Identifier ":" Expr
+};
+
+PrimExpr: () = {
+  "(" Expr ")",
+  Path,
+  "nil",
+  "true",
+  "false",
+  "(" ")",
+  "(" <TupleFieldList> ")",
+  "[" <ArrayElementList> "]",
+  Integer,
+  Float,
+  String,
+  CString,
+};
+
+TupleFieldList: () = {
+  Identifier ":" Expr,
+  TupleFieldList "," Identifier ":" Expr
+};
+
+ArrayElementList: () = {
+  Expr,
+  ArrayElementList "," Expr
+};
+
+// Definitions
+
+TypeDefinition: () = {
+  "type" Identifier "=" TypeName,
+  "struct" Identifier ("<" IdentifierList ">")? "(" ParameterList? ")",
+  "union" Identifier ("<" IdentifierList ">")? "(" ParameterList? ")",
+  "enum" Identifier ("<" IdentifierList ">")? "(" VariantList? ")"
+};
+
+IdentifierList: () = {
+  Identifier,
+  IdentifierList "," Identifier
+};
+
+VariantList: () = {
+  Variant,
+  VariantList "," Variant
+};
+
+Variant: () = {
+  Identifier,
+  Identifier "(" ParameterList? ")"
+};
+
+ConstDefinition: () = {
+   "const" Identifier ":" TypeName "=" Expr
+};
+
+DataDefinition: () = {
+   "data" "mut"? Identifier ":" TypeName "=" Expr
+};
+
+FunctionDefinition: () = {
+   "function" Identifier ("<" IdentifierList ">")? "(" ParameterDefinitionList? ")" ("->" TypeName)? BlockExpr,
+};
+
+ParameterDefinitionList: () = {
+  ParameterDefinition,
+  ParameterDefinitionList "," ParameterDefinition
+};
+
+ParameterDefinition: () = "mut"? Identifier ":" TypeName;
+
+ImportDefinition: () = "import" Identifier;
+
+ExternBlock: () = "extern" "{" ExternDefinitionList? "}";
+
+ExternDefinitionList: () = {
+  ExternDefinition,
+  ExternDefinitionList ExternDefinition
+};
+
+ExternDefinition: () = {
+  "function" Identifier "(" ParameterList? ")" ("->" TypeName)?
+  "function" Identifier "(" ParameterList "," "..." ")" ("->" TypeName)?
+  "data" "mut"? Identifier ":" TypeName
+};
+
+GlobalDefinition: () = {
+  TypeDefinition,
+  ConstDefinition,
+  DataDefinition,
+  FunctionDefinition,
+  ImportDefinition,
+  ExternBlock
+};
+
+GlobalDefinitionList: () = {
+  GlobalDefinition,
+  GlobalDefinitionList GlobalDefinition
+};
+
+pub Module = GlobalDefinitionList?;
+
+// Tokens
+
+Identifier = "DOESNTMATTER1";
+Integer = "DOESNTMATTER2";
+Float = "DOESNTMATTER3";
+String = "DOESNTMATTER4";
+CString = "DOESNTMATTER5";
