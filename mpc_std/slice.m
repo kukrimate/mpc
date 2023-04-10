@@ -5,6 +5,10 @@ import vec
 
 struct Slice<T>(base: *mut T, length: Uintn)
 
+function from_ptr<ElementType>(base: *mut ElementType, length: Uintn) -> Slice<ElementType> {
+  Slice(base, length)
+}
+
 function from_vec<ElementType>(vec: *vec::Vec<ElementType>) -> Slice<ElementType> {
   Slice((*vec).mem, (*vec).length)
 }
