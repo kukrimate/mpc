@@ -227,6 +227,9 @@ impl Lexer {
             Some(b'\n') | None => {
               return Err(CompileError::UnterminatedStr(loc))
             }
+            Some(b'\\') => {
+              self.consume_byte();
+            }
             Some(b'"') => {
               let s = self.slice();
               match unescape(loc.clone(), &s[1..s.len() - 1]) {
@@ -242,6 +245,9 @@ impl Lexer {
           match self.consume_byte() {
             Some(b'\n') | None => {
               return Err(CompileError::UnterminatedChar(loc))
+            }
+            Some(b'\\') => {
+              self.consume_byte();
             }
             Some(b'\'') => {
               let s = self.slice();
@@ -594,6 +600,8 @@ fn unescape(loc: SourceLocation, s: &str) -> Result<Vec<u8>, CompileError> {
           Some(b'r') => { buffer.push(b'\r'); }
           Some(b't') => { buffer.push(b'\t'); }
           Some(b'\\') => { buffer.push(b'\\'); }
+          Some(b'\'') => { buffer.push(b'\''); }
+          Some(b'"') => { buffer.push(b'"'); }
           Some(b'x') => {
             let mut byte = 0u8;
             loop {
