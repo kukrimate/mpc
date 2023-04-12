@@ -107,59 +107,96 @@ function new(input: slice::Slice<Uint8>) -> Lexer {
   Lexer(input, 0)
 }
 
+
+// Read the next input character
+function (lexer: *mut Lexer) get() -> opt::Option<Uint8> {
+  match slice::at_or_none((*lexer).input, (*lexer).cur) {
+    s: Some => {
+      (*lexer).cur += 1;
+      opt::some(*s.val)
+    },
+    None => opt::none()
+  }
+}
+
+
+// Peek at the next input character
+function (lexer: *mut Lexer) peek() -> opt::Option<Uint8> {
+  match slice::at_or_none((*lexer).input, (*lexer).cur) {
+    s: Some => opt::some(*s.val),
+    None => opt::none()
+  }
+}
+
+// Consume the next input character if equal
+function (lexer: *mut Lexer) consume_eq(want: Uint8) -> Bool {
+  match slice::at_or_none((*lexer).input, (*lexer).cur) {
+    s: Some => {
+      if *s.val == want {
+        (*lexer).cur += 1;
+        true
+      } else {
+        false
+      }
+    },
+    None => false
+  }
+}
+
+
 // Read a token from the lexer
-function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> {
   loop {
-    let ch = get(lexer);
+    let ch = lexer.get();
 
     // End of file
-    if opt::is_none(&ch) { return result::ok(Token::EndOfFile) }
+    if (&ch).is_none() { return result::ok(Token::EndOfFile) }
 
     // Now we know we can unwrap
-    let ch = opt::unwrap(ch);
+    let ch = ch.unwrap();
 
     // Whitespace
     if ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ' { continue }
 
     // Comments
     if ch == '/' {
-      if consume_eq(lexer, '/') {
+      if lexer.consume_eq('/') {
         while {
-          let ch = get(lexer);
-          if opt::is_none(&ch) { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+          let ch = lexer.get();
+          if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
           opt::unwrap(ch) != '\n'
         } {}
         continue
       }
-      if consume_eq(lexer, '*') {
+      if lexer.consume_eq('*') {
         while {
           // Read until *
           while {
-            let ch = get(lexer);
-            if opt::is_none(&ch) { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+            let ch = lexer.get();
+            if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
             opt::unwrap(ch) != '*'
           } {}
           // Exit if reached a  /
-          !consume_eq(lexer, '/')
+          !lexer.consume_eq('/')
         } {}
       }
     }
 
     // Numeric literals
     if ch == '0' {
-      if consume_eq(lexer, 'x') || consume_eq(lexer, 'X') {
+      if lexer.consume_eq('x') || lexer.consume_eq('X') {
         return match read_hex(lexer) {
           o: Ok => result::ok(Token::IntLit(o.v)),
           e: Err => result::err(e.v)
         }
       }
-      if consume_eq(lexer, 'o') || consume_eq(lexer, 'O') {
+      if lexer.consume_eq('o') || lexer.consume_eq('O') {
         return match read_oct(lexer) {
           o: Ok => result::ok(Token::IntLit(o.v)),
           e: Err => result::err(e.v)
         }
       }
-      if consume_eq(lexer, 'b') || consume_eq(lexer, 'B') {
+      if lexer.consume_eq('b') || lexer.consume_eq('B') {
         return match read_bin(lexer) {
           o: Ok => result::ok(Token::IntLit(o.v)),
           e: Err => result::err(e.v)
@@ -179,7 +216,7 @@ function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
 
     // String literals
     if ch == '"' { return read_str(lexer, false) }
-    if ch == 'c' && consume_eq(lexer, '"') { return read_str(lexer, true) }
+    if ch == 'c' && lexer.consume_eq('"') { return read_str(lexer, true) }
 
     // Identifier
     if ch == '_' ||
@@ -189,17 +226,17 @@ function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
       let mut s = vec::new();
 
       loop {
-        let ch = peek(lexer);
+        let ch = lexer.peek();
 
-        if opt::is_none(&ch) { break }
-        let ch = opt::unwrap(ch);
+        if (&ch).is_none() { break }
+        let ch = ch.unwrap();
 
         if ch == '_' ||
            ch >= 'a' && ch <= 'z' ||
            ch >= 'A' && ch <= 'Z' ||
            ch >= '0' && ch <= '9' {
-          vec::push(&s, ch);
-          get(lexer);
+          (&s).push(ch);
+          lexer.get();
         } else {
           return result::ok(check_kw(s))
         }
@@ -214,69 +251,69 @@ function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
     if ch == '{' { return result::ok(Token::LCurly) }
     if ch == '}' { return result::ok(Token::RCurly) }
     if ch == '<' {
-      if consume_eq(lexer, '<') {
-        if consume_eq(lexer, '=') { return result::ok(Token::RmwLShift) }
+      if lexer.consume_eq('<') {
+        if lexer.consume_eq('=') { return result::ok(Token::RmwLShift) }
         return result::ok(Token::LShift)
       }
-      if consume_eq(lexer, '=') { return result::ok(Token::LessEq) }
+      if lexer.consume_eq('=') { return result::ok(Token::LessEq) }
       return result::ok(Token::LAngle)
     }
     if ch == '>' {
-      if consume_eq(lexer, '>') {
-        if consume_eq(lexer, '=') { return result::ok(Token::RmwRShift) }
+      if lexer.consume_eq('>') {
+        if lexer.consume_eq('=') { return result::ok(Token::RmwRShift) }
         return result::ok(Token::RShift)
       }
-      if consume_eq(lexer, '=') { return result::ok(Token::GreaterEq) }
+      if lexer.consume_eq('=') { return result::ok(Token::GreaterEq) }
       return result::ok(Token::RAngle)
     }
     if ch == '&' {
-      if consume_eq(lexer, '&') { return result::ok(Token::LogicAnd) }
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwBitAnd) }
+      if lexer.consume_eq('&') { return result::ok(Token::LogicAnd) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwBitAnd) }
       return result::ok(Token::Amp)
     }
     if ch == '*' {
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwMul) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwMul) }
       return result::ok(Token::Star)
     }
     if ch == '+' {
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwAdd) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwAdd) }
       return result::ok(Token::Plus)
     }
     if ch == '-' {
-      if consume_eq(lexer, '>') { return result::ok(Token::Arrow) }
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwSub) }
+      if lexer.consume_eq('>') { return result::ok(Token::Arrow) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwSub) }
       return result::ok(Token::Minus)
     }
     if ch == '~' { return result::ok(Token::Tilde) }
     if ch == '!' {
-      if consume_eq(lexer, '=') { return result::ok(Token::ExclEq) }
+      if lexer.consume_eq('=') { return result::ok(Token::ExclEq) }
       return result::ok(Token::Excl)
     }
     if ch == '/' {
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwDiv) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwDiv) }
       return result::ok(Token::Slash)
     }
     if ch == '%' {
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwMod) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwMod) }
       return result::ok(Token::Percent)
     }
     if ch == '|' {
-      if consume_eq(lexer, '|') { return result::ok(Token::LogicOr) }
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwBitOr) }
+      if lexer.consume_eq('|') { return result::ok(Token::LogicOr) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwBitOr) }
       return result::ok(Token::Pipe)
     }
     if ch == '^' {
-      if consume_eq(lexer, '=') { return result::ok(Token::RmwBitXor) }
+      if lexer.consume_eq('=') { return result::ok(Token::RmwBitXor) }
       return result::ok(Token::Caret)
     }
     if ch == '=' {
-      if consume_eq(lexer, '>') { return result::ok(Token::FatArrow) }
-      if consume_eq(lexer, '=') { return result::ok(Token::EqEq) }
+      if lexer.consume_eq('>') { return result::ok(Token::FatArrow) }
+      if lexer.consume_eq('=') { return result::ok(Token::EqEq) }
       return result::ok(Token::Eq)
     }
     if ch == '.' {
       // FIXME: handle case of ..
-      if consume_eq(lexer, '.') && consume_eq(lexer, '.') {
+      if lexer.consume_eq('.') && lexer.consume_eq('.') {
         return result::ok(Token::Varargs)
       }
       return result::ok(Token::Dot)
@@ -284,7 +321,7 @@ function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
     if ch == ',' { return result::ok(Token::Comma) }
     if ch == ';' { return result::ok(Token::Semi) }
     if ch == ':' {
-      if consume_eq(lexer, ':') { return result::ok(Token::DColon) }
+      if lexer.consume_eq(':') { return result::ok(Token::DColon) }
       return result::ok(Token::Colon)
     }
 
@@ -294,42 +331,42 @@ function next(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
 }
 
 // Read a character literal
-function read_chr(lexer: *mut Lexer) -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) read_chr() -> result::Result<Token, mpc::CompileError> {
   loop {
-    let ch = get(lexer);
+    let ch = lexer.get();
 
     // Char literal must not contain EOF
-    if opt::is_none(&ch) { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+    if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
     // Otherwise we can unwrap
-    let ch = opt::unwrap(ch);
+    let ch = ch.unwrap();
     if ch == '\'' { break }
-    if ch == '\\' { read_esc(lexer); }
+    if ch == '\\' { lexer.read_esc(); }
   }
 
   return result::ok(Token::IntLit(0)) // FIXME: derive value
 }
 
 // Read a string literal
-function read_str(lexer: *mut Lexer, is_c: Bool) -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Token, mpc::CompileError> {
   let mut s = vec::new();
 
   loop {
-    let ch = get(lexer);
+    let ch = lexer.get();
 
     // Stirng literal must not contain EOF
-    if opt::is_none(&ch) { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+    if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
     // Otherwise we can unwrap
-    let ch = opt::unwrap(ch);
+    let ch = ch.unwrap();
     if ch == '"' { break }
     if ch == '\\' {
-      match read_esc(lexer) {
-        o: Ok => vec::push(&s, o.v as <Uint8>),
+      match lexer.read_esc() {
+        o: Ok => (&s).push(o.v as <Uint8>),
         e: Err => return result::err(e.v)
       }
     } else {
-      vec::push(&s, ch)
+      (&s).push(ch)
     }
   }
 
@@ -338,14 +375,14 @@ function read_str(lexer: *mut Lexer, is_c: Bool) -> result::Result<Token, mpc::C
 }
 
 // Read an escape sequence
-function read_esc(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError> {
-  let ch = get(lexer);
+function (lexer: *mut Lexer) read_esc() -> result::Result<Uintn, mpc::CompileError> {
+  let ch = lexer.get();
 
   // EOF here is always unexpected
-  if opt::is_none(&ch) { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+  if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
   // Otherwise check the escape sequence
-  let ch = opt::unwrap(ch);
+  let ch = ch.unwrap();
   if ch == '0'  { return result::ok(0) }
   if ch == 'n'  { return result::ok('\n') }
   if ch == 'r'  { return result::ok('\r') }
@@ -360,23 +397,23 @@ function read_esc(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError>
 }
 
 // Read a hexadecimal literal
-function read_hex(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError> {
+function (lexer: *mut Lexer) read_hex() -> result::Result<Uintn, mpc::CompileError> {
   let mut val: Uintn = 0;
   loop {
-    let ch = peek(lexer);
+    let ch = lexer.peek();
 
-    if opt::is_none(&ch) { break }
-    let ch = opt::unwrap(ch);
+    if (&ch).is_none() { break }
+    let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '9' {
       val = val * 16 + (ch - '0') as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else if ch >= 'a' && ch <= 'f' {
       val = val * 16 + (ch - 'a' + 0xa) as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else if ch >= 'A' && ch <= 'F' {
       val = val * 16 + (ch - 'a' + 0xa) as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else {
       break
     }
@@ -385,17 +422,17 @@ function read_hex(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError>
 }
 
 // Read a octal literal
-function read_oct(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError> {
+function (lexer: *mut Lexer) read_oct() -> result::Result<Uintn, mpc::CompileError> {
   let mut val: Uintn = 0;
   loop {
-    let ch = peek(lexer);
+    let ch = lexer.peek();
 
-    if opt::is_none(&ch) { break }
-    let ch = opt::unwrap(ch);
+    if (&ch).is_none() { break }
+    let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '7' {
       val = val * 8 + (ch - '0') as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else {
       break
     }
@@ -404,17 +441,17 @@ function read_oct(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError>
 }
 
 // Read a binary literal
-function read_bin(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError> {
+function (lexer: *mut Lexer) read_bin() -> result::Result<Uintn, mpc::CompileError> {
   let mut val: Uintn = 0;
   loop {
-    let ch = peek(lexer);
+    let ch = lexer.peek();
 
-    if opt::is_none(&ch) { break }
-    let ch = opt::unwrap(ch);
+    if (&ch).is_none() { break }
+    let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '1' {
       val = val * 2 + (ch - '0') as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else {
       break
     }
@@ -423,16 +460,16 @@ function read_bin(lexer: *mut Lexer) -> result::Result<Uintn, mpc::CompileError>
 }
 
 // Read a decimal literal
-function read_dec(lexer: *mut Lexer, mut val: Uintn) -> result::Result<Uintn, mpc::CompileError> {
+function (lexer: *mut Lexer) read_dec(mut val: Uintn) -> result::Result<Uintn, mpc::CompileError> {
   loop {
-    let ch = peek(lexer);
+    let ch = lexer.peek();
 
-    if opt::is_none(&ch) { break }
-    let ch = opt::unwrap(ch);
+    if (&ch).is_none() { break }
+    let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '9' {
       val = val * 10 + (ch - '0') as <Uintn>;
-      get(lexer);
+      lexer.get();
     } else {
       break
     }
@@ -480,39 +517,4 @@ function check_kw(s: str::Str) -> Token {
   if str::eq(str::view_from_str(&s), str::view_from_lit(&"import"))    { return Token::KwImport }
   if str::eq(str::view_from_str(&s), str::view_from_lit(&"extern"))    { return Token::KwExtern }
   return Token::Ident(s)
-}
-
-// Read the next input character
-function get(lexer: *mut Lexer) -> opt::Option<Uint8> {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => {
-      (*lexer).cur += 1;
-      opt::some(*s.val)
-    },
-    None => opt::none()
-  }
-}
-
-
-// Peek at the next input character
-function peek(lexer: *mut Lexer) -> opt::Option<Uint8> {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => opt::some(*s.val),
-    None => opt::none()
-  }
-}
-
-// Consume the next input character if equal
-function consume_eq(lexer: *mut Lexer, want: Uint8) -> Bool {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => {
-      if *s.val == want {
-        (*lexer).cur += 1;
-        true
-      } else {
-        false
-      }
-    },
-    None => false
-  }
 }

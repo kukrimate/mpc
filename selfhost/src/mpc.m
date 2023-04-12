@@ -38,13 +38,13 @@ function mpc_main(args: slice::Slice<*libc::Char>) -> libc::Int {
   }
 
   // Read input file
-  let input = result::unwrap_ok(read_file(*slice::at(args, 1)));
+  let input = read_file(*slice::at(args, 1)).unwrap_ok();
 
   // Create lexer
   let lexer = lexer::new(input);
 
   loop {
-    match result::unwrap_ok(lexer::next(&lexer)) {
+    match lexer::next(&lexer).unwrap_ok() {
       EndOfFile => break,
       Ident => libc::printf(c"Ident\n"),
       IntLit => libc::printf(c"IntLit\n"),
