@@ -21,14 +21,14 @@ function err<O, E>(v: E) -> Result<O, E> {
 }
 
 function is_ok<O, E>(result: *Result<O, E>) -> Bool {
-  match result {
+  match *result {
     Ok => true,
     Err => false
   }
 }
 
 function is_err<O, E>(result: *Result<O, E>) -> Bool {
-  match result {
+  match *result {
     Ok => false,
     Err => true
   }
