@@ -20,22 +20,21 @@ function none<T>() -> Option<T> {
   Option::None
 }
 
-
-function is_some<T>(o: *Option<T>) -> Bool {
+function (o: *Option<T>) is_some<T>() -> Bool {
   match *o {
     Some => true,
     None => false
   }
 }
 
-function is_none<T>(o: *Option<T>) -> Bool {
+function (o: *Option<T>) is_none<T>() -> Bool {
   match *o {
     Some => false,
     None => true
   }
 }
 
-function unwrap<T>(o: Option<T>) -> T {
+function (o: Option<T>) unwrap<T>() -> T {
   match o {
     s: Some => s.val,
     None    => prog::panic(c"Tried to unwrap None\n")

@@ -57,7 +57,7 @@ pub enum Ty {
   Func(SourceLocation, Vec<(RefStr, Ty)>, Box<Ty>),
   Arr(SourceLocation, Box<Expr>, Box<Ty>),
   Unit(SourceLocation),
-  Tuple(SourceLocation, Vec<(RefStr, Ty)>),
+  Tuple(SourceLocation, Vec<(RefStr, Ty)>)
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -234,6 +234,7 @@ pub struct FuncDef {
   pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
+  pub receiver: Option<(RefStr, IsMut, Ty)>,
   pub params: Vec<(RefStr, IsMut, Ty)>,
   pub ret_ty: Ty,
   pub body: Expr

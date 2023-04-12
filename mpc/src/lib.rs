@@ -61,7 +61,7 @@ pub enum CompileError {
   CannotIndexType(SourceLocation, sema::Ty),
   CannotDereferenceType(SourceLocation, sema::Ty),
   CannotCallType(SourceLocation, sema::Ty),
-  IncorrectNumberOfArguments(SourceLocation, sema::Ty),
+  IncorrectNumberOfArguments(SourceLocation),
   CannotMatchType(SourceLocation, sema::Ty),
   CannotAssignImmutable(SourceLocation),
   StructVariantExpectedArguments(SourceLocation),
@@ -74,6 +74,8 @@ pub enum CompileError {
   DuplicateMatchCase(SourceLocation),
   MissingMatchCase(SourceLocation),
   IncorrectMatchCase(SourceLocation),
+  InvalidMethodReceiverType(SourceLocation, resolve::ResolvedTy),
+  MethodCallWithoutReceiver(SourceLocation),
   InvalidConstantExpression(SourceLocation)
 }
 
@@ -102,7 +104,7 @@ impl std::fmt::Display for CompileError {
       CompileError::CannotIndexType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be indexed", location, ty),
       CompileError::CannotDereferenceType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be dereferenced", location, ty),
       CompileError::CannotCallType(location, ty)  => write!(f, "Error at {}: Type {:?} cannot be called", location, ty),
-      CompileError::IncorrectNumberOfArguments(location, ty) => write!(f, "Error at {}: Wrong number of arguments for {:?}", location, ty),
+      CompileError::IncorrectNumberOfArguments(location) => write!(f, "Error at {}: Wrong number of arguments", location),
       CompileError::CannotMatchType(location, ty) => write!(f, "Error at {}: Cannot match on non-enum type {:?}", location, ty),
       CompileError::CannotAssignImmutable(location) => write!(f, "Error at {}: Cannot assign to immutable location", location),
       CompileError::StructVariantExpectedArguments(location ) => write!(f, "Error at {}: Missing arguments for struct variant", location),
@@ -115,8 +117,9 @@ impl std::fmt::Display for CompileError {
       CompileError::DuplicateMatchCase(location) => write!(f, "Error at {}: Duplicate match case", location),
       CompileError::MissingMatchCase(location) => write!(f, "Error at {}: Missing match case", location),
       CompileError::IncorrectMatchCase(location) => write!(f, "Error at {}: Incorrect match case", location),
+      CompileError::InvalidMethodReceiverType(location, ty) => write!(f, "Error at {}: Type {:?} cannot be used as a method receiver", location, ty),
+      CompileError::MethodCallWithoutReceiver(location) => write!(f, "Error at {}: Method called without receiver", location),
       CompileError::InvalidConstantExpression(location) => write!(f, "Error at {}: Invalid constant expression", location),
-
     }
   }
 }

@@ -439,10 +439,14 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         let ty = self.global.inst_struct(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, params) = self.global.find_inst(&(*def_id, type_args)).unwrap_struct();
         let params = params.clone();
+        let inferred_args = fields
+          .iter()
+          .map(|(name, arg)| Ok((*name, self.infer_rvalue(arg)?)))
+          .monadic_collect()?;
         LValue::StructLit {
           ty,
           is_mut: IsMut::No,
-          fields: self.infer_args(loc.clone(), &params, fields)?
+          fields: self.typecheck_args(loc.clone(), &params, false, inferred_args)?
         }
       }
       UnionLit(loc, def_id, type_args, name, val) => {
@@ -486,7 +490,6 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         };
         let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
-        let variants = variants.clone();
         match &variants[*index] {
           Variant::Unit(..) => (),
           Variant::Struct(..) => Err(CompileError::StructVariantExpectedArguments(loc.clone()))?
@@ -504,15 +507,19 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         };
         let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
         let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
-        let variants = variants.clone();
-        match &variants[*index] {
+        let variant = variants[*index].clone();
+        let inferred_args = fields
+          .iter()
+          .map(|(name, arg)| Ok((*name, self.infer_rvalue(arg)?)))
+          .monadic_collect()?;
+        match variant {
           Variant::Unit(..) => Err(CompileError::UnitVariantUnexpectedArguments(loc.clone()))?,
           Variant::Struct(_, params) => {
             LValue::StructVariantLit {
               ty,
               is_mut: IsMut::No,
               index: *index,
-              fields: self.infer_args(loc.clone(), &params.clone(), fields)?
+              fields: self.typecheck_args(loc.clone(), &params.clone(), false, inferred_args)?
             }
           }
         }
@@ -522,6 +529,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         LValue::StrLit { ty, is_mut: IsMut::No, val: val.clone() }
       }
       Dot(loc, arg, name) => {
+        let arg = self.infer_lvalue(arg)?;
         self.infer_dot(loc.clone(), arg, *name)?
       }
       Index(loc, arg, idx) => {
@@ -535,10 +543,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   /// Infer the type of a member access expression
-  fn infer_dot(&mut self, loc: SourceLocation, arg: &ResolvedExpr, name: RefStr) -> Result<LValue, CompileError> {
-    // Infer argument type
-    let arg = self.infer_lvalue(arg)?;
-
+  fn infer_dot(&mut self, loc: SourceLocation, arg: LValue, name: RefStr) -> Result<LValue, CompileError> {
     'error: loop {
       // Find parameter list
       let ty = self.global.tctx.canonical_ty(arg.ty());
@@ -878,45 +883,75 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
   }
 
   fn infer_call(&mut self, loc: SourceLocation, called: &ResolvedExpr, args: &Vec<(RefStr, ResolvedExpr)>) -> Result<RValue, CompileError> {
+    let mut inferred_args = Vec::new();
+
     // Infer function type
-    let called_expr = self.infer_rvalue(called)?;
-
-    // Find parameter list and return type
-    let called_ty = self.global.tctx.canonical_ty(called_expr.ty());
-
-    let (params, va, ret_ty) = match &called_ty {
-      Ty::Func(params, va, ret_ty) => (params, *va, &**ret_ty),
-      _ => Err(CompileError::CannotCallType(loc.clone(), called_expr.ty().clone()))?
+    let called_expr = match called {
+      ResolvedExpr::Dot(loc, base, name) => {
+        let receiver = self.infer_rvalue(&**base)?;
+        let receiver_id = match self.global.tctx.canonical_ty(receiver.ty()) {
+          Ty::StructRef(_, (def_id, _)) |
+          Ty::UnionRef(_, (def_id, _)) |
+          Ty::EnumRef(_, (def_id, _)) => def_id,
+          Ty::Ptr(_, base_ty) => match *base_ty {
+            Ty::StructRef(_, (def_id, _)) |
+            Ty::UnionRef(_, (def_id, _)) |
+            Ty::EnumRef(_, (def_id, _)) => def_id,
+            _ => todo!()
+          }
+          _ => todo!()
+        };
+        // FIXME: handle fallback here
+        let method_id = self.global.repo.locate_method(receiver_id, *name).unwrap();
+        // Add receiver instance as argument
+        inferred_args.push((RefStr::new(""), receiver));
+        // Return method reference as call target
+        let def = self.global.resolved_def(method_id).unwrap_func();
+        let type_args: Vec<Ty> = (0..def.type_params)
+          .map(|_| self.global.tctx.new_var(Bound::Any))
+          .collect();
+        self.global.inst_func_sig(loc.clone(), (method_id, type_args))?
+      }
+      called => self.infer_rvalue(called)?
     };
 
-    // Validate argument count
-    if args.len() < params.len() {
-      Err(CompileError::IncorrectNumberOfArguments(loc.clone(), called_expr.ty().clone()))?
-    }
-    if va == false && args.len() > params.len() {
-      Err(CompileError::IncorrectNumberOfArguments(loc.clone(), called_expr.ty().clone()))?
+    // Infer non-receiver arguments
+    for (name, arg) in args.iter() {
+      inferred_args.push((*name, self.infer_rvalue(arg)?));
     }
 
-    let args = self.infer_args(loc, params, args)?;
-
-    Ok(RValue::Call {
-      ty: ret_ty.clone(),
-      func: Box::new(called_expr),
-      args,
-    })
+    // Find parameter list and return type
+    match self.global.tctx.canonical_ty(called_expr.ty()) {
+      Ty::Func(params, va, ret_ty) => {
+        Ok(RValue::Call {
+          ty: *ret_ty,
+          func: Box::new(called_expr),
+          args: self.typecheck_args(loc, &params, va, inferred_args)?
+        })
+      },
+      _ => {
+        Err(CompileError::CannotCallType(loc.clone(), called_expr.ty().clone()))
+      }
+    }
   }
 
-  fn infer_args(&mut self, loc: SourceLocation, params: &[(RefStr, Ty)], args: &[(RefStr, ResolvedExpr)]) -> Result<Vec<RValue>, CompileError> {
+  fn typecheck_args(&mut self, loc: SourceLocation, params: &[(RefStr, Ty)], va: bool, args: Vec<(RefStr, RValue)>) -> Result<Vec<RValue>, CompileError> {
+    // Validate argument count
+    if args.len() < params.len() {
+      Err(CompileError::IncorrectNumberOfArguments(loc.clone()))?
+    }
+    if va == false && args.len() > params.len() {
+      Err(CompileError::IncorrectNumberOfArguments(loc.clone()))?
+    }
+
     let mut nargs = vec![];
     let mut params_iter = params.iter();
 
-    for (arg_name, arg_val) in args.iter() {
-      // Infer type of argument value
-      let arg_val = self.infer_rvalue(arg_val)?;
+    for (arg_name, arg_val) in args.into_iter() {
       // If there is a corresponding parameter name and type, check it
       if let Some((param_name, param_ty)) = params_iter.next() {
-        if *arg_name != RefStr::new("") && arg_name != param_name {
-          return Err(CompileError::IncorrectArgumentLabel(loc, *arg_name))
+        if arg_name != RefStr::new("") && arg_name != *param_name {
+          return Err(CompileError::IncorrectArgumentLabel(loc, arg_name))
         }
         self.global.tctx.unify(loc.clone(), arg_val.ty(), param_ty)?;
       }

@@ -27,7 +27,12 @@ pub struct Repository {
   parent_scope: HashMap<DefId, DefId>,
   pub parsed_defs: HashMap<DefId, Def>,
   pub resolved_defs: HashMap<DefId, ResolvedDef>,
-  pub syms: HashMap<DefId, HashMap<RefStr, DefId>>
+  pub syms: HashMap<DefId, HashMap<RefStr, DefId>>,
+  // FIXME: this definition shouldn't be separate from the symbol table
+  //  as method names should be resolvable like regular symbols.
+  //  But to achieve that, we would need an "early" and "late" resolution pass,
+  //  so this shall be relegated to the future.
+  pub methods: HashMap<DefId, HashMap<RefStr, DefId>>
 }
 
 impl Repository {
@@ -41,7 +46,8 @@ impl Repository {
       parent_scope: HashMap::new(),
       parsed_defs: HashMap::new(),
       resolved_defs: HashMap::new(),
-      syms: HashMap::new()
+      syms: HashMap::new(),
+      methods: HashMap::new()
     }
   }
 
@@ -56,6 +62,11 @@ impl Repository {
       }
     }
     Some(cur_id)
+  }
+
+  pub fn locate_method(&self, receiver_id: DefId, name: RefStr) -> Option<DefId> {
+    let symtab = self.methods.get(&receiver_id)?;
+    symtab.get(&name).cloned()
   }
 
   pub fn parent(&self, def_id: DefId) -> DefId {

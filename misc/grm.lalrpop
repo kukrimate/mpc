@@ -266,8 +266,10 @@ DataDefinition: () = {
 };
 
 FunctionDefinition: () = {
-   "function" Identifier ("<" IdentifierList ">")? "(" ParameterDefinitionList? ")" ("->" TypeName)? BlockExpr,
+   "function" ReceiverDefinition? Identifier ("<" IdentifierList ">")? "(" ParameterDefinitionList? ")" ("->" TypeName)? BlockExpr,
 };
+
+ReceiverDefinition: () = "(" ParameterDefinition ")";
 
 ParameterDefinitionList: () = {
   ParameterDefinition,

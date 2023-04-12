@@ -5,7 +5,7 @@
 
 use super::*;
 
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub enum ResolvedTy {
   Bool(SourceLocation),
   Uint8(SourceLocation),
@@ -33,7 +33,7 @@ pub enum ResolvedTy {
 }
 
 
-#[derive(Debug)]
+#[derive(Clone,Debug)]
 pub enum ResolvedExpr {
   // Literals
   Nil(SourceLocation),

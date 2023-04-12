@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::mem::MaybeUninit;
+use std::ops::Deref;
 use std::sync::Mutex;
 
 /// Globally de-duped strings
@@ -104,7 +105,6 @@ pub fn write_comma_separated<I, T, W>(f: &mut fmt::Formatter<'_>, iter: I, wfn: 
 }
 
 /// Monadic collection over an iterator of results
-
 pub trait MonadicCollect<O, E> {
   fn monadic_collect(&mut self) -> Result<Vec<O>, E>;
 }
@@ -121,12 +121,31 @@ impl<I, O, E> MonadicCollect<O, E> for I
   }
 }
 
+/// Monadic map of the contained value of an option
+pub trait MonadicMap<T, U, E, F>
+  where F: FnOnce(&T) -> Result<U, E>
+{
+  fn monadic_map(self, f: F) -> Result<Option<U>, E>;
+}
+
+impl<O, T, U, E, F> MonadicMap<T, U, E, F> for O
+  where F: FnOnce(&T) -> Result<U, E>,
+        O: Deref<Target=Option<T>>
+{
+  fn monadic_map(self, f: F) -> Result<Option<U>, E> {
+    Ok(if let Some(val) = self.deref() {
+      Some(f(val)?)
+    } else {
+      None
+    })
+  }
+}
+
 /// Concatenate two vectors
 pub fn concat<T>(mut a: Vec<T>, b: Vec<T>) -> Vec<T> {
   a.extend(b.into_iter());
   a
 }
-
 
 /// Fixed length first-in first-out buffer
 pub struct FIFO<T, const N: usize> {

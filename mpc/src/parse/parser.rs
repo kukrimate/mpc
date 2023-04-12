@@ -222,16 +222,25 @@ impl<'repo> Parser<'repo> {
 
   fn parse_function(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
     // Parse function definition
+    let receiver = self.parse_receiver()?;
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
     let params = self.parse_param_defs()?;
     let ret_ty = self.parse_ret_ty()?;
-
     let body_loc = want_with_loc!(self, (loc, Token::LCurly), loc.clone())?;
     let body = self.parse_block_expr(body_loc)?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Func(FuncDef { loc: loc.clone(), name, type_params, params, ret_ty, body }));
+    let def_id = self.repo.def(Def::Func(FuncDef {
+      loc: loc.clone(),
+      name,
+      type_params,
+      receiver,
+      params,
+      ret_ty,
+      body
+    }));
+
     self.repo.sym(loc, name, def_id)
   }
 
@@ -327,6 +336,19 @@ impl<'repo> Parser<'repo> {
         Err(CompileError::UnexpectedToken(location, token))
       }
     }
+  }
+
+  fn parse_receiver(&mut self) -> Result<Option<(RefStr, IsMut, Ty)>, CompileError> {
+    Ok(if maybe_want!(self, Token::LParen) {
+      let is_mut = self.parse_is_mut();
+      let name = want!(self, Token::Ident(name), *name)?;
+      want!(self, Token::Colon, ())?;
+      let ty = self.parse_ty()?;
+      want!(self, Token::RParen, ())?;
+      Some((name, is_mut, ty))
+    } else {
+      None
+    })
   }
 
   fn parse_type_params(&mut self) -> Result<Vec<RefStr>, CompileError> {

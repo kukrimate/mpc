@@ -56,14 +56,21 @@ impl<'a> ResolveCtx<'a> {
   fn new_func(repo: &'a Repository,
               parent_id: DefId,
               type_params: &Vec<RefStr>,
+              receiver: &Option<(RefStr, IsMut, parse::Ty)>,
               params: &Vec<(RefStr, IsMut, parse::Ty)>) -> Self {
     let mut ctx = ResolveCtx::new(repo, parent_id);
     ctx.newscope();
     for (index, name) in type_params.iter().enumerate() {
       ctx.define(*name, Sym::TParam(index));
     }
+    let base = if let Some((name, ..)) = receiver {
+      ctx.define(*name, Sym::Param(0));
+      1
+    } else {
+      0
+    };
     for (index, (name, _, _)) in params.iter().enumerate() {
-      ctx.define(*name, Sym::Param(index));
+      ctx.define(*name, Sym::Param(base + index));
     }
     ctx
   }
@@ -424,6 +431,21 @@ impl<'a> ResolveCtx<'a> {
   }
 }
 
+fn receiver_id(loc: SourceLocation, ty: &ResolvedTy) -> Result<DefId, CompileError> {
+  match ty {
+    ResolvedTy::StructRef(_, def_id, _) |
+    ResolvedTy::UnionRef(_, def_id, _) |
+    ResolvedTy::EnumRef(_, def_id, _) => Ok(*def_id),
+    ResolvedTy::Ptr(_, _, base_ty) => match &**base_ty {
+      ResolvedTy::StructRef(_, def_id, _) |
+      ResolvedTy::UnionRef(_, def_id, _) |
+      ResolvedTy::EnumRef(_, def_id, _) => Ok(*def_id),
+      _ => Err(CompileError::InvalidMethodReceiverType(loc, ty.clone()))
+    }
+    _ => Err(CompileError::InvalidMethodReceiverType(loc, ty.clone()))
+  }
+}
+
 pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
   for (def_id, def) in repo.parsed_defs.iter() {
     match def {
@@ -505,20 +527,46 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
       }
       parse::Def::Func(def) => {
         let mut ctx = ResolveCtx::new_func(repo, repo.parent(*def_id),
-                                           &def.type_params, &def.params);
+                                           &def.type_params, &def.receiver, &def.params);
+
+        // Parameters
+        let mut params = Vec::new();
+        let receiver_id = if let Some((name, is_mut, ty)) = &def.receiver {
+          let ty = ctx.resolve_ty(ty)?;
+          let receiver_id = receiver_id(def.loc.clone(), &ty)?;
+          // Re-write receiver as a parameter
+          params.push((*name, *is_mut, ty));
+          // Save receiver ID for later
+          Some(receiver_id)
+        } else {
+          None
+        };
+        for (name, is_mut, ty) in def.params.iter() {
+          // Process regular parameters
+          params.push((*name, *is_mut, ctx.resolve_ty(ty)?));
+        }
+
+        // Add definition
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Func(ResolvedFuncDef {
                                     loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
-                                    params: def.params
-                                      .iter()
-                                      .map(|(name, is_mut, ty)|
-                                        Ok((*name, *is_mut, ctx.resolve_ty(ty)?)))
-                                      .monadic_collect()?,
+                                    params,
                                     ret_ty: ctx.resolve_ty(&def.ret_ty)?,
                                     body: ctx.resolve_expr(&def.body)?
                                   }));
+
+        // Add method to receiver's method table
+        if let Some(receiver_id) = receiver_id {
+          match repo.methods
+            .entry(receiver_id)
+            .or_insert_with(|| HashMap::new())
+            .insert(def.name, *def_id) {
+            Some(..) => Err(CompileError::Redefinition(def.loc.clone(), def.name))?,
+            None => ()
+          }
+        }
       }
       parse::Def::ExternData(def) => {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));

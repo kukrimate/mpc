@@ -20,28 +20,28 @@ function err<O, E>(v: E) -> Result<O, E> {
   Result::Err(v)
 }
 
-function is_ok<O, E>(result: *Result<O, E>) -> Bool {
+function (result: *Result<O, E>) is_ok<O, E>() -> Bool {
   match *result {
     Ok => true,
     Err => false
   }
 }
 
-function is_err<O, E>(result: *Result<O, E>) -> Bool {
+function (result: *Result<O, E>) is_err<O, E>() -> Bool {
   match *result {
     Ok => false,
     Err => true
   }
 }
 
-function unwrap_ok<O, E>(result: Result<O, E>) -> O {
+function (result: Result<O, E>) unwrap_ok<O, E>() -> O {
   match result {
     ok: Ok => ok.v,
     Err => prog::panic(c"Value required instead of error\n")
   }
 }
 
-function unwrap_err<O, E>(result: Result<O, E>) -> E {
+function (result: Result<O, E>) unwrap_err<O, E>() -> E {
   match result {
     Ok => prog::panic(c"Error required instead of value\n"),
     err: Err => err.v
