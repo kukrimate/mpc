@@ -34,7 +34,7 @@ function main() -> Int32 {
       A => { libc::printf(c"A\n"); 0 },
       B => { libc::printf(c"B\n"); 1 },
       C => { libc::printf(c"C\n"); 2 },
-      d: D => { libc::printf(c"D(%f)\n", d.dbl); 3 }
+      D(dbl) => { libc::printf(c"D(%f)\n", dbl); 3 }
     };
     libc::printf(c"%d\n", val);
     i += 1;

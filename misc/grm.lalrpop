@@ -113,14 +113,17 @@ LoopExpr: () = {
   "while" Expr BlockExpr
 };
 
-MatchExpr: () = "match" Expr "{" MatchCaseList? "}";
+MatchExpr: () = "match" Expr "{" PatternList? "}";
 
-MatchCaseList: () = {
-  MatchCase,
-  MatchCaseList "," MatchCase
+PatternList: () = {
+  Pattern "=>" Expr,
+  PatternList "," Pattern "=>" Expr
 };
 
-MatchCase = (Identifier ":")? Identifier "=>" Expr;
+Pattern: () = {
+  Identifier,
+  Identifier "(" IdentifierList? ")"
+};
 
 LOrExpr: () = {
   LAndExpr,

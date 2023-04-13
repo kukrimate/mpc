@@ -8,6 +8,7 @@ use crate::sema::*;
 use crate::parse::{DefId,BinOp,UnOp};
 use mpc_llvm as llvm;
 use std::collections::HashMap;
+use std::usize;
 
 pub fn compile(collection: &mut Collection,
                output: &std::path::Path,
@@ -68,7 +69,7 @@ struct LowerCtx<'a, 'ctx> {
   // Function parameters and locals
   params: Vec<llvm::Value<'ctx>>,
   locals: Vec<llvm::Value<'ctx>>,
-  bindings: Vec<llvm::Value<'ctx>>,
+  bindings: HashMap<usize, llvm::Value<'ctx>>,
 
   // Break and continue blocks
   break_to: Vec<llvm::Block<'ctx>>,
@@ -115,7 +116,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
       params: Vec::new(),
       locals: Vec::new(),
-      bindings: Vec::new(),
+      bindings: HashMap::new(),
 
       break_to: Vec::new(),
       continue_to: Vec::new(),
@@ -132,6 +133,28 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       let ty = self.lower_ty_def(inst);
       self.types.insert(id, ty);
       ty
+    }
+  }
+
+  fn get_variant_type(&mut self, ty: &Ty, index: usize) -> llvm::Type<'ctx> {
+    let id = match self.tctx.final_ty(ty) {
+      Ty::EnumRef(_, id) => (id.0, self.tctx.final_type_args(&id.1)),
+      _ => unreachable!()
+    };
+    match self.insts.get(&id).unwrap() {
+      Inst::Enum { variants: Some(variants), .. } => {
+        match &variants[index] {
+          Variant::Unit(_) => unreachable!(),
+          Variant::Struct(_, params) => {
+            let l_params: Vec<llvm::Type<'ctx>> = params
+              .iter()
+              .map(|(_, ty)| self.lower_ty(ty))
+              .collect();
+            self.lower_struct(&l_params)
+          }
+        }
+      }
+      _ => unreachable!()
     }
   }
 
@@ -505,13 +528,14 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         self.locals[*index]
       }
       LValue::BindingRef { index, .. } => {
-        self.bindings[*index]
+        *self.bindings.get(index).unwrap()
       }
       LValue::StrLit { val, .. } => {
         self.build_string_lit(val)
       }
       LValue::ArrayLit { ty, elements, .. } => {
         let storage = self.allocate_local(ty);
+        let ty = self.lower_ty(ty);
         for (index, element) in elements.iter().enumerate() {
           let dest = self.build_gep(ty, storage, index);
           self.lower_rvalue(element)
@@ -528,6 +552,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       LValue::TupleLit { ty, fields, .. } |
       LValue::StructLit { ty, fields, .. } => {
         let storage = self.allocate_local(ty);
+        let ty = self.lower_ty(ty);
         for (index, field) in fields.iter().enumerate() {
           let dest = self.build_gep(ty, storage, index);
           self.lower_rvalue(field)
@@ -544,30 +569,30 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       }
       LValue::StructVariantLit { ty, index, fields, .. } => {
         let storage = self.allocate_local(ty);
+
         // Write tag
-        let l_tag = self.build_int(&Ty::Int32, *index);
-        self.build_store(&Ty::Int32, storage, l_tag);
+        let tag = self.build_int(&Ty::Int32, *index);
+        self.build_store(&Ty::Int32, storage, tag);
 
-        // Get data pointer and type
-        // NOTE: this is kind of hacky, we should be storing the pre-computed variant types
-        //       during enum lowering
-        let data_ty = Ty::Tuple(fields
-          .iter()
-          .map(|field| (RefStr::new(""), field.ty().clone()))
-          .collect());
-        let data_ptr = self.build_gep(ty, storage, 1);
+        // Get data pointer
+        let l_type = self.lower_ty(ty);
+        let data_ptr = self.build_gep(l_type, storage, 1);
 
-        for (index, field) in fields.iter().enumerate() {
-          let dest = self.build_gep(&data_ty, data_ptr, index);
-          self.lower_rvalue(field)
-            .map(|val| self.build_store(field.ty(), dest, val));
+        // Store each field of the struct variant
+        if fields.len() > 0 {
+          let variant_type = self.get_variant_type(ty, *index);
+          for (index, field) in fields.iter().enumerate() {
+            let dest = self.build_gep(variant_type, data_ptr, index);
+            self.lower_rvalue(field)
+              .map(|val| self.build_store(field.ty(), dest, val));
+          }
         }
-
         storage
       }
       LValue::StruDot { arg, idx, .. } => {
         let ptr = self.lower_lvalue(arg);
-        self.build_gep(arg.ty(), ptr, *idx)
+        let ty = self.lower_ty(arg.ty());
+        self.build_gep(ty, ptr, *idx)
       }
       LValue::UnionDot { arg, .. } => {
         self.lower_lvalue(arg)
@@ -821,6 +846,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       RValue::Match { ty, cond, cases, .. } => {
         let start_block = self.builder.get_block().unwrap();
         let addr = self.lower_rvalue(cond).unwrap();
+        let cond_ty = self.lower_ty(cond.ty());
+        let data_ptr = self.build_gep(cond_ty, addr, 1);
 
         let end_block = self.new_block();
 
@@ -829,7 +856,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         let mut values = Vec::new();
         let mut blocks = Vec::new();
 
-        for (binding, val) in cases.iter() {
+        for (bindings, val) in cases.iter() {
           let block = self.new_block();
           tag_to_block.push((
             self.build_int(&Ty::Int32, tag_to_block.len()),
@@ -837,10 +864,12 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           ));
 
           self.enter_block(block);
-          if let Some(binding) = binding {
-            assert_eq!(*binding, self.bindings.len());
-            let binding = self.build_gep(cond.ty(), addr, 1);
-            self.bindings.push(binding);
+          if bindings.len() > 0 {
+            let variant_type = self.get_variant_type(cond.ty(), tag_to_block.len() - 1);
+            for (index, binding) in bindings.iter().enumerate() {
+              let l_binding_val = self.build_gep(variant_type, data_ptr, index);
+              self.bindings.insert(*binding, l_binding_val);
+            }
           }
           values.push(self.lower_rvalue(val));
           blocks.push(self.builder.get_block().unwrap());
@@ -1042,8 +1071,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     }
   }
 
-  fn build_gep(&mut self, ty: &Ty, base: llvm::Value<'ctx>, index: usize) -> llvm::Value<'ctx> {
-    let ty = self.lower_ty(ty);
+  fn build_gep(&mut self, ty: llvm::Type<'ctx>, base: llvm::Value<'ctx>, index: usize) -> llvm::Value<'ctx> {
     let indices = [
       self.build_int(&Ty::Int8, 0),
       // NOTE: this is not documented in many places, but struct field

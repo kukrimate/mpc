@@ -82,7 +82,22 @@ pub enum ResolvedExpr {
   If(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
   While(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
   Loop(SourceLocation, Box<ResolvedExpr>),
-  Match(SourceLocation, Box<ResolvedExpr>, Vec<(Option<usize>, RefStr, ResolvedExpr)>)
+  Match(SourceLocation, Box<ResolvedExpr>, Vec<(ResolvedPattern, ResolvedExpr)>)
+}
+
+#[derive(Clone,Debug)]
+pub enum ResolvedPattern {
+  Unit(RefStr),
+  Struct(RefStr, Vec<usize>)
+}
+
+impl ResolvedPattern {
+  pub fn name(&self) -> RefStr {
+    match self {
+      ResolvedPattern::Unit(name) => *name,
+      ResolvedPattern::Struct(name, _) => *name
+    }
+  }
 }
 
 impl ResolvedExpr {

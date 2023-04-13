@@ -647,34 +647,42 @@ impl<'repo> Parser<'repo> {
   fn parse_match_expr(&mut self, loc: SourceLocation) -> Result<Expr, CompileError> {
     let cond = self.parse_expr()?;
     want!(self, Token::LCurly, ())?;
-    let case_list = self.parse_match_case_list()?;
-    Ok(Expr::Match(loc, Box::new(cond), case_list))
+    let pattern_list = self.parse_pattern_list()?;
+    Ok(Expr::Match(loc, Box::new(cond), pattern_list))
   }
 
-  fn parse_match_case_list(&mut self) -> Result<Vec<(Option<RefStr>, RefStr, Expr)>, CompileError> {
-    let mut case_list = Vec::new();
+  fn parse_pattern_list(&mut self) -> Result<Vec<(Pattern, Expr)>, CompileError> {
+    let mut pattern_list = Vec::new();
     // Empty list
-    if maybe_want!(self, Token::RCurly) { return Ok(case_list) }
+    if maybe_want!(self, Token::RCurly) { return Ok(pattern_list) }
     // Read cases
     loop {
-      case_list.push(self.parse_match_case()?);
+      pattern_list.push(self.parse_pattern()?);
       if maybe_want!(self, Token::RCurly) { break }
       want!(self, Token::Comma, ())?;
     }
-    Ok(case_list)
+    Ok(pattern_list)
   }
 
-  fn parse_match_case(&mut self) -> Result<(Option<RefStr>, RefStr, Expr), CompileError> {
-    let binding = if let ((_, Token::Ident(name)), (_, Token::Colon)) = (self.look(0).clone(), self.look(1)) {
-      self.get();
-      self.get();
-      Some(name)
+  fn parse_pattern(&mut self) -> Result<(Pattern, Expr), CompileError> {
+    let name = want!(self, Token::Ident(name), *name)?;
+    let pattern = if maybe_want!(self, Token::LParen) {
+      Pattern::Struct(name, self.parse_pattern_field_list()?)
     } else {
-      None
+      Pattern::Unit(name)
     };
-    let variant = want!(self, Token::Ident(name), *name)?;
     want!(self, Token::FatArrow, ())?;
-    Ok((binding, variant, self.parse_expr()?))
+    Ok((pattern, self.parse_expr()?))
+  }
+
+  fn parse_pattern_field_list(&mut self) -> Result<Vec<RefStr>, CompileError> {
+    let mut fields = Vec::new();
+    if maybe_want!(self, Token::RParen) { return Ok(fields) }
+    loop {
+      fields.push(want!(self, Token::Ident(name), *name)?);
+      if maybe_want!(self, Token::RParen) { return Ok(fields) }
+      want!(self, Token::Comma, ())?;
+    }
   }
 
   fn parse_lor_expr(&mut self) -> Result<Expr, CompileError> {

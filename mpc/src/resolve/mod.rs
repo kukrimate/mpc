@@ -406,26 +406,37 @@ impl<'a> ResolveCtx<'a> {
         let body = self.resolve_expr(body)?;
         ResolvedExpr::Loop(loc.clone(), Box::new(body))
       }
-      Match(loc, cond, cases) => {
+      Match(loc, cond, patterns) => {
         let cond = self.resolve_expr(cond)?;
-        let mut resolved_cases = Vec::new();
+        let mut resolved_patterns = Vec::new();
 
-        for (name, variant, val) in cases.iter() {
+        for (pattern, val) in patterns.iter() {
           self.newscope();
-          let index = name.map(|name| {
-            let index = self.bindings;
-            self.define(name, Sym::Binding(index));
-            self.bindings += 1;
-            index
-          });
-          let result = self.resolve_expr(val);
+          let pattern = match pattern {
+            parse::Pattern::Unit(name) => {
+              ResolvedPattern::Unit(*name)
+            },
+            parse::Pattern::Struct(name, fields) => {
+              let fields = fields
+                .iter()
+                .map(|name| {
+                  let index = self.bindings;
+                  self.define(*name, Sym::Binding(index));
+                  self.bindings += 1;
+                  index
+                })
+                .collect();
+              ResolvedPattern::Struct(*name, fields)
+            }
+          };
+          let val = self.resolve_expr(val);
           self.popscope();
-          resolved_cases.push((index, *variant, result?));
+          resolved_patterns.push((pattern, val?));
         }
 
         ResolvedExpr::Match(loc.clone(),
                             Box::new(cond),
-                            resolved_cases)
+                            resolved_patterns)
       }
     })
   }

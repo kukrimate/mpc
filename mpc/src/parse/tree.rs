@@ -103,7 +103,13 @@ pub enum Expr {
   If(SourceLocation, Box<Expr>, Box<Expr>, Box<Expr>),
   While(SourceLocation, Box<Expr>, Box<Expr>),
   Loop(SourceLocation, Box<Expr>),
-  Match(SourceLocation, Box<Expr>, Vec<(Option<RefStr>, RefStr, Expr)>)
+  Match(SourceLocation, Box<Expr>, Vec<(Pattern, Expr)>)
+}
+
+#[derive(Clone, Debug)]
+pub enum Pattern {
+  Unit(RefStr),
+  Struct(RefStr, Vec<RefStr>)
 }
 
 impl Expr {

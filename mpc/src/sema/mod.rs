@@ -63,7 +63,7 @@ pub enum Inst {
     ty: Ty,
     params: Vec<(IsMut, Ty)>,
     locals: Vec<(IsMut, Ty)>,
-    bindings: Vec<(IsMut, Ty)>,
+    bindings: HashMap<usize, (IsMut, Ty)>,
     body: Option<RValue>
   },
   Data {
@@ -113,6 +113,15 @@ impl Inst {
 pub enum Variant {
   Unit(RefStr),
   Struct(RefStr, Vec<(RefStr, Ty)>),
+}
+
+impl Variant {
+  fn name(&self) -> RefStr {
+    match self {
+      Variant::Unit(name) => *name,
+      Variant::Struct(name, _) => *name
+    }
+  }
 }
 
 /// Types
@@ -249,7 +258,7 @@ pub enum RValue {
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
-  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Option<usize>, RValue)> }
+  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Vec<usize>, RValue)> }
 }
 
 impl LValue {

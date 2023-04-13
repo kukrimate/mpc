@@ -177,7 +177,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
         ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
         params: Vec::new(),
         locals: Vec::new(),
-        bindings: Vec::new(),
+        bindings: HashMap::new(),
         body: None,
       });
     }
@@ -265,7 +265,7 @@ struct DefCtx<'global, 'repo, 'tctx> {
   // Let bindings
   locals: Vec<(IsMut, Ty)>,
   // Enum variant bindings
-  bindings: Vec<(IsMut, Ty)>,
+  bindings: HashMap<usize, (IsMut, Ty)>,
   // Function return type
   ret_ty: Option<Ty>,
   // Loop break type
@@ -279,7 +279,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       type_args,
       params: Vec::new(),
       locals: Vec::new(),
-      bindings: Vec::new(),
+      bindings: HashMap::new(),
       ret_ty: None,
       loop_ty: Vec::new(),
     }
@@ -394,10 +394,13 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         is_mut: self.locals[*index].0,
         index: *index
       },
-      BindingRef(_loc, index) => LValue::BindingRef {
-        ty: self.bindings[*index].1.clone(),
-        is_mut: self.bindings[*index].0,
-        index: *index
+      BindingRef(_loc, index) => {
+        let (is_mut, ty) = self.bindings.get(index).unwrap();
+        LValue::BindingRef {
+          ty: ty.clone(),
+          is_mut: *is_mut,
+          index: *index
+        }
       },
       TupleLit(_loc, resolved_fields) => {
         let mut params = Vec::new();
@@ -1012,7 +1015,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     }
   }
 
-  fn infer_match(&mut self, loc: SourceLocation, cond: &ResolvedExpr, cases: &[(Option<usize>, RefStr, ResolvedExpr)]) -> Result<RValue, CompileError> {
+  fn infer_match(&mut self, loc: SourceLocation, cond: &ResolvedExpr, patterns: &[(ResolvedPattern, ResolvedExpr)]) -> Result<RValue, CompileError> {
     // FIXME: struct variant binding semantics on rvalue enums are hacky at best :(
     //
     // Enums are **always** lvalues at the LLVM level (even when semantically they were rvalues).
@@ -1031,56 +1034,51 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
     // Infer condition + find enum variants
     let cond = self.infer_rvalue(cond)?;
-    // NOTE: the match below accomplishes the hack described above
+
+    // Figure out if the pattern bindings should be mutable
     let binding_mut = match &cond {
       RValue::Load { arg, .. } => arg.is_mut(),
       _ => IsMut::No
     };
-    let variants = match self.global.tctx.canonical_ty(cond.ty()) {
-      Ty::EnumRef(_, id) => {
-        let (_, variants) = self.global.find_inst(&id).unwrap_enum();
-        variants.clone()
-      },
-      _ => Err(CompileError::CannotMatchType(loc.clone(), cond.ty().clone()))?
-    };
 
-    // Create lookup table for cases
-    let mut case_lookup: HashMap<RefStr, (Option<usize>, &ResolvedExpr)> = HashMap::new();
-
-    for (binding, variant, val) in cases.iter() {
-      // Check for duplicate case
-      if case_lookup.contains_key(variant) {
-        Err(CompileError::DuplicateMatchCase(loc.clone()))?
+    // Collect list of patterns
+    let mut pattern_map = HashMap::new();
+    for (pattern, val) in patterns.iter() {
+      if let Some(..) = pattern_map.insert(pattern.name(), (pattern, val)) {
+        return Err(CompileError::DuplicateMatchCase(loc))
       }
-      // Insert case
-      case_lookup.insert(*variant, (*binding, val));
     }
 
-    // Infer case for each variant
+    // Iterate the variants of the matched enum
     let mut inferred_cases = Vec::new();
 
-    for variant in variants.into_iter() {
-      let (name, ty) = match variant {
-        Variant::Unit(name) => (name, Ty::Unit),
-        Variant::Struct(name, params) => (name, Ty::Tuple(params)),
-      };
+    let variants = match self.global.tctx.canonical_ty(cond.ty()) {
+      Ty::EnumRef(_, id) => { self.global.find_inst(&id).unwrap_enum().1.clone() },
+      _ => { return Err(CompileError::CannotMatchType(loc.clone(), cond.ty().clone())) }
+    };
 
-      let (binding, val) = case_lookup
-        .remove(&name)
+    for variant in variants.iter() {
+      let (pattern, val) = pattern_map
+        .remove(&variant.name())
         .ok_or_else(|| CompileError::MissingMatchCase(loc.clone()))?;
-
-      if let Some(binding) = binding {
-        assert_eq!(self.bindings.len(), binding);
-        self.bindings.push((binding_mut, ty));
-      }
-
-      inferred_cases.push((binding, self.infer_rvalue(val)?));
+      match (variant, pattern) {
+        (Variant::Unit(..), ResolvedPattern::Unit(..)) => {
+          inferred_cases.push((Vec::new(), self.infer_rvalue(val)?));
+        }
+        (Variant::Struct(_, params), ResolvedPattern::Struct(_, bindings))
+            if params.len() == bindings.len() => {
+          for (index, binding) in bindings.iter().enumerate() {
+            let (_, ty) = params.get(index).unwrap();
+            self.bindings.insert(*binding, (binding_mut, ty.clone()));
+          }
+          inferred_cases.push((bindings.clone(), self.infer_rvalue(val)?));
+        }
+        _ => return Err(CompileError::IncorrectMatchCase(loc.clone()))
+      };
     }
 
     // Make sure there are no cases left over
-    if case_lookup.len() > 0 {
-      Err(CompileError::IncorrectMatchCase(loc.clone()))?
-    }
+    if pattern_map.len() > 0 { return Err(CompileError::IncorrectMatchCase(loc.clone())) }
 
     // Unify case types
     let ty = if inferred_cases.len() > 0 {
