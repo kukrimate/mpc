@@ -150,30 +150,27 @@ impl<'repo> Parser<'repo> {
     // Parse enum definition
     let name = want!(self, Token::Ident(name), *name)?;
     let type_params = self.parse_type_params()?;
-    let variants = self.parse_variants()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Enum(EnumDef { loc: loc.clone(), name, type_params, variants: variants.clone() }));
+    let def_id = self.repo.def(Def::Enum(EnumDef { loc: loc.clone(), name, type_params, variants: Vec::new() }));
     self.repo.sym(loc, name, def_id)?;
 
-    // Add variants to repository
+    // Parse variants
     self.repo.current_scope.push(def_id);
-    for (index, variant) in variants.iter().enumerate() {
-      match variant {
-        Variant::Unit(loc, name) |
-        Variant::Struct(loc, name, ..) => {
-          let variant_id = self.repo.def(Def::Variant(VariantDef {
-            loc: loc.clone(), name: *name, parent_enum: def_id, variant_index: index }));
-          self.repo.sym(loc.clone(), *name, variant_id)?;
-        }
-      }
-    }
+    let variants = self.parse_variants()?;
     self.repo.current_scope.pop();
+
+    // Add variant list to EnumDef
+    if let Some(Def::Enum(def)) = self.repo.parsed_defs.get_mut(&def_id) {
+      def.variants = variants;
+    } else {
+      unreachable!()
+    };
 
     Ok(())
   }
 
-  fn parse_variants(&mut self) -> Result<Vec<Variant>, CompileError> {
+  fn parse_variants(&mut self) -> Result<Vec<DefId>, CompileError> {
     let mut variants = Vec::new();
 
     want!(self, Token::LParen, ())?;
@@ -182,15 +179,29 @@ impl<'repo> Parser<'repo> {
     loop {
       let (loc, name) = want_with_loc!(self, (loc, Token::Ident(name)), (loc.clone(), *name))?;
       if maybe_want!(self, Token::LParen) {
-        variants.push(Variant::Struct(loc, name, self.parse_params()?));
+        let params = self.parse_params()?;
+        let def_id = self.repo.def(Def::StructVariant(StructVariantDef {
+          loc: loc.clone(),
+          name,
+          parent_enum: *self.repo.current_scope.last().unwrap(),
+          variant_index: variants.len(),
+          params
+        }));
+        variants.push(def_id);
+        self.repo.sym(loc, name, def_id)?;
       } else {
-        variants.push(Variant::Unit(loc, name));
+        let def_id = self.repo.def(Def::UnitVariant(UnitVariantDef {
+          loc: loc.clone(),
+          name,
+          parent_enum: *self.repo.current_scope.last().unwrap(),
+          variant_index: variants.len()
+        }));
+        variants.push(def_id);
+        self.repo.sym(loc, name, def_id)?;
       }
-      if maybe_want!(self, Token::RParen) { break }
+      if maybe_want!(self, Token::RParen) { return Ok(variants) }
       want!(self, Token::Comma, ())?;
     }
-
-    Ok(variants)
   }
 
   fn parse_const(&mut self, loc: SourceLocation) -> Result<(), CompileError> {

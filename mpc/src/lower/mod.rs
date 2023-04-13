@@ -128,35 +128,13 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       *ty
     } else {
       let inst = self.insts.get(&id).unwrap();
-      let ty = self.lower_ty_def(inst);
+      let ty = self.lower_ty_def(&id, inst);
       self.types.insert(id, ty);
       ty
     }
   }
 
-  fn get_variant_type(&mut self, ty: &Ty, index: usize) -> llvm::Type<'ctx> {
-    let id = match self.tctx.final_ty(ty) {
-      Ty::EnumRef(_, id) => (id.0, self.tctx.final_type_args(&id.1)),
-      _ => unreachable!()
-    };
-    match self.insts.get(&id).unwrap() {
-      Inst::Enum { variants: Some(variants), .. } => {
-        match &variants[index] {
-          Variant::Unit(_) => unreachable!(),
-          Variant::Struct(_, params) => {
-            let l_params: Vec<llvm::Type<'ctx>> = params
-              .iter()
-              .map(|(_, ty)| self.lower_ty(ty))
-              .collect();
-            self.lower_struct(&l_params)
-          }
-        }
-      }
-      _ => unreachable!()
-    }
-  }
-
-  fn lower_ty_def(&mut self, inst: &Inst) -> llvm::Type<'ctx> {
+  fn lower_ty_def(&mut self, id: &(DefId, Vec<Ty>), inst: &Inst) -> llvm::Type<'ctx> {
     let fields = match inst {
       Inst::Struct { params: Some(params), .. } => {
         // This is the simplest case, LLVM has native support for structures
@@ -174,23 +152,16 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
 
         self.lower_union(&l_params)
       }
-      Inst::Enum { variants: Some(variants), .. } => {
+      Inst::Enum { variants, .. } => {
         // Enum lowering is done by adding a discriminant (always a dword for now)
         // Followed by the variants lowered as if they were parameters of a union
 
         // Convert struct-like variants into LLVM types
         let mut variant_tys = vec![];
-        for variant in variants {
-          match variant {
-            Variant::Unit(_) => (),
-            Variant::Struct(_, params) => {
-              let l_params: Vec<llvm::Type<'ctx>> = params
-                .iter()
-                .map(|(_, ty)| self.lower_ty(ty))
-                .collect();
-              variant_tys.push(self.lower_struct(&l_params));
-            }
-          }
+
+        for variant_id in variants.iter() {
+          self.lower_variant_def(&(*variant_id, id.1.clone())).1
+            .map(|l_type| variant_tys.push(l_type));
         }
 
         // Create actual enum parameters
@@ -203,6 +174,25 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
     };
 
     self.context.ty_struct(&fields)
+  }
+
+
+  fn lower_variant_def(&mut self, id: &(DefId, Vec<Ty>)) -> (usize, Option<llvm::Type<'ctx>>) {
+    let id = (id.0, self.tctx.final_type_args(&id.1));
+
+    match self.insts.get(&id).unwrap() {
+      Inst::UnitVariant { variant_index, .. } => {
+        (*variant_index, None)
+      }
+      Inst::StructVariant { variant_index, params, .. } => {
+        let l_params: Vec<llvm::Type<'ctx>> = params
+          .iter()
+          .map(|(_, ty)| self.lower_ty(ty))
+          .collect();
+        (*variant_index, Some(self.lower_struct(&l_params)))
+      }
+      _ => unreachable!()
+    }
   }
 
   fn lower_union(&mut self, l_params: &[llvm::Type<'ctx>]) -> Vec<llvm::Type<'ctx>> {
@@ -552,18 +542,23 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         }
         storage
       }
-      LValue::UnitVariantLit { ty, index, .. } => {
+      LValue::UnitVariantLit { ty, id, .. } => {
         let storage = self.allocate_local(ty);
+        // Lower variant
+        let (vindex, _) = self.lower_variant_def(id);
         // Write tag
-        let tag = self.build_int(&Ty::Int32, *index);
+        let tag = self.build_int(&Ty::Int32, vindex);
         self.build_store(&Ty::Int32, storage, tag);
         storage
       }
-      LValue::StructVariantLit { ty, index, fields, .. } => {
+      LValue::StructVariantLit { ty, id, fields, .. } => {
         let storage = self.allocate_local(ty);
 
+        // Lower variant
+        let (vindex, vtype) = self.lower_variant_def(id);
+
         // Write tag
-        let tag = self.build_int(&Ty::Int32, *index);
+        let tag = self.build_int(&Ty::Int32, vindex);
         self.build_store(&Ty::Int32, storage, tag);
 
         // Get data pointer
@@ -571,13 +566,10 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         let data_ptr = self.build_gep(l_type, storage, 1);
 
         // Store each field of the struct variant
-        if fields.len() > 0 {
-          let variant_type = self.get_variant_type(ty, *index);
-          for (index, field) in fields.iter().enumerate() {
-            let dest = self.build_gep(variant_type, data_ptr, index);
-            self.lower_rvalue(field)
-              .map(|val| self.build_store(field.ty(), dest, val));
-          }
+        for (index, field) in fields.iter().enumerate() {
+          let dest = self.build_gep(vtype.unwrap(), data_ptr, index);
+          self.lower_rvalue(field)
+            .map(|val| self.build_store(field.ty(), dest, val));
         }
         storage
       }
@@ -848,20 +840,20 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         let mut values = Vec::new();
         let mut blocks = Vec::new();
 
-        for (bindings, val) in cases.iter() {
+        for (id, bindings, val) in cases.iter() {
+          // Lower variant
+          let (vindex, vtype) = self.lower_variant_def(id);
+
           let block = self.new_block();
           tag_to_block.push((
-            self.build_int(&Ty::Int32, tag_to_block.len()),
+            self.build_int(&Ty::Int32, vindex),
             block
           ));
 
           self.enter_block(block);
-          if bindings.len() > 0 {
-            let variant_type = self.get_variant_type(cond.ty(), tag_to_block.len() - 1);
-            for (index, binding) in bindings.iter().enumerate() {
-              let l_binding_val = self.build_gep(variant_type, data_ptr, index);
-              self.locals.insert(*binding, l_binding_val);
-            }
+          for (index, binding) in bindings.iter().enumerate() {
+            let l_binding_val = self.build_gep(vtype.unwrap(), data_ptr, index);
+            self.locals.insert(*binding, l_binding_val);
           }
           values.push(self.lower_rvalue(val));
           blocks.push(self.builder.get_block().unwrap());

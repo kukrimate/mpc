@@ -189,11 +189,10 @@ impl<'a> ResolveCtx<'a> {
                                     def_id,
                                     self.resolve_ty_args(type_args)?)
             }
-            parse::Def::Variant(def) => {
+            parse::Def::UnitVariant(..) => {
               ResolvedExpr::UnitVariantLit(loc.clone(),
-                                           def.parent_enum,
-                                           self.resolve_ty_args(type_args)?,
-                                           def.variant_index)
+                                           def_id,
+                                           self.resolve_ty_args(type_args)?)
             }
             _ => Err(CompileError::InvalidValueName(loc.clone(), path.clone()))?
           }
@@ -269,11 +268,10 @@ impl<'a> ResolveCtx<'a> {
                 parse::Def::Union(..) => {
                   Err(CompileError::InvalidUnionLiteral(loc.clone()))?
                 }
-                parse::Def::Variant(def) => {
+                parse::Def::StructVariant(..) => {
                   break ResolvedExpr::StructVariantLit(loc.clone(),
-                                                       def.parent_enum,
+                                                       def_id,
                                                        self.resolve_ty_args(type_args)?,
-                                                       def.variant_index,
                                                        args);
                 }
                 _ => ()
@@ -471,29 +469,52 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
                                   }));
       }
       parse::Def::Enum(def) => {
-        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
+        // Create resolved enum definition
         repo.resolved_defs.insert(*def_id,
                                   ResolvedDef::Enum(ResolvedEnumDef {
                                     loc: def.loc.clone(),
                                     name: def.name,
                                     type_params: def.type_params.len(),
-                                    variants: def.variants
-                                      .iter()
-                                      .map(|variant| Ok(match variant {
-                                        parse::Variant::Unit(loc, name) => {
-                                          ResolvedVariant::Unit(loc.clone(), *name)
-                                        },
-                                        parse::Variant::Struct(loc, name, params) => {
-                                          ResolvedVariant::Struct(loc.clone(),
-                                                                  *name,
-                                                                  ctx.resolve_params(params)?)
-                                        }
-                                      }))
-                                      .monadic_collect()?,
+                                    variants: def.variants.clone()
                                   }));
+
+        // Resolve variants
+        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id), &def.type_params);
+        let mut resolved_variants = Vec::new();
+
+        for variant_id in def.variants.iter() {
+          match repo.parsed_defs.get(variant_id) {
+            Some(parse::Def::UnitVariant(def)) => {
+              resolved_variants.push((*variant_id,
+                                        ResolvedDef::UnitVariant(ResolvedUnitVariantDef {
+                                          loc: def.loc.clone(),
+                                          name: def.name,
+                                          parent_enum: def.parent_enum,
+                                          variant_index: def.variant_index
+                                        })));
+
+            }
+            Some(parse::Def::StructVariant(def)) => {
+              resolved_variants.push((*variant_id,
+                                        ResolvedDef::StructVariant(ResolvedStructVariantDef {
+                                          loc: def.loc.clone(),
+                                          name: def.name,
+                                          parent_enum: def.parent_enum,
+                                          variant_index: def.variant_index,
+                                          params: ctx.resolve_params(&def.params)?
+                                        })));
+            }
+            _ => unreachable!()
+          }
+        }
+
+        for (variant_id, def) in resolved_variants.into_iter() {
+          repo.resolved_defs.insert(variant_id, def);
+        }
       }
-      parse::Def::Variant(..) => {
-        // NOTE: this does not exist in resolved form
+      parse::Def::UnitVariant(..) |
+      parse::Def::StructVariant(..) => {
+        // NOTE: no-op as these get resolved alongside their parent enum
       }
       parse::Def::Const(def) => {
         let mut ctx = ResolveCtx::new(repo, repo.parent(*def_id));

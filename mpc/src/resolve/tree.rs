@@ -50,8 +50,8 @@ pub enum ResolvedExpr {
   ArrayLit(SourceLocation, Vec<ResolvedExpr>),
   StructLit(SourceLocation, DefId, Vec<ResolvedTy>, Vec<(RefStr, ResolvedExpr)>),
   UnionLit(SourceLocation, DefId, Vec<ResolvedTy>, RefStr, Box<ResolvedExpr>),
-  UnitVariantLit(SourceLocation, DefId, Vec<ResolvedTy>, usize),
-  StructVariantLit(SourceLocation, DefId, Vec<ResolvedTy>, usize, Vec<(RefStr, ResolvedExpr)>),
+  UnitVariantLit(SourceLocation, DefId, Vec<ResolvedTy>),
+  StructVariantLit(SourceLocation, DefId, Vec<ResolvedTy>, Vec<(RefStr, ResolvedExpr)>),
 
   // References
   FuncRef(SourceLocation, DefId, Vec<ResolvedTy>),
@@ -138,8 +138,8 @@ impl ResolvedExpr {
       ResolvedExpr::ArrayLit(loc, _) => loc,
       ResolvedExpr::StructLit(loc, _, _, _) => loc,
       ResolvedExpr::UnionLit(loc, _, _, _, _) => loc,
-      ResolvedExpr::UnitVariantLit(loc, _, _, _) => loc,
-      ResolvedExpr::StructVariantLit(loc, _, _, _, _) => loc,
+      ResolvedExpr::UnitVariantLit(loc, _, _) => loc,
+      ResolvedExpr::StructVariantLit(loc, _, _, _) => loc,
       ResolvedExpr::FuncRef(loc, _, _) => loc,
       ResolvedExpr::ExternFuncRef(loc, _) => loc,
       ResolvedExpr::ConstRef(loc, _) => loc,
@@ -159,6 +159,8 @@ pub enum ResolvedDef {
   Struct(ResolvedStructDef),
   Union(ResolvedUnionDef),
   Enum(ResolvedEnumDef),
+  UnitVariant(ResolvedUnitVariantDef),
+  StructVariant(ResolvedStructVariantDef),
   Const(ResolvedConstDef),
   Data(ResolvedDataDef),
   Func(ResolvedFuncDef),
@@ -181,6 +183,14 @@ impl ResolvedDef {
 
   pub fn unwrap_enum(&self) -> &ResolvedEnumDef {
     if let ResolvedDef::Enum(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_unit_variant(&self) -> &ResolvedUnitVariantDef {
+    if let ResolvedDef::UnitVariant(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_struct_variant(&self) -> &ResolvedStructVariantDef {
+    if let ResolvedDef::StructVariant(def) = self { def } else { unreachable!( ) }
   }
 
   pub fn unwrap_const(&self) -> &ResolvedConstDef {
@@ -232,13 +242,24 @@ pub struct ResolvedEnumDef {
   pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
-  pub variants: Vec<ResolvedVariant>,
+  pub variants: Vec<DefId>,
 }
 
-#[derive(Debug)]
-pub enum ResolvedVariant {
-  Unit(SourceLocation, RefStr),
-  Struct(SourceLocation, RefStr, Vec<(RefStr, ResolvedTy)>),
+#[derive(Clone, Debug)]
+pub struct ResolvedUnitVariantDef {
+  pub loc: SourceLocation,
+  pub name: RefStr,
+  pub parent_enum: DefId,
+  pub variant_index: usize
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedStructVariantDef {
+  pub loc: SourceLocation,
+  pub name: RefStr,
+  pub parent_enum: DefId,
+  pub variant_index: usize,
+  pub params: Vec<(RefStr, ResolvedTy)>
 }
 
 #[derive(Debug)]

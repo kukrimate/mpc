@@ -161,7 +161,8 @@ pub enum Def {
   Struct(StructDef),
   Union(UnionDef),
   Enum(EnumDef),
-  Variant(VariantDef),
+  UnitVariant(UnitVariantDef),
+  StructVariant(StructVariantDef),
   Const(ConstDef),
   Data(DataDef),
   Func(FuncDef),
@@ -197,11 +198,11 @@ pub struct EnumDef {
   pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub variants: Vec<Variant>
+  pub variants: Vec<DefId>
 }
 
 #[derive(Clone, Debug)]
-pub struct VariantDef {
+pub struct UnitVariantDef {
   pub loc: SourceLocation,
   pub name: RefStr,
   pub parent_enum: DefId,
@@ -209,9 +210,12 @@ pub struct VariantDef {
 }
 
 #[derive(Clone, Debug)]
-pub enum Variant {
-  Unit(SourceLocation, RefStr),
-  Struct(SourceLocation, RefStr, Vec<(RefStr, Ty)>),
+pub struct StructVariantDef {
+  pub loc: SourceLocation,
+  pub name: RefStr,
+  pub parent_enum: DefId,
+  pub variant_index: usize,
+  pub params: Vec<(RefStr, Ty)>
 }
 
 #[derive(Clone, Debug)]

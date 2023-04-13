@@ -57,7 +57,18 @@ pub enum Inst {
   },
   Enum {
     name: RefStr,
-    variants: Option<Vec<Variant>>
+    variants: Vec<DefId>
+  },
+  UnitVariant {
+    name: RefStr,
+    parent_enum: (DefId, Vec<Ty>),
+    variant_index: usize
+  },
+  StructVariant {
+    name: RefStr,
+    parent_enum: (DefId, Vec<Ty>),
+    variant_index: usize,
+    params: Vec<(RefStr, Ty)>
   },
   Func {
     name: RefStr,
@@ -100,26 +111,19 @@ impl Inst {
     }
   }
 
-  pub fn unwrap_enum(&self) -> (&RefStr, &Vec<Variant>) {
+  pub fn unwrap_enum(&self) -> (&RefStr, &Vec<DefId>) {
     if let Inst::Enum { name, variants } = self {
-      (name, variants.as_ref().unwrap())
+      (name, variants)
     } else {
       unreachable!()
     }
   }
-}
 
-#[derive(Clone, Debug)]
-pub enum Variant {
-  Unit(RefStr),
-  Struct(RefStr, Vec<(RefStr, Ty)>),
-}
-
-impl Variant {
-  fn name(&self) -> RefStr {
-    match self {
-      Variant::Unit(name) => *name,
-      Variant::Struct(name, _) => *name
+  pub fn unwrap_struct_variant(&self) -> &Vec<(RefStr, Ty)> {
+    if let Inst::StructVariant { params, .. } = self {
+      params
+    } else {
+      unreachable!()
     }
   }
 }
@@ -222,8 +226,8 @@ pub enum LValue {
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
   StructLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
   UnionLit { ty: Ty, is_mut: IsMut, field: RValue },
-  UnitVariantLit { ty: Ty, is_mut: IsMut, index: usize },
-  StructVariantLit { ty: Ty, is_mut: IsMut, index: usize, fields: Vec<RValue> },
+  UnitVariantLit { ty: Ty, is_mut: IsMut, id: (DefId, Vec<Ty>) },
+  StructVariantLit { ty: Ty, is_mut: IsMut, id: (DefId, Vec<Ty>), fields: Vec<RValue> },
   StruDot { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: usize },
   UnionDot { ty: Ty, is_mut: IsMut, arg: Box<LValue> },
   Index { ty: Ty, is_mut: IsMut, arg: Box<LValue>, idx: Box<RValue> },
@@ -258,7 +262,7 @@ pub enum RValue {
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
-  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Vec<LocalId>, RValue)> }
+  Match { ty: Ty, cond: Box<RValue>, cases: Vec<((DefId, Vec<Ty>), Vec<LocalId>, RValue)> }
 }
 
 impl LValue {

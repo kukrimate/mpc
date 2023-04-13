@@ -85,13 +85,21 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
   }
 
   fn inst_struct(&mut self, loc: SourceLocation, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
+    // Use existing definition if present
     let def = self.resolved_def(id.0).unwrap_struct();
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::StructRef(def.name, id)); }
+    if let Some(..) = self.insts.get(&id) {
+      return Ok(Ty::StructRef(def.name, id));
+    }
 
-    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
+    // Verify type argument count
     if def.type_params != id.1.len() {
       return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
     }
+
+    // Insert signature record
+    self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
+
+    // Instantiate body
     let mut def_ctx = DefCtx::new(self, id.1.clone());
     let params = def_ctx.infer_params(&def.params)?;
     self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: Some(params) });
@@ -101,12 +109,16 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
 
   fn inst_union(&mut self, loc: SourceLocation, id: (DefId, Vec<Ty>)) -> Result<Ty, CompileError> {
     let def = self.resolved_def(id.0).unwrap_union();
-    if let Some(..) = self.insts.get(&id) { return Ok(Ty::UnionRef(def.name, id)); }
+    if let Some(..) = self.insts.get(&id) {
+      return Ok(Ty::UnionRef(def.name, id));
+    }
 
-    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
     if def.type_params != id.1.len() {
       return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
     }
+
+    self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
+
     let mut def_ctx = DefCtx::new(self, id.1.clone());
     let params = def_ctx.infer_params(&def.params)?;
     self.insts.insert(id.clone(), Inst::Union { name: def.name, params: Some(params) });
@@ -118,14 +130,35 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     let def = self.resolved_def(id.0).unwrap_enum();
     if let Some(..) = self.insts.get(&id) { return Ok(Ty::EnumRef(def.name, id)); }
 
-    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: None });
     if def.type_params != id.1.len() {
       return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
     }
 
+    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: def.variants.clone() });
+
     let mut def_ctx = DefCtx::new(self, id.1.clone());
-    let variants = def_ctx.infer_variants(&def.variants)?;
-    self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: Some(variants) });
+
+    for variant_id in def.variants.iter() {
+      match def_ctx.global.repo.resolved_defs.get(variant_id) {
+        Some(ResolvedDef::UnitVariant(def)) => {
+          def_ctx.global.insts.insert((*variant_id, id.1.clone()), Inst::UnitVariant {
+            name: def.name,
+            parent_enum: (def.parent_enum, id.1.clone()),
+            variant_index: def.variant_index
+          });
+        }
+        Some(ResolvedDef::StructVariant(def)) => {
+          let params = def_ctx.infer_params(&def.params)?;
+          def_ctx.global.insts.insert((*variant_id, id.1.clone()), Inst::StructVariant {
+            name: def.name,
+            parent_enum: (def.parent_enum, id.1.clone()),
+            variant_index: def.variant_index,
+            params
+          });
+        }
+        _ => unreachable!()
+      }
+    }
 
     Ok(Ty::EnumRef(def.name, id))
   }
@@ -345,21 +378,6 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(result)
   }
 
-  fn infer_variants(&mut self, variants: &Vec<ResolvedVariant>) -> Result<Vec<Variant>, CompileError> {
-    let mut result = vec![];
-    for variant in variants.iter() {
-      result.push(match variant {
-        ResolvedVariant::Unit(_loc, name) => {
-          Variant::Unit(*name)
-        }
-        ResolvedVariant::Struct(_loc, name, params) => {
-          Variant::Struct(*name, self.infer_params(params)?)
-        }
-      })
-    }
-    Ok(result)
-  }
-
   fn infer_type_args(&mut self, type_args: &Vec<ResolvedTy>) -> Result<Vec<Ty>, CompileError> {
     type_args
       .iter()
@@ -482,49 +500,43 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           field: val
         }
       }
-      UnitVariantLit(loc, def_id, type_args, index) => {
-        let def = self.global.resolved_def(*def_id).unwrap_enum();
+      UnitVariantLit(loc, def_id, type_args) => {
+        let variant_def = self.global.resolved_def(*def_id).unwrap_unit_variant();
+        let enum_def = self.global.resolved_def(variant_def.parent_enum).unwrap_enum();
         let type_args: Vec<Ty> = if type_args.len() > 0 {
           self.infer_type_args(type_args)?
         } else {
-          (0..def.type_params)
+          (0..enum_def.type_params)
             .map(|_| self.global.tctx.new_var(Bound::Any))
             .collect()
         };
-        let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
-        let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
-        match &variants[*index] {
-          Variant::Unit(..) => (),
-          Variant::Struct(..) => Err(CompileError::StructVariantExpectedArguments(loc.clone()))?
-        }
-        LValue::UnitVariantLit { ty, is_mut: IsMut::No, index: *index }
+        let ty = self.global.inst_enum(loc.clone(), (variant_def.parent_enum, type_args.clone()))?;
+        LValue::UnitVariantLit { ty, is_mut: IsMut::No, id: (*def_id, type_args) }
       }
-      StructVariantLit(loc, def_id, type_args, index, fields) => {
-        let def = self.global.resolved_def(*def_id).unwrap_enum();
+      StructVariantLit(loc, def_id, type_args, fields) => {
+        let variant_def = self.global.resolved_def(*def_id).unwrap_struct_variant();
+        let enum_def = self.global.resolved_def(variant_def.parent_enum).unwrap_enum();
         let type_args: Vec<Ty> = if type_args.len() > 0 {
           self.infer_type_args(type_args)?
         } else {
-          (0..def.type_params)
+          (0..enum_def.type_params)
             .map(|_| self.global.tctx.new_var(Bound::Any))
             .collect()
         };
-        let ty = self.global.inst_enum(loc.clone(), (*def_id, type_args.clone()))?;
-        let (_, variants) = self.global.find_inst(&(*def_id, type_args)).unwrap_enum();
-        let variant = variants[*index].clone();
+
+        let ty = self.global.inst_enum(loc.clone(), (variant_def.parent_enum, type_args.clone()))?;
         let inferred_args = fields
           .iter()
           .map(|(name, arg)| Ok((*name, self.infer_rvalue(arg)?)))
           .monadic_collect()?;
-        match variant {
-          Variant::Unit(..) => Err(CompileError::UnitVariantUnexpectedArguments(loc.clone()))?,
-          Variant::Struct(_, params) => {
-            LValue::StructVariantLit {
-              ty,
-              is_mut: IsMut::No,
-              index: *index,
-              fields: self.typecheck_args(loc.clone(), &params.clone(), false, inferred_args)?
-            }
-          }
+
+        let params = self.global.find_inst(&(*def_id, type_args.clone())).unwrap_struct_variant().clone();
+
+        LValue::StructVariantLit {
+          ty,
+          is_mut: IsMut::No,
+          id: (*def_id, type_args),
+          fields: self.typecheck_args(loc.clone(), &params, false, inferred_args)?
         }
       }
       Str(_loc, val) => {
@@ -1033,57 +1045,68 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     // Infer condition + find enum variants
     let cond = self.infer_rvalue(cond)?;
 
+    // Figure out matched enum type
+    let (def_id, type_args) = match self.global.tctx.canonical_ty(cond.ty()) {
+      Ty::EnumRef(_, id) => id,
+      _ => { return Err(CompileError::CannotMatchType(loc.clone(), cond.ty().clone())) }
+    };
+
     // Figure out if the pattern bindings should be mutable
     let binding_mut = match &cond {
       RValue::Load { arg, .. } => arg.is_mut(),
       _ => IsMut::No
     };
 
-    // Collect list of patterns
-    let mut pattern_map = HashMap::new();
+    // Create mapping from enum variants to patterns
+    let mut variant_to_value = HashMap::new();
+
     for (pattern, val) in patterns.iter() {
-      if let Some(..) = pattern_map.insert(pattern.name(), (pattern, val)) {
-        return Err(CompileError::DuplicateMatchCase(loc))
+      // Find variant corresponding to pattern
+      let variant_id = if let Some(variant_id) = self.global.repo.locate(def_id, &parse::Path(vec![ pattern.name() ])) {
+        variant_id
+      } else {
+        return Err(CompileError::IncorrectMatchCase(loc.clone()));
+      };
+      // Save value into variant to value mp
+      if let Some(..) = variant_to_value.insert(variant_id, (pattern, val)) {
+        return Err(CompileError::DuplicateMatchCase(loc.clone()))
       }
     }
 
+    // Verify that no variants are missing
+    let (_, variants) = self.global.find_inst(&(def_id, type_args.clone())).unwrap_enum();
+    if variant_to_value.len() != variants.len() {
+      return Err(CompileError::MissingMatchCase(loc.clone()))?
+    }
+
     // Iterate the variants of the matched enum
-    let mut inferred_cases = Vec::new();
+    let mut cases = Vec::new();
 
-    let variants = match self.global.tctx.canonical_ty(cond.ty()) {
-      Ty::EnumRef(_, id) => { self.global.find_inst(&id).unwrap_enum().1.clone() },
-      _ => { return Err(CompileError::CannotMatchType(loc.clone(), cond.ty().clone())) }
-    };
-
-    for variant in variants.iter() {
-      let (pattern, val) = pattern_map
-        .remove(&variant.name())
-        .ok_or_else(|| CompileError::MissingMatchCase(loc.clone()))?;
-      match (variant, pattern) {
-        (Variant::Unit(..), ResolvedPattern::Unit(..)) => {
-          inferred_cases.push((Vec::new(), self.infer_rvalue(val)?));
+    for (variant_id, (pattern, value)) in variant_to_value.into_iter() {
+      let id = (variant_id, type_args.clone());
+      let inst = self.global.find_inst(&id);
+      match (inst, pattern) {
+        (Inst::UnitVariant { .. }, ResolvedPattern::Unit(..)) => {
+          cases.push((id.clone(), Vec::new(), self.infer_rvalue(value)?));
         }
-        (Variant::Struct(_, params), ResolvedPattern::Struct(_, bindings))
+        (Inst::StructVariant { params, .. }, ResolvedPattern::Struct(_, bindings))
             if params.len() == bindings.len() => {
           for (index, binding) in bindings.iter().enumerate() {
             let (_, ty) = params.get(index).unwrap();
             self.locals.insert(*binding, (binding_mut, ty.clone()));
           }
-          inferred_cases.push((bindings.clone(), self.infer_rvalue(val)?));
+          cases.push((id.clone(), bindings.clone(), self.infer_rvalue(value)?));
         }
         _ => return Err(CompileError::IncorrectMatchCase(loc.clone()))
       };
     }
 
-    // Make sure there are no cases left over
-    if pattern_map.len() > 0 { return Err(CompileError::IncorrectMatchCase(loc.clone())) }
-
     // Unify case types
-    let ty = if inferred_cases.len() > 0 {
-      inferred_cases[1..]
+    let ty = if cases.len() > 0 {
+      cases[1..]
         .iter()
-        .map(|(_, val)| val.ty())
-        .try_fold(inferred_cases[0].1.ty().clone(),
+        .map(|(_, _, val)| val.ty())
+        .try_fold(cases[0].2.ty().clone(),
                   |a, b| self.global.tctx.unify(loc.clone(), &a, b))?
     } else {
       Ty::Unit
@@ -1092,7 +1115,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(RValue::Match {
       ty,
       cond: Box::new(cond),
-      cases: inferred_cases
+      cases
     })
   }
 }
