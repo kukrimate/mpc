@@ -5,7 +5,6 @@
 
 use crate::*;
 use crate::util::RefStr;
-use crate::resolve::{ResolvedDef,resolve_defs};
 
 use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt;
@@ -26,13 +25,7 @@ pub struct Repository {
   ino_to_module: HashMap<u64, DefId>,
   parent_scope: HashMap<DefId, DefId>,
   pub parsed_defs: HashMap<DefId, Def>,
-  pub resolved_defs: HashMap<DefId, ResolvedDef>,
   pub syms: HashMap<DefId, HashMap<RefStr, DefId>>,
-  // FIXME: this definition shouldn't be separate from the symbol table
-  //  as method names should be resolvable like regular symbols.
-  //  But to achieve that, we would need an "early" and "late" resolution pass,
-  //  so this shall be relegated to the future.
-  pub methods: HashMap<DefId, HashMap<RefStr, DefId>>
 }
 
 impl Repository {
@@ -45,36 +38,25 @@ impl Repository {
       ino_to_module: HashMap::new(),
       parent_scope: HashMap::new(),
       parsed_defs: HashMap::new(),
-      resolved_defs: HashMap::new(),
       syms: HashMap::new(),
-      methods: HashMap::new()
     }
   }
 
-  pub fn locate(&self, scope_id: DefId, path: &Path) -> Option<DefId> {
+  pub fn locate_path(&self, scope_id: DefId, path: &Path) -> Option<DefId> {
     let mut cur_id = scope_id;
     for crumb in path.crumbs().iter() {
-      let symtab = self.syms.get(&cur_id).unwrap();
-      if let Some(def_id) = symtab.get(crumb) {
-        cur_id = *def_id;
-      } else {
-        return None
-      }
+      cur_id = self.locate_name(cur_id, *crumb)?;
     }
     Some(cur_id)
   }
 
-  pub fn locate_method(&self, receiver_id: DefId, name: RefStr) -> Option<DefId> {
-    let symtab = self.methods.get(&receiver_id)?;
-    symtab.get(&name).cloned()
+  pub fn locate_name(&self, scope_id: DefId, name: RefStr) -> Option<DefId> {
+    let scope = self.syms.get(&scope_id)?;
+    scope.get(&name).cloned()
   }
 
   pub fn parent(&self, def_id: DefId) -> DefId {
     *self.parent_scope.get(&def_id).unwrap()
-  }
-
-  pub fn parsed_by_id(&self, def_id: DefId) -> &Def {
-    self.parsed_defs.get(&def_id).unwrap()
   }
 
   fn new_id(&mut self) -> DefId {
@@ -148,11 +130,57 @@ impl Repository {
 
     result
   }
+
+  fn resolve_methods(&mut self) -> Result<(), CompileError> {
+    let mut q = Vec::new();
+
+    for (def_id, def) in self.parsed_defs.iter() {
+      match def {
+        Def::Func(def) => {
+          if let Some((_, _, ty)) = &def.receiver {
+            let scope_id = self.parent(*def_id);
+            let receiver_id = self.find_receiver_id(scope_id, ty)?;
+            q.push((def.loc.clone(), receiver_id, def.name, *def_id));
+          }
+        }
+        _ => ()
+      }
+    }
+
+    for (loc, receiver_id, name, method_id) in q.into_iter() {
+      self.current_scope.push(receiver_id);
+      let result = self.sym(loc, name, method_id);
+      self.current_scope.pop();
+      result?;
+    }
+
+    Ok(())
+  }
+
+  fn find_receiver_id(&self, scope_id: DefId, ty: &Ty) -> Result<DefId, CompileError> {
+    match ty {
+      Ty::Inst(_ , path, _) => self.validate_receiver(ty.loc(), scope_id, path),
+      Ty::Ptr(_, _, base) => match &**base {
+        Ty::Inst(_, path, _) => self.validate_receiver(ty.loc(), scope_id, path),
+        _ => Err(CompileError::InvalidMethodReceiver(ty.loc().clone()))
+      }
+      _ => Err(CompileError::InvalidMethodReceiver(ty.loc().clone()))
+    }
+  }
+
+  fn validate_receiver(&self, loc: &SourceLocation, scope_id: DefId, path: &Path) -> Result<DefId, CompileError> {
+    let receiver_id = self.locate_path(scope_id, path)
+      .ok_or_else(|| CompileError::InvalidMethodReceiver(loc.clone()))?;
+    match self.parsed_defs.get(&receiver_id).unwrap() {
+      Def::Struct(..) | Def::Union(..) | Def::Enum(..) => Ok(receiver_id),
+      _ => Err(CompileError::InvalidMethodReceiver(loc.clone()))?
+    }
+  }
 }
 
 pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, CompileError> {
   let mut repo = Repository::new();
   repo.parse_module(path)?;
-  resolve_defs(&mut repo)?;
+  repo.resolve_methods()?;
   Ok(repo)
 }

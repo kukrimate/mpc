@@ -60,6 +60,32 @@ pub enum Ty {
   Tuple(SourceLocation, Vec<(RefStr, Ty)>)
 }
 
+impl Ty {
+  pub fn loc(&self) -> &SourceLocation {
+    match self {
+      Ty::Bool(loc) => loc,
+      Ty::Uint8(loc) => loc,
+      Ty::Int8(loc) => loc,
+      Ty::Uint16(loc) => loc,
+      Ty::Int16(loc) => loc,
+      Ty::Uint32(loc) => loc,
+      Ty::Int32(loc) => loc,
+      Ty::Uint64(loc) => loc,
+      Ty::Int64(loc) => loc,
+      Ty::Uintn(loc) => loc,
+      Ty::Intn(loc) => loc,
+      Ty::Float(loc) => loc,
+      Ty::Double(loc) => loc,
+      Ty::Inst(loc, _, _) => loc,
+      Ty::Ptr(loc, _, _) => loc,
+      Ty::Func(loc, _, _) => loc,
+      Ty::Arr(loc, _, _) => loc,
+      Ty::Unit(loc) => loc,
+      Ty::Tuple(loc, _) => loc,
+    }
+  }
+}
+
 #[derive(Clone,Copy,Debug)]
 pub enum UnOp {
   UPlus, UMinus, Not
@@ -110,6 +136,15 @@ pub enum Expr {
 pub enum Pattern {
   Unit(RefStr),
   Struct(RefStr, Vec<RefStr>)
+}
+
+impl Pattern {
+  pub fn name(&self) -> RefStr {
+    match self {
+      Pattern::Unit(name) => *name,
+      Pattern::Struct(name, _) => *name
+    }
+  }
 }
 
 impl Expr {
@@ -170,10 +205,58 @@ pub enum Def {
   ExternFunc(ExternFuncDef)
 }
 
+#[allow(dead_code)]
+impl Def {
+  pub fn unwrap_type(&self) -> &TypeDef {
+    if let Def::Type(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_struct(&self) -> &StructDef {
+    if let Def::Struct(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_union(&self) -> &UnionDef {
+    if let Def::Union(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_enum(&self) -> &EnumDef {
+    if let Def::Enum(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_unit_variant(&self) -> &UnitVariantDef {
+    if let Def::UnitVariant(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_struct_variant(&self) -> &StructVariantDef {
+    if let Def::StructVariant(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_const(&self) -> &ConstDef {
+    if let Def::Const(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_data(&self) -> &DataDef {
+    if let Def::Data(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_func(&self) -> &FuncDef {
+    if let Def::Func(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_extern_data(&self) -> &ExternDataDef {
+    if let Def::ExternData(def) = self { def } else { unreachable!( ) }
+  }
+
+  pub fn unwrap_extern_func(&self) -> &ExternFuncDef {
+    if let Def::ExternFunc(def) = self { def } else { unreachable!( ) }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct TypeDef {
   pub loc: SourceLocation,
   pub name: RefStr,
+  pub type_params: Vec<RefStr>,
   pub ty: Ty
 }
 

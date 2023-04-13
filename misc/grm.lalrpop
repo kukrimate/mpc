@@ -239,7 +239,7 @@ ArrayElementList: () = {
 // Definitions
 
 TypeDefinition: () = {
-  "type" Identifier "=" TypeName,
+  "type" Identifier ("<" IdentifierList ">")? "=" TypeName,
   "struct" Identifier ("<" IdentifierList ">")? "(" ParameterList? ")",
   "union" Identifier ("<" IdentifierList ">")? "(" ParameterList? ")",
   "enum" Identifier ("<" IdentifierList ">")? "(" VariantList? ")"

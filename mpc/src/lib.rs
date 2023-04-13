@@ -7,7 +7,6 @@
 #![feature(hash_raw_entry)]
 
 mod parse;
-mod resolve;
 mod sema;
 mod lower;
 pub mod util;
@@ -50,7 +49,6 @@ pub enum CompileError {
   UnknownModule(SourceLocation, RefStr),
   Redefinition(SourceLocation, RefStr),
   UnresolvedPath(SourceLocation, parse::Path),
-  InvalidValueName(SourceLocation, parse::Path),
   InvalidTypeName(SourceLocation, parse::Path),
   InvalidUnionLiteral(SourceLocation),
   CannotUnifyBounds(SourceLocation, sema::Bound, sema::Bound),
@@ -65,6 +63,7 @@ pub enum CompileError {
   CannotMatchType(SourceLocation, sema::Ty),
   CannotAssignImmutable(SourceLocation),
   InvalidLvalueExpression(SourceLocation),
+  InvalidRValueExpression(SourceLocation, parse::Path),
   ContinueOutsideLoop(SourceLocation),
   BreakOutsideLoop(SourceLocation),
   ReturnOutsideFunction(SourceLocation),
@@ -72,7 +71,7 @@ pub enum CompileError {
   DuplicateMatchCase(SourceLocation),
   MissingMatchCase(SourceLocation),
   IncorrectMatchCase(SourceLocation),
-  InvalidMethodReceiverType(SourceLocation, resolve::ResolvedTy),
+  InvalidMethodReceiver(SourceLocation),
   MethodCallWithoutReceiver(SourceLocation),
   InvalidConstantExpression(SourceLocation)
 }
@@ -91,7 +90,6 @@ impl std::fmt::Display for CompileError {
       CompileError::UnknownModule(location, name) => write!(f, "Error at {}: Unknown module {}", location, name),
       CompileError::Redefinition(location, name) => write!(f, "Error at {}: Re-definition of {}", location, name),
       CompileError::UnresolvedPath(location, path) => write!(f, "Error at {}: Unresolved path {}", location, path),
-      CompileError::InvalidValueName(location, path) => write!(f, "Error at {}: {} does not refer to a value", location, path),
       CompileError::InvalidTypeName(location, path) => write!(f, "Error at {}: {} does not refer to a type", location, path),
       CompileError::InvalidUnionLiteral(location) => write!(f, "Error at {}: Union literal with more than one argument", location),
       CompileError::CannotUnifyBounds(location, b1, b2) => write!(f, "Error at {}: Incompatible type bounds {:?} and {:?}", location, b1, b2),
@@ -106,6 +104,7 @@ impl std::fmt::Display for CompileError {
       CompileError::CannotMatchType(location, ty) => write!(f, "Error at {}: Cannot match on non-enum type {:?}", location, ty),
       CompileError::CannotAssignImmutable(location) => write!(f, "Error at {}: Cannot assign to immutable location", location),
       CompileError::InvalidLvalueExpression(location) => write!(f, "Error at {}: Invalid lvalue expression", location),
+      CompileError::InvalidRValueExpression(location, path) => write!(f, "Error at {}: {} cannot be used as an rvalue", location, path),
       CompileError::ContinueOutsideLoop(location) => write!(f, "Error at {}: Continue outside loop", location),
       CompileError::BreakOutsideLoop(location) => write!(f, "Error at {}: Break outside loop", location),
       CompileError::ReturnOutsideFunction(location) => write!(f, "Error at {}: Return outside function", location),
@@ -113,7 +112,7 @@ impl std::fmt::Display for CompileError {
       CompileError::DuplicateMatchCase(location) => write!(f, "Error at {}: Duplicate match case", location),
       CompileError::MissingMatchCase(location) => write!(f, "Error at {}: Missing match case", location),
       CompileError::IncorrectMatchCase(location) => write!(f, "Error at {}: Incorrect match case", location),
-      CompileError::InvalidMethodReceiverType(location, ty) => write!(f, "Error at {}: Type {:?} cannot be used as a method receiver", location, ty),
+      CompileError::InvalidMethodReceiver(location) => write!(f, "Error at {}: Invalid method receiver", location),
       CompileError::MethodCallWithoutReceiver(location) => write!(f, "Error at {}: Method called without receiver", location),
       CompileError::InvalidConstantExpression(location) => write!(f, "Error at {}: Invalid constant expression", location),
     }

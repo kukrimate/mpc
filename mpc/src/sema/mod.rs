@@ -10,6 +10,7 @@
 // operate on the same intermediate representation.
 //
 
+use crate::CompileError;
 use crate::parse::{self, IsMut, UnOp, BinOp, DefId};
 use crate::util::*;
 use std::collections::HashMap;
@@ -18,12 +19,12 @@ use std::fmt;
 mod consteval;
 mod infer;
 mod tctx;
+mod inst;
 
-pub use consteval::*;
 use infer::*;
+use inst::*;
+pub use consteval::*;
 pub use tctx::*;
-use crate::CompileError;
-use crate::resolve::LocalId;
 
 pub fn analyze(repo: &parse::Repository) -> Result<Collection, CompileError> {
   let mut tctx = TVarCtx::new();
@@ -37,6 +38,9 @@ pub fn analyze(repo: &parse::Repository) -> Result<Collection, CompileError> {
     insts
   })
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LocalId(pub(super) usize);
 
 /// Instance list
 pub struct Collection {

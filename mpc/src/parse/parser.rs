@@ -112,11 +112,12 @@ impl<'repo> Parser<'repo> {
   fn parse_type(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
     // Parse type definition
     let name = want!(self, Token::Ident(name), *name)?;
+    let type_params = self.parse_type_params()?;
     want!(self, Token::Eq, ())?;
     let ty = self.parse_ty()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Type(TypeDef { loc: loc.clone(), name, ty }));
+    let def_id = self.repo.def(Def::Type(TypeDef { loc: loc.clone(), name, type_params, ty }));
     self.repo.sym(loc, name, def_id)
   }
 

@@ -9,7 +9,6 @@ use crate::parse::{DefId,BinOp,UnOp};
 use mpc_llvm as llvm;
 use std::collections::HashMap;
 use std::usize;
-use crate::resolve::LocalId;
 
 pub fn compile(collection: &mut Collection,
                output: &std::path::Path,
