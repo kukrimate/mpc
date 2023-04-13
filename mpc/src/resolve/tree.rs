@@ -5,6 +5,9 @@
 
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LocalId(pub(super) usize);
+
 #[derive(Clone,Debug)]
 pub enum ResolvedTy {
   Bool(SourceLocation),
@@ -56,9 +59,9 @@ pub enum ResolvedExpr {
   ConstRef(SourceLocation, DefId),
   DataRef(SourceLocation, DefId),
   ExternDataRef(SourceLocation, DefId),
-  ParamRef(SourceLocation, usize),
-  LetRef(SourceLocation, usize),
-  BindingRef(SourceLocation, usize),
+  ParamRef(SourceLocation, LocalId),
+  LetRef(SourceLocation, LocalId),
+  BindingRef(SourceLocation, LocalId),
 
   // Compound expressions
   Dot(SourceLocation, Box<ResolvedExpr>, RefStr),
@@ -78,7 +81,7 @@ pub enum ResolvedExpr {
   Continue(SourceLocation),
   Break(SourceLocation, Box<ResolvedExpr>),
   Return(SourceLocation, Box<ResolvedExpr>),
-  Let(SourceLocation, usize, IsMut, Option<ResolvedTy>, Option<Box<ResolvedExpr>>),
+  Let(SourceLocation, LocalId, IsMut, Option<ResolvedTy>, Option<Box<ResolvedExpr>>),
   If(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>, Box<ResolvedExpr>),
   While(SourceLocation, Box<ResolvedExpr>, Box<ResolvedExpr>),
   Loop(SourceLocation, Box<ResolvedExpr>),
@@ -88,7 +91,7 @@ pub enum ResolvedExpr {
 #[derive(Clone,Debug)]
 pub enum ResolvedPattern {
   Unit(RefStr),
-  Struct(RefStr, Vec<usize>)
+  Struct(RefStr, Vec<LocalId>)
 }
 
 impl ResolvedPattern {
@@ -260,7 +263,7 @@ pub struct ResolvedFuncDef {
   pub loc: SourceLocation,
   pub name: RefStr,
   pub type_params: usize,
-  pub params: Vec<(RefStr, IsMut, ResolvedTy)>,
+  pub params: Vec<(RefStr, LocalId, IsMut, ResolvedTy)>,
   pub ret_ty: ResolvedTy,
   pub body: ResolvedExpr,
 }

@@ -23,6 +23,7 @@ pub use consteval::*;
 use infer::*;
 pub use tctx::*;
 use crate::CompileError;
+use crate::resolve::LocalId;
 
 pub fn analyze(repo: &parse::Repository) -> Result<Collection, CompileError> {
   let mut tctx = TVarCtx::new();
@@ -61,9 +62,8 @@ pub enum Inst {
   Func {
     name: RefStr,
     ty: Ty,
-    params: Vec<(IsMut, Ty)>,
-    locals: Vec<(IsMut, Ty)>,
-    bindings: HashMap<usize, (IsMut, Ty)>,
+    params: Vec<LocalId>,
+    locals: HashMap<LocalId, (IsMut, Ty)>,
     body: Option<RValue>
   },
   Data {
@@ -214,9 +214,9 @@ impl fmt::Debug for Ty {
 #[derive(Debug)]
 pub enum LValue {
   DataRef { ty: Ty, is_mut: IsMut, id: DefId },
-  ParamRef { ty: Ty, is_mut: IsMut, index: usize },
-  LetRef { ty: Ty, is_mut: IsMut, index: usize },
-  BindingRef { ty: Ty, is_mut: IsMut, index: usize },
+  ParamRef { ty: Ty, is_mut: IsMut, local_id: LocalId },
+  LetRef { ty: Ty, is_mut: IsMut, local_id: LocalId },
+  BindingRef { ty: Ty, is_mut: IsMut, local_id: LocalId },
   StrLit { ty: Ty, is_mut: IsMut, val: Vec<u8> },
   TupleLit { ty: Ty, is_mut: IsMut, fields: Vec<RValue> },
   ArrayLit { ty: Ty, is_mut: IsMut, elements: Vec<RValue> },
@@ -254,11 +254,11 @@ pub enum RValue {
   Continue { ty: Ty },
   Break { ty: Ty, arg: Box<RValue> },
   Return { ty: Ty, arg: Box<RValue> },
-  Let { ty: Ty, index: usize, init: Option<Box<RValue>> },
+  Let { ty: Ty, local_id: LocalId, init: Option<Box<RValue>> },
   If { ty: Ty, cond: Box<RValue>, tbody: Box<RValue>, ebody: Box<RValue> },
   While { ty: Ty, cond: Box<RValue>, body: Box<RValue> },
   Loop { ty: Ty, body: Box<RValue> },
-  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Vec<usize>, RValue)> }
+  Match { ty: Ty, cond: Box<RValue>, cases: Vec<(Vec<LocalId>, RValue)> }
 }
 
 impl LValue {

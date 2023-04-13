@@ -161,8 +161,8 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     let mut def_ctx = DefCtx::new(self, id.1.clone());
 
     // Parameters
-    let mut param_tys = vec![];
-    for (name, _, ty) in def.params.iter() {
+    let mut param_tys = Vec::new();
+    for (name, _, _, ty) in def.params.iter() {
       let ty = def_ctx.infer_ty(ty)?;
       param_tys.push((*name, ty.clone()));
     }
@@ -176,8 +176,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
         name: def.name,
         ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
         params: Vec::new(),
-        locals: Vec::new(),
-        bindings: HashMap::new(),
+        locals: HashMap::new(),
         body: None,
       });
     }
@@ -204,11 +203,13 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     def_ctx.type_args = id.1.clone();
 
     // Function parameters
-    let mut param_tys = vec![];
-    for (name, is_mut, ty) in def.params.iter() {
+    let mut param_tys = Vec::new();
+    let mut params = Vec::new();
+    for (name, local_id, is_mut, ty) in def.params.iter() {
       let ty = def_ctx.infer_ty(ty)?;
+      def_ctx.locals.insert(*local_id, (*is_mut, ty.clone()));
       param_tys.push((*name, ty.clone()));
-      def_ctx.params.push((*is_mut, ty));
+      params.push(*local_id);
     }
 
     // Return type
@@ -223,9 +224,8 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     let inst = Inst::Func {
       name: def.name,
       ty: Ty::Func(param_tys.clone(), false, Box::new(ret_ty.clone())),
-      params: def_ctx.params,
+      params,
       locals: def_ctx.locals,
-      bindings: def_ctx.bindings,
       body: Some(body),
     };
     self.insts.insert(id.clone(), inst);
@@ -260,12 +260,8 @@ struct DefCtx<'global, 'repo, 'tctx> {
   global: &'global mut GlobalCtx<'repo, 'tctx>,
   // Values of type parameters in scope
   type_args: Vec<Ty>,
-  // Function parameters
-  params: Vec<(IsMut, Ty)>,
-  // Let bindings
-  locals: Vec<(IsMut, Ty)>,
   // Enum variant bindings
-  bindings: HashMap<usize, (IsMut, Ty)>,
+  locals: HashMap<LocalId, (IsMut, Ty)>,
   // Function return type
   ret_ty: Option<Ty>,
   // Loop break type
@@ -277,9 +273,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     DefCtx {
       global,
       type_args,
-      params: Vec::new(),
-      locals: Vec::new(),
-      bindings: HashMap::new(),
+      locals: HashMap::new(),
       ret_ty: None,
       loop_ty: Vec::new(),
     }
@@ -384,22 +378,28 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       }
       DataRef(loc, def_id) => self.global.inst_data(loc.clone(), *def_id)?,
       ExternDataRef(_loc, def_id) => self.global.inst_extern_data(*def_id)?,
-      ParamRef(_loc, index) => LValue::ParamRef {
-        ty: self.params[*index].1.clone(),
-        is_mut: self.params[*index].0,
-        index: *index
-      },
-      LetRef(_loc, index) => LValue::LetRef {
-        ty: self.locals[*index].1.clone(),
-        is_mut: self.locals[*index].0,
-        index: *index
-      },
-      BindingRef(_loc, index) => {
-        let (is_mut, ty) = self.bindings.get(index).unwrap();
+      ParamRef(_loc, local_id) => {
+        let (is_mut, ty) = self.locals.get(local_id).unwrap();
+        LValue::ParamRef {
+          ty: ty.clone(),
+          is_mut: *is_mut,
+          local_id: *local_id
+        }
+      }
+      LetRef(_loc, local_id) => {
+        let (is_mut, ty) = self.locals.get(local_id).unwrap();
+        LValue::LetRef {
+          ty: ty.clone(),
+          is_mut: *is_mut,
+          local_id: *local_id
+        }
+      }
+      BindingRef(_loc, local_id) => {
+        let (is_mut, ty) = self.locals.get(local_id).unwrap();
         LValue::BindingRef {
           ty: ty.clone(),
           is_mut: *is_mut,
-          index: *index
+          local_id: *local_id
         }
       },
       TupleLit(_loc, resolved_fields) => {
@@ -820,7 +820,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
 
         RValue::Return { ty: self.global.tctx.new_var(Bound::Any), arg: Box::new(arg) }
       }
-      Let(loc, index, is_mut, ty, init) => {
+      Let(loc, local_id, is_mut, ty, init) => {
         let ty = if let Some(ty) = ty {
           self.infer_ty(ty)?
         } else {
@@ -835,10 +835,8 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           None
         };
 
-        assert_eq!(self.locals.len(), *index);
-        self.locals.push((*is_mut, ty));
-
-        RValue::Let { ty: Ty::Unit, index: *index, init }
+        self.locals.insert(*local_id, (*is_mut, ty));
+        RValue::Let { ty: Ty::Unit, local_id: *local_id, init }
       }
       If(loc, cond, tbody, ebody) => {
         let cond = self.infer_rvalue(cond)?;
@@ -1069,7 +1067,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
             if params.len() == bindings.len() => {
           for (index, binding) in bindings.iter().enumerate() {
             let (_, ty) = params.get(index).unwrap();
-            self.bindings.insert(*binding, (binding_mut, ty.clone()));
+            self.locals.insert(*binding, (binding_mut, ty.clone()));
           }
           inferred_cases.push((bindings.clone(), self.infer_rvalue(val)?));
         }

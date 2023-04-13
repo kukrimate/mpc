@@ -18,11 +18,8 @@ struct ResolveCtx<'a> {
   // Parent scope
   parent_id: DefId,
 
-  // Local variables
+  // Local IDs
   locals: usize,
-
-  // Match bindings
-  bindings: usize,
 
   // Symbol table
   scopes: Vec<HashMap<RefStr, Sym>>,
@@ -31,15 +28,15 @@ struct ResolveCtx<'a> {
 #[derive(Clone)]
 enum Sym {
   Def(DefId),
-  Param(usize),
-  Local(usize),
-  Binding(usize),
+  Param(LocalId),
+  Local(LocalId),
+  Binding(LocalId),
   TParam(usize)
 }
 
 impl<'a> ResolveCtx<'a> {
   fn new(repo: &'a Repository, parent_id: DefId) -> Self {
-    ResolveCtx { repo, parent_id, locals: 0, bindings: 0, scopes: Vec::new() }
+    ResolveCtx { repo, parent_id, locals: 0, scopes: Vec::new() }
   }
 
   fn new_generic(repo: &'a Repository,
@@ -53,26 +50,11 @@ impl<'a> ResolveCtx<'a> {
     ctx
   }
 
-  fn new_func(repo: &'a Repository,
-              parent_id: DefId,
-              type_params: &Vec<RefStr>,
-              receiver: &Option<(RefStr, IsMut, parse::Ty)>,
-              params: &Vec<(RefStr, IsMut, parse::Ty)>) -> Self {
-    let mut ctx = ResolveCtx::new(repo, parent_id);
-    ctx.newscope();
-    for (index, name) in type_params.iter().enumerate() {
-      ctx.define(*name, Sym::TParam(index));
-    }
-    let base = if let Some((name, ..)) = receiver {
-      ctx.define(*name, Sym::Param(0));
-      1
-    } else {
-      0
-    };
-    for (index, (name, _, _)) in params.iter().enumerate() {
-      ctx.define(*name, Sym::Param(base + index));
-    }
-    ctx
+  /// Create a new local ID
+  fn new_local_id(&mut self) -> LocalId {
+    let local_id = LocalId(self.locals);
+    self.locals += 1;
+    local_id
   }
 
   /// Create scope
@@ -380,11 +362,10 @@ impl<'a> ResolveCtx<'a> {
           None
         };
 
-        let index = self.locals;
-        self.define(*name, Sym::Local(index));
-        self.locals += 1;
+        let local_id = self.new_local_id();
+        self.define(*name, Sym::Local(local_id));
 
-        ResolvedExpr::Let(loc.clone(), index, is_mut.clone(), ty, init)
+        ResolvedExpr::Let(loc.clone(), local_id, is_mut.clone(), ty, init)
       }
       If(loc, cond, tbody, ebody) => {
         let cond = self.resolve_expr(cond)?;
@@ -420,10 +401,9 @@ impl<'a> ResolveCtx<'a> {
               let fields = fields
                 .iter()
                 .map(|name| {
-                  let index = self.bindings;
-                  self.define(*name, Sym::Binding(index));
-                  self.bindings += 1;
-                  index
+                  let local_id = self.new_local_id();
+                  self.define(*name, Sym::Binding(local_id));
+                  local_id
                 })
                 .collect();
               ResolvedPattern::Struct(*name, fields)
@@ -537,24 +517,30 @@ pub fn resolve_defs(repo: &mut Repository) -> Result<(), CompileError> {
                                   }));
       }
       parse::Def::Func(def) => {
-        let mut ctx = ResolveCtx::new_func(repo, repo.parent(*def_id),
-                                           &def.type_params, &def.receiver, &def.params);
+        let mut ctx = ResolveCtx::new_generic(repo, repo.parent(*def_id),  &def.type_params);
 
         // Parameters
         let mut params = Vec::new();
+
         let receiver_id = if let Some((name, is_mut, ty)) = &def.receiver {
           let ty = ctx.resolve_ty(ty)?;
           let receiver_id = receiver_id(def.loc.clone(), &ty)?;
           // Re-write receiver as a parameter
-          params.push((*name, *is_mut, ty));
+          let local_id = ctx.new_local_id();
+          ctx.define(*name, Sym::Param(local_id));
+          params.push((*name, local_id, *is_mut, ty));
           // Save receiver ID for later
           Some(receiver_id)
         } else {
           None
         };
+
         for (name, is_mut, ty) in def.params.iter() {
-          // Process regular parameters
-          params.push((*name, *is_mut, ctx.resolve_ty(ty)?));
+          // Define symbol
+          let local_id = ctx.new_local_id();
+          ctx.define(*name, Sym::Param(local_id));
+          // Add to parameter list
+          params.push((*name, local_id, *is_mut, ctx.resolve_ty(ty)?));
         }
 
         // Add definition

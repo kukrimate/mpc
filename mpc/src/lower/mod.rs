@@ -9,6 +9,7 @@ use crate::parse::{DefId,BinOp,UnOp};
 use mpc_llvm as llvm;
 use std::collections::HashMap;
 use std::usize;
+use crate::resolve::LocalId;
 
 pub fn compile(collection: &mut Collection,
                output: &std::path::Path,
@@ -54,8 +55,9 @@ struct LowerCtx<'a, 'ctx> {
   builder: llvm::Builder<'ctx>,
   module: llvm::Module<'ctx>,
 
+  // Current function
   l_func: Option<llvm::Value<'ctx>>,
-  l_alloca_block: Option<llvm::Block<'ctx>>,
+  l_prelude: Option<llvm::Block<'ctx>>,
 
   // Types
   types: HashMap<(DefId, Vec<Ty>), llvm::Type<'ctx>>,
@@ -66,10 +68,8 @@ struct LowerCtx<'a, 'ctx> {
   // String literals
   string_lits: HashMap<Vec<u8>, llvm::Value<'ctx>>,
 
-  // Function parameters and locals
-  params: Vec<llvm::Value<'ctx>>,
-  locals: Vec<llvm::Value<'ctx>>,
-  bindings: HashMap<usize, llvm::Value<'ctx>>,
+  // Local values
+  locals: HashMap<LocalId, llvm::Value<'ctx>>,
 
   // Break and continue blocks
   break_to: Vec<llvm::Block<'ctx>>,
@@ -107,16 +107,14 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       module,
 
       l_func: None,
-      l_alloca_block: None,
+      l_prelude: None,
 
       types: HashMap::new(),
       values: HashMap::new(),
 
       string_lits: HashMap::new(),
 
-      params: Vec::new(),
-      locals: Vec::new(),
-      bindings: HashMap::new(),
+      locals: HashMap::new(),
 
       break_to: Vec::new(),
       continue_to: Vec::new(),
@@ -366,49 +364,47 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           global.set_initializer(init);
         }
         Inst::Func { params, locals, body: Some(body), .. } => {
+          // Store function value
           self.l_func = Some(self.get_value(id));
 
-          // Create prelude block for allocas
-          self.l_alloca_block = Some(self.new_block());
-          self.enter_block(self.l_alloca_block.unwrap());
+          // Clear local values
+          self.locals.clear();
 
-          // Spill arguments
-          let mut lowered_index = if let Semantics::Addr
-            = self.ty_semantics(body.ty()) { 1 } else { 0 };
+          // Create prelude block
+          self.l_prelude = Some(self.new_block());
+          self.enter_block(self.l_prelude.unwrap());
 
-          self.params.clear();
-          for (_, ty) in params.iter() {
-            let l_alloca = self.allocate_local(ty);
-            self.params.push(l_alloca);
+          // Allocate storage local variables
+          for (local_id, (_, ty)) in locals.iter() {
+            let storage = self.allocate_local(ty);
+            self.locals.insert(*local_id, storage);
+          }
+
+          // Spill parameters
+          let mut lowered_index = if let Semantics::Addr = self.ty_semantics(body.ty()) { 1 } else { 0 };
+
+          for local_id in params.iter() {
+            let (_, ty) = locals.get(local_id).unwrap();
+            let storage = *self.locals.get(local_id).unwrap();
 
             match self.ty_semantics(ty) {
               Semantics::Void => (),
               _ => {
                 let param = self.l_func.unwrap().get_param(lowered_index);
                 lowered_index += 1;
-                self.build_store(ty, l_alloca, param);
+                self.build_store(ty, storage, param);
               }
             }
           }
 
-          // Allocate locals
-          self.locals.clear();
-          for (_, ty) in locals.iter() {
-            let l_alloca = self.allocate_local(ty);
-            self.locals.push(l_alloca);
-          }
-
-          // Clear bindings
-          self.bindings.clear();
-
-          // Create LLVM function body
+          // Lower function body
           let body_block = self.new_block();
           self.enter_block(body_block);
           let val = self.lower_rvalue(body);
           self.exit_block_ret(body.ty(), val);
 
-          // Add branch from allocas to body
-          self.enter_block(self.l_alloca_block.unwrap());
+          // Add branch from prelude to body
+          self.enter_block(self.l_prelude.unwrap());
           self.exit_block_br(body_block);
         }
         _ => ()
@@ -521,14 +517,10 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
       LValue::DataRef { id, .. } => {
         self.get_value(&(*id, vec![]))
       }
-      LValue::ParamRef { index, .. } => {
-        self.params[*index]
-      }
-      LValue::LetRef { index, .. } => {
-        self.locals[*index]
-      }
-      LValue::BindingRef { index, .. } => {
-        *self.bindings.get(index).unwrap()
+      LValue::ParamRef { local_id, .. } |
+      LValue::LetRef { local_id, .. } |
+      LValue::BindingRef { local_id, .. } => {
+        *self.locals.get(local_id).unwrap()
       }
       LValue::StrLit { val, .. } => {
         self.build_string_lit(val)
@@ -761,8 +753,8 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         // Unreachable value
         self.build_unreachable(ty)
       }
-      RValue::Let { index, init, .. } => {
-        let l_local = self.locals[*index];
+      RValue::Let { local_id, init, .. } => {
+        let l_local = *self.locals.get(local_id).unwrap();
         if let Some(init) = init {
           self.lower_rvalue(init)
             .map(|val| self.build_store(init.ty(), l_local, val));
@@ -868,7 +860,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
             let variant_type = self.get_variant_type(cond.ty(), tag_to_block.len() - 1);
             for (index, binding) in bindings.iter().enumerate() {
               let l_binding_val = self.build_gep(variant_type, data_ptr, index);
-              self.bindings.insert(*binding, l_binding_val);
+              self.locals.insert(*binding, l_binding_val);
             }
           }
           values.push(self.lower_rvalue(val));
@@ -987,7 +979,7 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
   fn allocate_local(&mut self, ty: &Ty) -> llvm::Value<'ctx> {
     let prev = self.builder.get_block().unwrap();
     let ty = self.lower_ty(ty);
-    self.enter_block(self.l_alloca_block.unwrap());
+    self.enter_block(self.l_prelude.unwrap());
     let alloca = self.builder.alloca(ty);
     self.enter_block(prev);
     alloca

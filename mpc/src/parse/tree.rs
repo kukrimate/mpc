@@ -152,12 +152,8 @@ impl Expr {
   }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DefId(pub usize);
-
-impl std::fmt::Debug for DefId {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
-}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DefId(pub(super) usize);
 
 #[derive(Clone, Debug)]
 pub enum Def {
