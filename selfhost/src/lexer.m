@@ -110,10 +110,10 @@ function new(input: slice::Slice<Uint8>) -> Lexer {
 
 // Read the next input character
 function (lexer: *mut Lexer) get() -> opt::Option<Uint8> {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => {
+  match (*lexer).input.at_or_none((*lexer).cur) {
+    Some(val) => {
       (*lexer).cur += 1;
-      opt::some(*s.val)
+      opt::some(*val)
     },
     None => opt::none()
   }
@@ -122,17 +122,17 @@ function (lexer: *mut Lexer) get() -> opt::Option<Uint8> {
 
 // Peek at the next input character
 function (lexer: *mut Lexer) peek() -> opt::Option<Uint8> {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => opt::some(*s.val),
+  match (*lexer).input.at_or_none((*lexer).cur) {
+    Some(val) => opt::some(*val),
     None => opt::none()
   }
 }
 
 // Consume the next input character if equal
 function (lexer: *mut Lexer) consume_eq(want: Uint8) -> Bool {
-  match slice::at_or_none((*lexer).input, (*lexer).cur) {
-    s: Some => {
-      if *s.val == want {
+  match (*lexer).input.at_or_none((*lexer).cur) {
+    Some(val) => {
+      if *val == want {
         (*lexer).cur += 1;
         true
       } else {
@@ -186,28 +186,28 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
     if ch == '0' {
       if lexer.consume_eq('x') || lexer.consume_eq('X') {
         return match read_hex(lexer) {
-          o: Ok => result::ok(Token::IntLit(o.v)),
-          e: Err => result::err(e.v)
+          Ok(v) => result::ok(Token::IntLit(v)),
+          Err(v) => result::err(v)
         }
       }
       if lexer.consume_eq('o') || lexer.consume_eq('O') {
         return match read_oct(lexer) {
-          o: Ok => result::ok(Token::IntLit(o.v)),
-          e: Err => result::err(e.v)
+          Ok(v) => result::ok(Token::IntLit(v)),
+          Err(v) => result::err(v)
         }
       }
       if lexer.consume_eq('b') || lexer.consume_eq('B') {
         return match read_bin(lexer) {
-          o: Ok => result::ok(Token::IntLit(o.v)),
-          e: Err => result::err(e.v)
+          Ok(v) => result::ok(Token::IntLit(v)),
+          Err(v) => result::err(v)
         }
       }
     }
 
     if ch >= '0' && ch <= '9' {
       return match read_dec(lexer, ch as <Uintn>) {
-        o: Ok => result::ok(Token::IntLit(o.v)),
-        e: Err => result::err(e.v)
+        Ok(v) => result::ok(Token::IntLit(v)),
+        Err(v) => result::err(v)
       }
     }
 
@@ -224,6 +224,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
        ch >= 'A' && ch <= 'Z' {
 
       let mut s = vec::new();
+      (&s).push(ch);
 
       loop {
         let ch = lexer.peek();
@@ -362,8 +363,8 @@ function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Token, mpc::
     if ch == '"' { break }
     if ch == '\\' {
       match lexer.read_esc() {
-        o: Ok => (&s).push(o.v as <Uint8>),
-        e: Err => return result::err(e.v)
+        Ok(v) => (&s).push(v as <Uint8>),
+        Err(v) => return result::err(v)
       }
     } else {
       (&s).push(ch)
@@ -476,6 +477,8 @@ function (lexer: *mut Lexer) read_dec(mut val: Uintn) -> result::Result<Uintn, m
   }
   return result::ok(val)
 }
+
+import libc
 
 // Check if an identifier is a keyword
 function check_kw(s: str::Str) -> Token {

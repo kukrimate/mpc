@@ -11,8 +11,22 @@ enum CompileError (
   UnrecognizedEscapeSequence(ch: Uint8)
 )
 
-// Read a file
+// Print a compilation error
+function (e: *CompileError) fmt(f: *mut libc::FILE) {
+  match *e {
+    UnexpectedEndOfFile => {
+      libc::fprintf(f, c"Unexpected end of file");
+    },
+    UnrecognizedCharacter(ch) => {
+      libc::fprintf(f, c"Unrecognized character %c", ch);
+    },
+    UnrecognizedEscapeSequence(ch) => {
+      libc::fprintf(f, c"Unrecognized escape sequence %c", ch);
+    }
+  }
+}
 
+// Read a file
 function read_file(path: *libc::Char) -> result::Result<slice::Slice<Uint8>, ()> {
   let infile = libc::fopen(path, c"r");
   if infile == nil { return result::err(()) }
@@ -38,19 +52,28 @@ function mpc_main(args: slice::Slice<*libc::Char>) -> libc::Int {
   }
 
   // Read input file
-  let input = read_file(*slice::at(args, 1)).unwrap_ok();
+  let input = read_file(*args.at(1)).unwrap_ok();
 
   // Create lexer
   let lexer = lexer::new(input);
 
   loop {
-    match lexer::next(&lexer).unwrap_ok() {
+    let r = lexer::next(&lexer);
+
+    if (&r).is_err() {
+      let err = r.unwrap_err();
+      (&err).fmt(libc::stderr);
+      libc::fputc('\n', libc::stderr);
+      return 1
+    }
+
+    match r.unwrap_ok() {
       EndOfFile => break,
-      Ident => libc::printf(c"Ident\n"),
-      IntLit => libc::printf(c"IntLit\n"),
-      FltLit => libc::printf(c"FltLit\n"),
-      StrLit => libc::printf(c"StrLit\n"),
-      CStrLit => libc::printf(c"CStrLit\n"),
+      Ident(v) => libc::printf(c"Ident\n"),
+      IntLit(v) => libc::printf(c"IntLit\n"),
+      FltLit(v) => libc::printf(c"FltLit\n"),
+      StrLit(v) => libc::printf(c"StrLit\n"),
+      CStrLit(v) => libc::printf(c"CStrLit\n"),
       TyBool => libc::printf(c"TyBool\n"),
       TyUint8 => libc::printf(c"TyUint8\n"),
       TyInt8 => libc::printf(c"TyInt8\n"),
