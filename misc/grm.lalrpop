@@ -121,6 +121,7 @@ PatternList: () = {
 };
 
 Pattern: () = {
+  "*",
   Identifier,
   Identifier "(" IdentifierList? ")"
 };

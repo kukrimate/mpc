@@ -677,11 +677,15 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_pattern(&mut self) -> Result<(Pattern, Expr), CompileError> {
-    let name = want!(self, Token::Ident(name), *name)?;
-    let pattern = if maybe_want!(self, Token::LParen) {
-      Pattern::Struct(name, self.parse_pattern_field_list()?)
+    let pattern = if maybe_want!(self, Token::Star) {
+      Pattern::Any
     } else {
-      Pattern::Unit(name)
+      let name = want!(self, Token::Ident(name), *name)?;
+      if maybe_want!(self, Token::LParen) {
+        Pattern::Struct(name, self.parse_pattern_field_list()?)
+      } else {
+        Pattern::Unit(name)
+      }
     };
     want!(self, Token::FatArrow, ())?;
     Ok((pattern, self.parse_expr()?))

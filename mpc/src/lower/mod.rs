@@ -826,11 +826,10 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           self.build_unreachable(ty)
         }
       }
-      RValue::Match { ty, cond, cases, .. } => {
+      RValue::Match { ty, cond, cases, any } => {
         let start_block = self.builder.get_block().unwrap();
         let addr = self.lower_rvalue(cond).unwrap();
         let cond_ty = self.lower_ty(cond.ty());
-        let data_ptr = self.build_gep(cond_ty, addr, 1);
 
         let end_block = self.new_block();
 
@@ -850,9 +849,12 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
           ));
 
           self.enter_block(block);
-          for (index, binding) in bindings.iter().enumerate() {
-            let l_binding_val = self.build_gep(vtype.unwrap(), data_ptr, index);
-            self.locals.insert(*binding, l_binding_val);
+          if bindings.len() > 0 {
+            let data_ptr = self.build_gep(cond_ty, addr, 1);
+            for (index, binding) in bindings.iter().enumerate() {
+              let l_binding_val = self.build_gep(vtype.unwrap(), data_ptr, index);
+              self.locals.insert(*binding, l_binding_val);
+            }
           }
           values.push(self.lower_rvalue(val));
           blocks.push(self.builder.get_block().unwrap());
@@ -860,15 +862,32 @@ impl<'a, 'ctx> LowerCtx<'a, 'ctx> {
         }
 
         // There are no cases => we are still in the start block and can just yield None
-        if tag_to_block.len() == 0 { return None }
+        if tag_to_block.len() == 0 && any.is_none() { return None }
+
+        // Lower "any" case
+        let any_block = any.as_ref().map(|val| {
+          let any_block = self.new_block();
+          self.enter_block(any_block);
+          values.push(self.lower_rvalue(&*val));
+          blocks.push(self.builder.get_block().unwrap());
+          self.exit_block_br(end_block);
+          any_block
+        });
 
         // Go back to the start block and build a switch for the multi-way branch
         // NOTE: matches are always exhaustive, and LLVM always wants a default case,
         //       thus we just treat the last case as the default
         self.enter_block(start_block);
         let tag = self.build_load(&Ty::Int32, addr).unwrap();
-        self.builder.switch(tag, &tag_to_block[..tag_to_block.len() - 1],
-                                      tag_to_block[tag_to_block.len() - 1].1);
+        match any_block {
+          Some(any_block) => {
+            self.builder.switch(tag, &tag_to_block, any_block);
+          }
+          None => {
+            self.builder.switch(tag, &tag_to_block[..tag_to_block.len() - 1],
+                                tag_to_block[tag_to_block.len() - 1].1);
+          }
+        }
 
         // Build PHI to merge case values at the end
         self.enter_block(end_block);

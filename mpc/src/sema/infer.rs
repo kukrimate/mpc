@@ -4,7 +4,6 @@
  */
 
 use crate::{CompileError, SourceLocation};
-use crate::parse::Def;
 use super::*;
 
 pub(super) struct DefCtx<'global, 'repo, 'tctx> {
@@ -105,19 +104,19 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       Double(_loc) => Ty::Double,
       Inst(loc, path, type_args) => match self.lookup(loc.clone(), path)? {
         Sym::Def(def_id) => match self.global.parsed_def(def_id) {
-          Def::Type(def) => {
+          parse::Def::Type(def) => {
             let type_args = self.infer_type_args(type_args)?;
             self.global.inst_alias(loc.clone(), (def_id, type_args), def)?
           }
-          Def::Struct(def) => {
+          parse::Def::Struct(def) => {
             let type_args = self.infer_type_args(type_args)?;
             self.global.inst_struct(loc.clone(), (def_id, type_args), def)?
           }
-          Def::Union(def) => {
+          parse::Def::Union(def) => {
             let type_args = self.infer_type_args(type_args)?;
             self.global.inst_union(loc.clone(), (def_id, type_args), def)?
           }
-          Def::Enum(def) => {
+          parse::Def::Enum(def) => {
             let type_args = self.infer_type_args(type_args)?;
             self.global.inst_enum(loc.clone(), (def_id, type_args), def)?
           }
@@ -169,16 +168,16 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       // NOTE: do something with type_args here
       Inst(loc, path, type_args) => match self.lookup(loc.clone(), path)? {
         Sym::Def(def_id) => match self.global.parsed_def(def_id) {
-          Def::Const(def) => {
+          parse::Def::Const(def) => {
             self.global.inst_lvalue_const(loc.clone(), def_id, def)?
           }
-          Def::Data(def) => {
+          parse::Def::Data(def) => {
             self.global.inst_data(loc.clone(), def_id, def)?
           }
-          Def::ExternData(def) => {
+          parse::Def::ExternData(def) => {
             self.global.inst_extern_data(def_id, def)?
           }
-          Def::UnitVariant(def) => {
+          parse::Def::UnitVariant(def) => {
             let enum_def = self.global.parsed_def(def.parent_enum).unwrap_enum();
             let type_args: Vec<Ty> = if type_args.len() > 0 {
               self.infer_type_args(type_args)?
@@ -250,7 +249,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         match &**base {
           Inst(_, path, type_args) => match self.lookup(loc.clone(), path)? {
             Sym::Def(def_id) => match self.global.parsed_def(def_id) {
-              Def::Struct(struct_def) => {
+              parse::Def::Struct(struct_def) => {
                 let type_args: Vec<Ty> = if type_args.len() > 0 {
                   self.infer_type_args(type_args)?
                 } else {
@@ -271,7 +270,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
                   fields: self.typecheck_args(loc.clone(), &params, false, inferred_args)?
                 }
               }
-              Def::Union(union_def) => {
+              parse::Def::Union(union_def) => {
                 if args.len() != 1 {
                   Err(CompileError::InvalidUnionLiteral(loc.clone()))?
                 }
@@ -304,7 +303,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
                   field: val
                 }
               }
-              Def::StructVariant(variant_def) => {
+              parse::Def::StructVariant(variant_def) => {
                 let enum_def = self.global.parsed_def(variant_def.parent_enum).unwrap_enum();
                 let type_args: Vec<Ty> = if type_args.len() > 0 {
                   self.infer_type_args(type_args)?
@@ -440,10 +439,10 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(match expr {
       Inst(loc, path, type_args) => match self.lookup(loc.clone(), path)? {
         Sym::Def(def_id) => match self.global.parsed_def(def_id) {
-          Def::Const(def) => {
+          parse::Def::Const(def) => {
             self.global.inst_rvalue_const(loc.clone(), def_id, def)?
           }
-          Def::Func(def) => {
+          parse::Def::Func(def) => {
             let type_args: Vec<Ty> = if type_args.len() > 0 {
               self.infer_type_args(type_args)?
             } else {
@@ -453,10 +452,10 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
             };
             self.global.inst_func_sig(loc.clone(), (def_id, type_args), def)?
           }
-          Def::ExternFunc(def) => {
+          parse::Def::ExternFunc(def) => {
             self.global.inst_extern_func(def_id, def)?
           }
-          Def::UnitVariant(..) | Def::Data(_) | Def::ExternData(..) => {
+          parse::Def::UnitVariant(..) | parse::Def::Data(_) | parse::Def::ExternData(..) => {
             let arg = self.infer_lvalue(expr)?;
             RValue::Load {
               ty: arg.ty().clone(),
@@ -504,9 +503,9 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
           Inst(_, path, _) => {
             match self.lookup(loc.clone(), path)? {
               Sym::Def(def_id) => match self.global.parsed_def(def_id) {
-                Def::Struct(..) |
-                Def::Union(..) |
-                Def::StructVariant(..) => {
+                parse::Def::Struct(..) |
+                parse::Def::Union(..) |
+                parse::Def::StructVariant(..) => {
                   let arg = self.infer_lvalue(expr)?;
                   RValue::Load {
                     ty: arg.ty().clone(),
@@ -883,7 +882,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     let cond = self.infer_rvalue(cond)?;
 
     // Figure out matched enum type
-    let (def_id, type_args) = match self.global.tctx.canonical_ty(cond.ty()) {
+    let (enum_id, type_args) = match self.global.tctx.canonical_ty(cond.ty()) {
       Ty::EnumRef(_, id) => id,
       _ => { return Err(CompileError::CannotMatchType(loc.clone(), cond.ty().clone())) }
     };
@@ -895,24 +894,31 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     };
 
     // Create mapping from enum variants to patterns
-    let mut variant_to_value = HashMap::new();
+    let mut any: Option<Box<RValue>> = None;
+    let mut variant_to_value: HashMap<DefId, (&parse::Pattern, &parse::Expr)> = HashMap::new();
 
     for (pattern, val) in patterns.iter() {
-      // Find variant corresponding to pattern
-      let variant_id = if let Some(variant_id) = self.global.repo.locate_path(def_id, &parse::Path(vec![ pattern.name() ])) {
-        variant_id
-      } else {
-        return Err(CompileError::IncorrectMatchCase(loc.clone()));
-      };
-      // Save value into variant to value mp
-      if let Some(..) = variant_to_value.insert(variant_id, (pattern, val)) {
-        return Err(CompileError::DuplicateMatchCase(loc.clone()))
+      match pattern {
+        parse::Pattern::Any => {
+          any = Some(Box::new(self.infer_rvalue(val)?));
+        }
+        // FIXME: warn about subsequent duplicate patterns being silently discarded
+        parse::Pattern::Unit(name) => {
+          let variant_id = self.global.repo.locate_name(enum_id, *name)
+            .ok_or_else(|| CompileError::IncorrectMatchCase(loc.clone()))?;
+          let _ = variant_to_value.try_insert(variant_id, (pattern, val));
+        }
+        parse::Pattern::Struct(name, _) => {
+          let variant_id = self.global.repo.locate_name(enum_id, *name)
+            .ok_or_else(|| CompileError::IncorrectMatchCase(loc.clone()))?;
+          let _ = variant_to_value.try_insert(variant_id, (pattern, val));
+        }
       }
     }
 
-    // Verify that no variants are missing
-    let (_, variants) = self.global.find_inst(&(def_id, type_args.clone())).unwrap_enum();
-    if variant_to_value.len() != variants.len() {
+    // Verify that no variants are missing (if there is no default)
+    let (_, variants) = self.global.find_inst(&(enum_id, type_args.clone())).unwrap_enum();
+    if any.is_none() && variant_to_value.len() != variants.len() {
       return Err(CompileError::MissingMatchCase(loc.clone()))?
     }
 
@@ -960,7 +966,8 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     Ok(RValue::Match {
       ty,
       cond: Box::new(cond),
-      cases
+      cases,
+      any
     })
   }
 }

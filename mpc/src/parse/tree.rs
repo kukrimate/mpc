@@ -134,17 +134,9 @@ pub enum Expr {
 
 #[derive(Clone, Debug)]
 pub enum Pattern {
+  Any,
   Unit(RefStr),
   Struct(RefStr, Vec<RefStr>)
-}
-
-impl Pattern {
-  pub fn name(&self) -> RefStr {
-    match self {
-      Pattern::Unit(name) => *name,
-      Pattern::Struct(name, _) => *name
-    }
-  }
 }
 
 impl Expr {

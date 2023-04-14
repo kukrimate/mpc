@@ -5,6 +5,7 @@
 
 #![feature(hash_set_entry)]
 #![feature(hash_raw_entry)]
+#![feature(map_try_insert)]
 
 mod parse;
 mod sema;
@@ -68,7 +69,6 @@ pub enum CompileError {
   BreakOutsideLoop(SourceLocation),
   ReturnOutsideFunction(SourceLocation),
   IncorrectArgumentLabel(SourceLocation, RefStr),
-  DuplicateMatchCase(SourceLocation),
   MissingMatchCase(SourceLocation),
   IncorrectMatchCase(SourceLocation),
   InvalidMethodReceiver(SourceLocation),
@@ -109,7 +109,6 @@ impl std::fmt::Display for CompileError {
       CompileError::BreakOutsideLoop(location) => write!(f, "Error at {}: Break outside loop", location),
       CompileError::ReturnOutsideFunction(location) => write!(f, "Error at {}: Return outside function", location),
       CompileError::IncorrectArgumentLabel(location, label) => write!(f, "Error at {}: Incorrect argument label {}", location, label),
-      CompileError::DuplicateMatchCase(location) => write!(f, "Error at {}: Duplicate match case", location),
       CompileError::MissingMatchCase(location) => write!(f, "Error at {}: Missing match case", location),
       CompileError::IncorrectMatchCase(location) => write!(f, "Error at {}: Incorrect match case", location),
       CompileError::InvalidMethodReceiver(location) => write!(f, "Error at {}: Invalid method receiver", location),
