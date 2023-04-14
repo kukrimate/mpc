@@ -732,14 +732,37 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 
-  pub fn infer_method_call(&mut self, loc: SourceLocation, receiver: RValue, method_id: DefId, args: &Vec<(RefStr, parse::Expr)>) -> Result<RValue, CompileError> {
+  pub fn infer_method_call(&mut self, loc: SourceLocation, mut receiver: RValue, method_id: DefId, args: &Vec<(RefStr, parse::Expr)>) -> Result<RValue, CompileError> {
 
     // Return method reference as call target
     let def = self.global.parsed_def(method_id).unwrap_func();
     let type_args: Vec<Ty> = (0..def.type_params.len())
       .map(|_| self.global.tctx.new_var(Bound::Any))
       .collect();
+
+    // Verify the type of the called expression
     let called = self.global.inst_func_sig(loc.clone(), (method_id, type_args), def)?;
+    let (params, va, ret_ty) = match self.global.tctx.canonical_ty(called.ty()) {
+      Ty::Func(params, va, ret_ty) => (params, va, ret_ty),
+      _ => Err(CompileError::CannotCallType(loc.clone(), called.ty().clone()))?
+    };
+
+    // Apply auto-referencing to receiver if required
+    match ( &params.get(0).unwrap().1, receiver.ty()) {
+      (Ty::Ptr(..), Ty::Ptr(..)) => (),
+      (Ty::Ptr(..), _) => {
+        match receiver {
+          RValue::Load { arg, .. } => {
+            receiver = RValue::Adr {
+              ty: Ty::Ptr(arg.is_mut(), Box::new(arg.ty().clone())),
+              arg
+            };
+          }
+          _ => (),
+        }
+      }
+      _ => ()
+    }
 
     // Infer arguments
     let mut inferred_args = Vec::new();
@@ -748,19 +771,11 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
       inferred_args.push((*name, self.infer_rvalue(arg)?));
     }
 
-    // Find parameter list and return type
-    match self.global.tctx.canonical_ty(called.ty()) {
-      Ty::Func(params, va, ret_ty) => {
-        Ok(RValue::Call {
-          ty: *ret_ty,
-          func: Box::new(called),
-          args: self.typecheck_args(loc, &params, va, inferred_args)?
-        })
-      },
-      _ => {
-        Err(CompileError::CannotCallType(loc.clone(), called.ty().clone()))
-      }
-    }
+    Ok(RValue::Call {
+      ty: *ret_ty,
+      func: Box::new(called),
+      args: self.typecheck_args(loc, &params, va, inferred_args)?
+    })
   }
 
   pub fn infer_call(&mut self, loc: SourceLocation, called: &parse::Expr, args: &Vec<(RefStr, parse::Expr)>) -> Result<RValue, CompileError> {
