@@ -1,3 +1,4 @@
+import libc
 import mpc
 import opt
 import prog
@@ -6,7 +7,7 @@ import slice
 import str
 import vec
 
-enum Token (
+enum Tk (
   EndOfFile,
   IntLit(v: Uintn),     // [0-9]+
                         // 0[xX][a-fA-f0-9]+
@@ -100,6 +101,99 @@ enum Token (
   Varargs               // ...
 )
 
+function (tk: *Tk) fmt(f: *mut libc::FILE) {
+  match *tk {
+    EndOfFile => libc::fprintf(f, c"EndOfFile"),
+    Ident(v) => libc::fprintf(f, c"Ident"),
+    IntLit(v) => libc::fprintf(f, c"IntLit"),
+    FltLit(v) => libc::fprintf(f, c"FltLit"),
+    StrLit(v) => libc::fprintf(f, c"StrLit"),
+    CStrLit(v) => libc::fprintf(f, c"CStrLit"),
+    TyBool => libc::fprintf(f, c"TyBool"),
+    TyUint8 => libc::fprintf(f, c"TyUint8"),
+    TyInt8 => libc::fprintf(f, c"TyInt8"),
+    TyUint16 => libc::fprintf(f, c"TyUint16"),
+    TyInt16 => libc::fprintf(f, c"TyInt16"),
+    TyUint32 => libc::fprintf(f, c"TyUint32"),
+    TyInt32 => libc::fprintf(f, c"TyInt32"),
+    TyUint64 => libc::fprintf(f, c"TyUint64"),
+    TyInt64 => libc::fprintf(f, c"TyInt64"),
+    TyUintn => libc::fprintf(f, c"TyUintn"),
+    TyIntn => libc::fprintf(f, c"TyIntn"),
+    TyFloat => libc::fprintf(f, c"TyFloat"),
+    TyDouble => libc::fprintf(f, c"TyDouble"),
+    TyFunction => libc::fprintf(f, c"TyFunction"),
+    KwAs => libc::fprintf(f, c"KwAs"),
+    KwLet => libc::fprintf(f, c"KwLet"),
+    KwMut => libc::fprintf(f, c"KwMut"),
+    KwContinue => libc::fprintf(f, c"KwContinue"),
+    KwBreak => libc::fprintf(f, c"KwBreak"),
+    KwReturn => libc::fprintf(f, c"KwReturn"),
+    KwIf => libc::fprintf(f, c"KwIf"),
+    KwElse => libc::fprintf(f, c"KwElse"),
+    KwWhile => libc::fprintf(f, c"KwWhile"),
+    KwLoop => libc::fprintf(f, c"KwLoop"),
+    KwMatch => libc::fprintf(f, c"KwMatch"),
+    KwNil => libc::fprintf(f, c"KwNil"),
+    KwTrue => libc::fprintf(f, c"KwTrue"),
+    KwFalse => libc::fprintf(f, c"KwFalse"),
+    KwStruct => libc::fprintf(f, c"KwStruct"),
+    KwUnion => libc::fprintf(f, c"KwUnion"),
+    KwEnum => libc::fprintf(f, c"KwEnum"),
+    KwType => libc::fprintf(f, c"KwType"),
+    KwFunction => libc::fprintf(f, c"KwFunction"),
+    KwConst => libc::fprintf(f, c"KwConst"),
+    KwData => libc::fprintf(f, c"KwData"),
+    KwImport => libc::fprintf(f, c"KwImport"),
+    KwExtern => libc::fprintf(f, c"KwExtern"),
+    LParen => libc::fprintf(f, c"LParen"),
+    RParen => libc::fprintf(f, c"RParen"),
+    LSquare => libc::fprintf(f, c"LSquare"),
+    RSquare => libc::fprintf(f, c"RSquare"),
+    LCurly => libc::fprintf(f, c"LCurly"),
+    RCurly => libc::fprintf(f, c"RCurly"),
+    LAngle => libc::fprintf(f, c"LAngle"),
+    RAngle => libc::fprintf(f, c"RAngle"),
+    Amp => libc::fprintf(f, c"Amp"),
+    Star => libc::fprintf(f, c"Star"),
+    Plus => libc::fprintf(f, c"Plus"),
+    Minus => libc::fprintf(f, c"Minus"),
+    Tilde => libc::fprintf(f, c"Tilde"),
+    Excl => libc::fprintf(f, c"Excl"),
+    Slash => libc::fprintf(f, c"Slash"),
+    Percent => libc::fprintf(f, c"Percent"),
+    Pipe => libc::fprintf(f, c"Pipe"),
+    Caret => libc::fprintf(f, c"Caret"),
+    Eq => libc::fprintf(f, c"Eq"),
+    Dot => libc::fprintf(f, c"Dot"),
+    Comma => libc::fprintf(f, c"Comma"),
+    Semi => libc::fprintf(f, c"Semi"),
+    Colon => libc::fprintf(f, c"Colon"),
+    LShift => libc::fprintf(f, c"LShift"),
+    RShift => libc::fprintf(f, c"RShift"),
+    DColon => libc::fprintf(f, c"DColon"),
+    Arrow => libc::fprintf(f, c"Arrow"),
+    FatArrow => libc::fprintf(f, c"FatArrow"),
+    EqEq => libc::fprintf(f, c"EqEq"),
+    ExclEq => libc::fprintf(f, c"ExclEq"),
+    LessEq => libc::fprintf(f, c"LessEq"),
+    GreaterEq => libc::fprintf(f, c"GreaterEq"),
+    LogicAnd => libc::fprintf(f, c"LogicAnd"),
+    LogicOr => libc::fprintf(f, c"LogicOr"),
+    RmwAdd => libc::fprintf(f, c"RmwAdd"),
+    RmwSub => libc::fprintf(f, c"RmwSub"),
+    RmwMul => libc::fprintf(f, c"RmwMul"),
+    RmwDiv => libc::fprintf(f, c"RmwDiv"),
+    RmwMod => libc::fprintf(f, c"RmwMod"),
+    RmwLShift => libc::fprintf(f, c"RmwLShift"),
+    RmwRShift => libc::fprintf(f, c"RmwRShift"),
+    RmwBitAnd => libc::fprintf(f, c"RmwBitAnd"),
+    RmwBitOr => libc::fprintf(f, c"RmwBitOr"),
+    RmwBitXor => libc::fprintf(f, c"RmwBitXor"),
+    Varargs => libc::fprintf(f, c"Varargn")
+  };
+}
+
 struct Lexer (input: slice::Slice<Uint8>, cur: Uintn)
 
 // Create a new lexer instance for a file
@@ -145,12 +239,12 @@ function (lexer: *mut Lexer) consume_eq(want: Uint8) -> Bool {
 
 
 // Read a token from the lexer
-function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) next() -> result::Result<Tk, mpc::CompileError> {
   loop {
     let ch = lexer.get();
 
     // End of file
-    if (&ch).is_none() { return result::ok(Token::EndOfFile) }
+    if (&ch).is_none() { return result::ok(Tk::EndOfFile) }
 
     // Now we know we can unwrap
     let ch = ch.unwrap();
@@ -186,19 +280,19 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
     if ch == '0' {
       if lexer.consume_eq('x') || lexer.consume_eq('X') {
         return match read_hex(lexer) {
-          Ok(v) => result::ok(Token::IntLit(v)),
+          Ok(v) => result::ok(Tk::IntLit(v)),
           Err(v) => result::err(v)
         }
       }
       if lexer.consume_eq('o') || lexer.consume_eq('O') {
         return match read_oct(lexer) {
-          Ok(v) => result::ok(Token::IntLit(v)),
+          Ok(v) => result::ok(Tk::IntLit(v)),
           Err(v) => result::err(v)
         }
       }
       if lexer.consume_eq('b') || lexer.consume_eq('B') {
         return match read_bin(lexer) {
-          Ok(v) => result::ok(Token::IntLit(v)),
+          Ok(v) => result::ok(Tk::IntLit(v)),
           Err(v) => result::err(v)
         }
       }
@@ -206,7 +300,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
 
     if ch >= '0' && ch <= '9' {
       return match read_dec(lexer, ch as <Uintn>) {
-        Ok(v) => result::ok(Token::IntLit(v)),
+        Ok(v) => result::ok(Tk::IntLit(v)),
         Err(v) => result::err(v)
       }
     }
@@ -245,85 +339,85 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
     }
 
     // Symbols
-    if ch == '(' { return result::ok(Token::LParen) }
-    if ch == ')' { return result::ok(Token::RParen) }
-    if ch == '[' { return result::ok(Token::LSquare) }
-    if ch == ']' { return result::ok(Token::RSquare) }
-    if ch == '{' { return result::ok(Token::LCurly) }
-    if ch == '}' { return result::ok(Token::RCurly) }
+    if ch == '(' { return result::ok(Tk::LParen) }
+    if ch == ')' { return result::ok(Tk::RParen) }
+    if ch == '[' { return result::ok(Tk::LSquare) }
+    if ch == ']' { return result::ok(Tk::RSquare) }
+    if ch == '{' { return result::ok(Tk::LCurly) }
+    if ch == '}' { return result::ok(Tk::RCurly) }
     if ch == '<' {
       if lexer.consume_eq('<') {
-        if lexer.consume_eq('=') { return result::ok(Token::RmwLShift) }
-        return result::ok(Token::LShift)
+        if lexer.consume_eq('=') { return result::ok(Tk::RmwLShift) }
+        return result::ok(Tk::LShift)
       }
-      if lexer.consume_eq('=') { return result::ok(Token::LessEq) }
-      return result::ok(Token::LAngle)
+      if lexer.consume_eq('=') { return result::ok(Tk::LessEq) }
+      return result::ok(Tk::LAngle)
     }
     if ch == '>' {
       if lexer.consume_eq('>') {
-        if lexer.consume_eq('=') { return result::ok(Token::RmwRShift) }
-        return result::ok(Token::RShift)
+        if lexer.consume_eq('=') { return result::ok(Tk::RmwRShift) }
+        return result::ok(Tk::RShift)
       }
-      if lexer.consume_eq('=') { return result::ok(Token::GreaterEq) }
-      return result::ok(Token::RAngle)
+      if lexer.consume_eq('=') { return result::ok(Tk::GreaterEq) }
+      return result::ok(Tk::RAngle)
     }
     if ch == '&' {
-      if lexer.consume_eq('&') { return result::ok(Token::LogicAnd) }
-      if lexer.consume_eq('=') { return result::ok(Token::RmwBitAnd) }
-      return result::ok(Token::Amp)
+      if lexer.consume_eq('&') { return result::ok(Tk::LogicAnd) }
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwBitAnd) }
+      return result::ok(Tk::Amp)
     }
     if ch == '*' {
-      if lexer.consume_eq('=') { return result::ok(Token::RmwMul) }
-      return result::ok(Token::Star)
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwMul) }
+      return result::ok(Tk::Star)
     }
     if ch == '+' {
-      if lexer.consume_eq('=') { return result::ok(Token::RmwAdd) }
-      return result::ok(Token::Plus)
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwAdd) }
+      return result::ok(Tk::Plus)
     }
     if ch == '-' {
-      if lexer.consume_eq('>') { return result::ok(Token::Arrow) }
-      if lexer.consume_eq('=') { return result::ok(Token::RmwSub) }
-      return result::ok(Token::Minus)
+      if lexer.consume_eq('>') { return result::ok(Tk::Arrow) }
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwSub) }
+      return result::ok(Tk::Minus)
     }
-    if ch == '~' { return result::ok(Token::Tilde) }
+    if ch == '~' { return result::ok(Tk::Tilde) }
     if ch == '!' {
-      if lexer.consume_eq('=') { return result::ok(Token::ExclEq) }
-      return result::ok(Token::Excl)
+      if lexer.consume_eq('=') { return result::ok(Tk::ExclEq) }
+      return result::ok(Tk::Excl)
     }
     if ch == '/' {
-      if lexer.consume_eq('=') { return result::ok(Token::RmwDiv) }
-      return result::ok(Token::Slash)
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwDiv) }
+      return result::ok(Tk::Slash)
     }
     if ch == '%' {
-      if lexer.consume_eq('=') { return result::ok(Token::RmwMod) }
-      return result::ok(Token::Percent)
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwMod) }
+      return result::ok(Tk::Percent)
     }
     if ch == '|' {
-      if lexer.consume_eq('|') { return result::ok(Token::LogicOr) }
-      if lexer.consume_eq('=') { return result::ok(Token::RmwBitOr) }
-      return result::ok(Token::Pipe)
+      if lexer.consume_eq('|') { return result::ok(Tk::LogicOr) }
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwBitOr) }
+      return result::ok(Tk::Pipe)
     }
     if ch == '^' {
-      if lexer.consume_eq('=') { return result::ok(Token::RmwBitXor) }
-      return result::ok(Token::Caret)
+      if lexer.consume_eq('=') { return result::ok(Tk::RmwBitXor) }
+      return result::ok(Tk::Caret)
     }
     if ch == '=' {
-      if lexer.consume_eq('>') { return result::ok(Token::FatArrow) }
-      if lexer.consume_eq('=') { return result::ok(Token::EqEq) }
-      return result::ok(Token::Eq)
+      if lexer.consume_eq('>') { return result::ok(Tk::FatArrow) }
+      if lexer.consume_eq('=') { return result::ok(Tk::EqEq) }
+      return result::ok(Tk::Eq)
     }
     if ch == '.' {
       // FIXME: handle case of ..
       if lexer.consume_eq('.') && lexer.consume_eq('.') {
-        return result::ok(Token::Varargs)
+        return result::ok(Tk::Varargs)
       }
-      return result::ok(Token::Dot)
+      return result::ok(Tk::Dot)
     }
-    if ch == ',' { return result::ok(Token::Comma) }
-    if ch == ';' { return result::ok(Token::Semi) }
+    if ch == ',' { return result::ok(Tk::Comma) }
+    if ch == ';' { return result::ok(Tk::Semi) }
     if ch == ':' {
-      if lexer.consume_eq(':') { return result::ok(Token::DColon) }
-      return result::ok(Token::Colon)
+      if lexer.consume_eq(':') { return result::ok(Tk::DColon) }
+      return result::ok(Tk::Colon)
     }
 
     // Unrecognized character
@@ -332,7 +426,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Token, mpc::CompileError> 
 }
 
 // Read a character literal
-function (lexer: *mut Lexer) read_chr() -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) read_chr() -> result::Result<Tk, mpc::CompileError> {
   loop {
     let ch = lexer.get();
 
@@ -345,11 +439,11 @@ function (lexer: *mut Lexer) read_chr() -> result::Result<Token, mpc::CompileErr
     if ch == '\\' { lexer.read_esc(); }
   }
 
-  return result::ok(Token::IntLit(0)) // FIXME: derive value
+  return result::ok(Tk::IntLit(0)) // FIXME: derive value
 }
 
 // Read a string literal
-function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Token, mpc::CompileError> {
+function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Tk, mpc::CompileError> {
   let mut s = vec::new();
 
   loop {
@@ -371,8 +465,8 @@ function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Token, mpc::
     }
   }
 
-  if is_c { return result::ok(Token::CStrLit(s)) }
-  else    { return result::ok(Token::StrLit(s)) }
+  if is_c { return result::ok(Tk::CStrLit(s)) }
+  else    { return result::ok(Tk::StrLit(s)) }
 }
 
 // Read an escape sequence
@@ -478,46 +572,44 @@ function (lexer: *mut Lexer) read_dec(mut val: Uintn) -> result::Result<Uintn, m
   return result::ok(val)
 }
 
-import libc
-
 // Check if an identifier is a keyword
-function check_kw(s: str::Str) -> Token {
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Bool"))      { return Token::TyBool }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint8"))     { return Token::TyUint8 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int8"))      { return Token::TyInt8 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint16"))    { return Token::TyUint16 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int16"))     { return Token::TyInt16 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint32"))    { return Token::TyUint32 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int32"))     { return Token::TyInt32 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint64"))    { return Token::TyUint64 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int64"))     { return Token::TyInt64 }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uintn"))     { return Token::TyUintn }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Intn"))      { return Token::TyIntn }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Float"))     { return Token::TyFloat }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Double"))    { return Token::TyDouble }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Function"))  { return Token::TyFunction }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"as"))        { return Token::KwAs }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"let"))       { return Token::KwLet }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"mut"))       { return Token::KwMut }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"continue"))  { return Token::KwContinue }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"break"))     { return Token::KwBreak }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"return"))    { return Token::KwReturn }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"if"))        { return Token::KwIf }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"else"))      { return Token::KwElse }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"while"))     { return Token::KwWhile }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"loop"))      { return Token::KwLoop }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"match"))     { return Token::KwMatch }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"nil"))       { return Token::KwNil }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"true"))      { return Token::KwTrue }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"false"))     { return Token::KwFalse }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"struct"))    { return Token::KwStruct }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"union"))     { return Token::KwUnion }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"enum"))      { return Token::KwEnum }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"type"))      { return Token::KwType }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"function"))  { return Token::KwFunction }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"const"))     { return Token::KwConst }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"data"))      { return Token::KwData }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"import"))    { return Token::KwImport }
-  if str::eq(str::view_from_str(&s), str::view_from_lit(&"extern"))    { return Token::KwExtern }
-  return Token::Ident(s)
+function check_kw(s: str::Str) -> Tk {
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Bool"))      { return Tk::TyBool }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint8"))     { return Tk::TyUint8 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int8"))      { return Tk::TyInt8 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint16"))    { return Tk::TyUint16 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int16"))     { return Tk::TyInt16 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint32"))    { return Tk::TyUint32 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int32"))     { return Tk::TyInt32 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uint64"))    { return Tk::TyUint64 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Int64"))     { return Tk::TyInt64 }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Uintn"))     { return Tk::TyUintn }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Intn"))      { return Tk::TyIntn }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Float"))     { return Tk::TyFloat }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Double"))    { return Tk::TyDouble }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"Function"))  { return Tk::TyFunction }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"as"))        { return Tk::KwAs }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"let"))       { return Tk::KwLet }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"mut"))       { return Tk::KwMut }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"continue"))  { return Tk::KwContinue }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"break"))     { return Tk::KwBreak }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"return"))    { return Tk::KwReturn }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"if"))        { return Tk::KwIf }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"else"))      { return Tk::KwElse }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"while"))     { return Tk::KwWhile }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"loop"))      { return Tk::KwLoop }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"match"))     { return Tk::KwMatch }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"nil"))       { return Tk::KwNil }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"true"))      { return Tk::KwTrue }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"false"))     { return Tk::KwFalse }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"struct"))    { return Tk::KwStruct }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"union"))     { return Tk::KwUnion }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"enum"))      { return Tk::KwEnum }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"type"))      { return Tk::KwType }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"function"))  { return Tk::KwFunction }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"const"))     { return Tk::KwConst }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"data"))      { return Tk::KwData }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"import"))    { return Tk::KwImport }
+  if str::eq(str::view_from_str(&s), str::view_from_lit(&"extern"))    { return Tk::KwExtern }
+  return Tk::Ident(s)
 }
