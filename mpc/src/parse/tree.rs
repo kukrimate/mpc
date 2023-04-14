@@ -247,6 +247,7 @@ impl Def {
 #[derive(Clone, Debug)]
 pub struct TypeDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub ty: Ty
@@ -255,6 +256,7 @@ pub struct TypeDef {
 #[derive(Clone, Debug)]
 pub struct StructDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
@@ -263,6 +265,7 @@ pub struct StructDef {
 #[derive(Clone, Debug)]
 pub struct UnionDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub params: Vec<(RefStr, Ty)>
@@ -271,6 +274,7 @@ pub struct UnionDef {
 #[derive(Clone, Debug)]
 pub struct EnumDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub variants: Vec<DefId>
@@ -279,23 +283,24 @@ pub struct EnumDef {
 #[derive(Clone, Debug)]
 pub struct UnitVariantDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
+  pub variant_index: usize,
   pub name: RefStr,
-  pub parent_enum: DefId,
-  pub variant_index: usize
 }
 
 #[derive(Clone, Debug)]
 pub struct StructVariantDef {
   pub loc: SourceLocation,
-  pub name: RefStr,
-  pub parent_enum: DefId,
+  pub parent_id: DefId,
   pub variant_index: usize,
+  pub name: RefStr,
   pub params: Vec<(RefStr, Ty)>
 }
 
 #[derive(Clone, Debug)]
 pub struct ConstDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub ty: Ty,
   pub val: Expr
@@ -304,6 +309,7 @@ pub struct ConstDef {
 #[derive(Clone, Debug)]
 pub struct DataDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: Ty,
@@ -313,6 +319,7 @@ pub struct DataDef {
 #[derive(Clone, Debug)]
 pub struct FuncDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
   pub receiver: Option<(RefStr, IsMut, Ty)>,
@@ -324,6 +331,7 @@ pub struct FuncDef {
 #[derive(Clone, Debug)]
 pub struct ExternDataDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub is_mut: IsMut,
   pub ty: Ty
@@ -332,6 +340,7 @@ pub struct ExternDataDef {
 #[derive(Clone, Debug)]
 pub struct ExternFuncDef {
   pub loc: SourceLocation,
+  pub parent_id: DefId,
   pub name: RefStr,
   pub params: Vec<(RefStr, Ty)>,
   pub varargs: bool,

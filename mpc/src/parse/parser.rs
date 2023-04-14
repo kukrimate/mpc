@@ -54,6 +54,8 @@ macro_rules! maybe_want {
 pub struct Parser<'repo> {
   /// Compiler repository
   repo: &'repo mut Repository,
+  /// Current module ID
+  module_id: DefId,
   /// Lexical analyzer
   lexer: Lexer,
   /// Token buffer
@@ -61,8 +63,8 @@ pub struct Parser<'repo> {
 }
 
 impl<'repo> Parser<'repo> {
-  pub fn new(repo: &'repo mut Repository, lexer: Lexer) -> Self {
-    Parser { repo, lexer, fifo: FIFO::new() }
+  pub fn new(repo: &'repo mut Repository, module_id: DefId, lexer: Lexer) -> Self {
+    Parser { repo, module_id, lexer, fifo: FIFO::new() }
   }
 
   fn fill_nth(&mut self, i: usize) {
@@ -117,8 +119,14 @@ impl<'repo> Parser<'repo> {
     let ty = self.parse_ty()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Type(TypeDef { loc: loc.clone(), name, type_params, ty }));
-    self.repo.sym(loc, name, def_id)
+    let def_id = self.repo.def(Def::Type(TypeDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      type_params,
+      ty
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_struct(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -130,8 +138,14 @@ impl<'repo> Parser<'repo> {
     let params = self.parse_params()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Struct(StructDef { loc: loc.clone(), name, type_params, params }));
-    self.repo.sym(loc, name, def_id)
+    let def_id = self.repo.def(Def::Struct(StructDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      type_params,
+      params
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_union(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -143,8 +157,14 @@ impl<'repo> Parser<'repo> {
     let params = self.parse_params()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Union(UnionDef { loc: loc.clone(), name, type_params, params }));
-    self.repo.sym(loc, name, def_id)
+    let def_id = self.repo.def(Def::Union(UnionDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      type_params,
+      params
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_enum(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -153,13 +173,17 @@ impl<'repo> Parser<'repo> {
     let type_params = self.parse_type_params()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Enum(EnumDef { loc: loc.clone(), name, type_params, variants: Vec::new() }));
-    self.repo.sym(loc, name, def_id)?;
+    let def_id = self.repo.def(Def::Enum(EnumDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      type_params,
+      variants: Vec::new()
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)?;
 
     // Parse variants
-    self.repo.current_scope.push(def_id);
-    let variants = self.parse_variants()?;
-    self.repo.current_scope.pop();
+    let variants = self.parse_variants(def_id)?;
 
     // Add variant list to EnumDef
     if let Some(Def::Enum(def)) = self.repo.parsed_defs.get_mut(&def_id) {
@@ -171,7 +195,7 @@ impl<'repo> Parser<'repo> {
     Ok(())
   }
 
-  fn parse_variants(&mut self) -> Result<Vec<DefId>, CompileError> {
+  fn parse_variants(&mut self, enum_id: DefId) -> Result<Vec<DefId>, CompileError> {
     let mut variants = Vec::new();
 
     want!(self, Token::LParen, ())?;
@@ -183,22 +207,22 @@ impl<'repo> Parser<'repo> {
         let params = self.parse_params()?;
         let def_id = self.repo.def(Def::StructVariant(StructVariantDef {
           loc: loc.clone(),
-          name,
-          parent_enum: *self.repo.current_scope.last().unwrap(),
+          parent_id: enum_id,
           variant_index: variants.len(),
+          name,
           params
         }));
         variants.push(def_id);
-        self.repo.sym(loc, name, def_id)?;
+        self.repo.sym(loc, enum_id, name, def_id)?;
       } else {
         let def_id = self.repo.def(Def::UnitVariant(UnitVariantDef {
           loc: loc.clone(),
-          name,
-          parent_enum: *self.repo.current_scope.last().unwrap(),
-          variant_index: variants.len()
+          parent_id: enum_id,
+          variant_index: variants.len(),
+          name
         }));
         variants.push(def_id);
-        self.repo.sym(loc, name, def_id)?;
+        self.repo.sym(loc, enum_id, name, def_id)?;
       }
       if maybe_want!(self, Token::RParen) { return Ok(variants) }
       want!(self, Token::Comma, ())?;
@@ -214,8 +238,14 @@ impl<'repo> Parser<'repo> {
     let val = self.parse_expr()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Const(ConstDef { loc: loc.clone(), name, ty, val }));
-    self.repo.sym(loc, name, def_id)
+    let def_id = self.repo.def(Def::Const(ConstDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      ty,
+      val
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_data(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -228,8 +258,15 @@ impl<'repo> Parser<'repo> {
     let init = self.parse_expr()?;
 
     // Add to repository
-    let def_id = self.repo.def(Def::Data(DataDef { loc: loc.clone(), name, is_mut, ty, init }));
-    self.repo.sym(loc, name, def_id)
+    let def_id = self.repo.def(Def::Data(DataDef {
+      loc: loc.clone(),
+      parent_id: self.module_id,
+      name,
+      is_mut,
+      ty,
+      init
+    }));
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_function(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -245,6 +282,7 @@ impl<'repo> Parser<'repo> {
     // Add to repository
     let def_id = self.repo.def(Def::Func(FuncDef {
       loc: loc.clone(),
+      parent_id: self.module_id,
       name,
       type_params,
       receiver,
@@ -253,7 +291,7 @@ impl<'repo> Parser<'repo> {
       body
     }));
 
-    self.repo.sym(loc, name, def_id)
+    self.repo.sym(loc, self.module_id, name, def_id)
   }
 
   fn parse_import(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
@@ -263,7 +301,7 @@ impl<'repo> Parser<'repo> {
     // Process import
     self.repo.find_module(loc.clone(), name)
       .and_then(|path| self.repo.parse_module(&path))
-      .and_then(|id| self.repo.sym(loc, name, id))
+      .and_then(|id| self.repo.sym(loc, self.module_id, name, id))
   }
 
   fn parse_extern(&mut self, _: SourceLocation) -> Result<(), CompileError> {
@@ -276,8 +314,15 @@ impl<'repo> Parser<'repo> {
           let (params, varargs) = self.parse_params_with_varargs()?;
           let ret_ty = self.parse_ret_ty()?;
 
-          let def_id = self.repo.def(Def::ExternFunc(ExternFuncDef { loc: loc.clone(), name, params, varargs, ret_ty }));
-          self.repo.sym(loc, name, def_id)?;
+          let def_id = self.repo.def(Def::ExternFunc(ExternFuncDef {
+            loc: loc.clone(),
+            parent_id: self.module_id,
+            name,
+            params,
+            varargs,
+            ret_ty
+          }));
+          self.repo.sym(loc, self.module_id, name, def_id)?;
         }
         (loc, Token::KwData) => {
           let is_mut = self.parse_is_mut();
@@ -285,8 +330,14 @@ impl<'repo> Parser<'repo> {
           want!(self, Token::Colon, ())?;
           let ty = self.parse_ty()?;
 
-          let def_id = self.repo.def(Def::ExternData(ExternDataDef { loc: loc.clone(), name, is_mut, ty }));
-          self.repo.sym(loc, name, def_id)?;
+          let def_id = self.repo.def(Def::ExternData(ExternDataDef {
+            loc: loc.clone(),
+            parent_id: self.module_id,
+            name,
+            is_mut,
+            ty
+          }));
+          self.repo.sym(loc, self.module_id, name, def_id)?;
         }
         (location, token) => {
           Err(CompileError::UnexpectedToken(location, token))?

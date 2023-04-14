@@ -178,7 +178,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
             self.global.inst_extern_data(def_id, def)?
           }
           parse::Def::UnitVariant(def) => {
-            let enum_def = self.global.parsed_def(def.parent_enum).unwrap_enum();
+            let enum_def = self.global.parsed_def(def.parent_id).unwrap_enum();
             let type_args: Vec<Ty> = if type_args.len() > 0 {
               self.infer_type_args(type_args)?
             } else {
@@ -186,7 +186,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
                 .map(|_| self.global.tctx.new_var(Bound::Any))
                 .collect()
             };
-            let ty = self.global.inst_enum(loc.clone(), (def.parent_enum, type_args.clone()), enum_def)?;
+            let ty = self.global.inst_enum(loc.clone(), (def.parent_id, type_args.clone()), enum_def)?;
             LValue::UnitVariantLit { ty, is_mut: IsMut::No, id: (def_id, type_args) }
           }
           _ => Err(CompileError::InvalidLvalueExpression(loc.clone()))?
@@ -304,7 +304,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
                 }
               }
               parse::Def::StructVariant(variant_def) => {
-                let enum_def = self.global.parsed_def(variant_def.parent_enum).unwrap_enum();
+                let enum_def = self.global.parsed_def(variant_def.parent_id).unwrap_enum();
                 let type_args: Vec<Ty> = if type_args.len() > 0 {
                   self.infer_type_args(type_args)?
                 } else {
@@ -313,7 +313,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
                     .collect()
                 };
 
-                let ty = self.global.inst_enum(loc.clone(), (variant_def.parent_enum, type_args.clone()), enum_def)?;
+                let ty = self.global.inst_enum(loc.clone(), (variant_def.parent_id, type_args.clone()), enum_def)?;
                 let inferred_args = args
                   .iter()
                   .map(|(name, arg)| Ok((*name, self.infer_rvalue(arg)?)))
@@ -748,7 +748,8 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     };
 
     // Apply auto-referencing to receiver if required
-    match ( &params.get(0).unwrap().1, receiver.ty()) {
+    match (self.global.tctx.canonical_ty(&params.get(0).unwrap().1),
+           self.global.tctx.canonical_ty(receiver.ty())) {
       (Ty::Ptr(..), Ty::Ptr(..)) => (),
       (Ty::Ptr(..), _) => {
         match receiver {

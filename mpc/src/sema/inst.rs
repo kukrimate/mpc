@@ -18,7 +18,7 @@ pub(super) struct GlobalCtx<'repo, 'tctx> {
 impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
   /// Lookup a parsed definition by its id
   pub fn parsed_def(&self, id: DefId) -> &'repo parse::Def {
-    self.repo.parsed_defs.get(&id).unwrap()
+    self.repo.parsed_def(id)
   }
 
   /// Lookup an instance by its id
@@ -35,7 +35,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
       return Err(CompileError::IncorrectNumberOfTypeArguments(loc))
     }
 
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -61,7 +61,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     self.insts.insert(id.clone(), Inst::Struct { name: def.name, params: None });
 
     // Instantiate body
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -86,7 +86,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
 
     self.insts.insert(id.clone(), Inst::Union { name: def.name, params: None });
 
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -109,7 +109,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
 
     self.insts.insert(id.clone(), Inst::Enum { name: def.name, variants: def.variants.clone() });
 
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -118,19 +118,19 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     }
 
     for variant_id in def.variants.iter() {
-      match def_ctx.global.repo.parsed_defs.get(variant_id) {
-        Some(parse::Def::UnitVariant(def)) => {
+      match def_ctx.global.repo.parsed_def(*variant_id) {
+        parse::Def::UnitVariant(def) => {
           def_ctx.global.insts.insert((*variant_id, id.1.clone()), Inst::UnitVariant {
             name: def.name,
-            parent_enum: (def.parent_enum, id.1.clone()),
+            parent_enum: (def.parent_id, id.1.clone()),
             variant_index: def.variant_index
           });
         }
-        Some(parse::Def::StructVariant(def)) => {
+        parse::Def::StructVariant(def) => {
           let params = def_ctx.infer_params(&def.params)?;
           def_ctx.global.insts.insert((*variant_id, id.1.clone()), Inst::StructVariant {
             name: def.name,
-            parent_enum: (def.parent_enum, id.1.clone()),
+            parent_enum: (def.parent_id, id.1.clone()),
             variant_index: def.variant_index,
             params
           });
@@ -142,8 +142,8 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(Ty::EnumRef(def.name, id))
   }
 
-  pub fn inst_lvalue_const(&mut self, loc: SourceLocation, id: DefId, def: &parse::ConstDef) -> Result<LValue, CompileError> {
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id));
+  pub fn inst_lvalue_const(&mut self, loc: SourceLocation, _id: DefId, def: &parse::ConstDef) -> Result<LValue, CompileError> {
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
 
     let ty = def_ctx.infer_ty(&def.ty)?;
     let val = def_ctx.infer_lvalue(&def.val)?;
@@ -152,8 +152,8 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     Ok(val)
   }
 
-  pub fn inst_rvalue_const(&mut self, loc: SourceLocation, id: DefId, def: &parse::ConstDef) -> Result<RValue, CompileError> {
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id));
+  pub fn inst_rvalue_const(&mut self, loc: SourceLocation, _id: DefId, def: &parse::ConstDef) -> Result<RValue, CompileError> {
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
 
     let ty = def_ctx.infer_ty(&def.ty)?;
     let val = def_ctx.infer_rvalue(&def.val)?;
@@ -163,7 +163,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
   }
 
   pub fn inst_data(&mut self, loc: SourceLocation, id: DefId, def: &parse::DataDef) -> Result<LValue, CompileError> {
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
 
     let ty = def_ctx.infer_ty(&def.ty)?;
     let init = def_ctx.infer_rvalue(&def.init)?;
@@ -186,7 +186,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     }
 
     // Crate context
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -236,7 +236,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     }
 
     // Setup context
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id.0));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     def_ctx.newscope();
 
     // Type parameters
@@ -289,14 +289,14 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
   }
 
   pub fn inst_extern_data(&mut self, id: DefId, def: &parse::ExternDataDef) -> Result<LValue, CompileError> {
-    let ty = DefCtx::new(self, self.repo.parent(id)).infer_ty(&def.ty)?;
+    let ty = DefCtx::new(self, def.parent_id).infer_ty(&def.ty)?;
     self.insts.insert((id, vec![]), Inst::ExternData { name: def.name, ty: ty.clone(), is_mut: def.is_mut });
 
     Ok(LValue::DataRef { ty, is_mut: def.is_mut, id })
   }
 
   pub fn inst_extern_func(&mut self, id: DefId, def: &parse::ExternFuncDef) -> Result<RValue, CompileError> {
-    let mut def_ctx = DefCtx::new(self, self.repo.parent(id));
+    let mut def_ctx = DefCtx::new(self, def.parent_id);
     let ty = Ty::Func(def_ctx.infer_params(&def.params)?,
                       def.varargs,
                       Box::new(def_ctx.infer_ty(&def.ret_ty)?));
@@ -314,7 +314,7 @@ pub(super) fn infer(repo: &Repository, tctx: &mut TVarCtx) -> Result<HashMap<(De
   };
 
   // Instantiate signatures for non-generic functions
-  for (id, def) in repo.parsed_defs.iter() {
+  for (id, def) in repo.parsed_defs() {
     match def {
       parse::Def::Func(def) if def.type_params.len() == 0 => {
         ctx.inst_func_sig(def.loc.clone(), (*id, Vec::new()), def)?;

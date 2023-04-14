@@ -21,11 +21,9 @@ pub use tree::*;
 pub struct Repository {
   def_cnt: usize,
   search_dirs: Vec<PathBuf>,
-  current_scope: Vec<DefId>,
   ino_to_module: HashMap<u64, DefId>,
-  parent_scope: HashMap<DefId, DefId>,
-  pub parsed_defs: HashMap<DefId, Def>,
-  pub syms: HashMap<DefId, HashMap<RefStr, DefId>>,
+  parsed_defs: HashMap<DefId, Def>,
+  syms: HashMap<DefId, HashMap<RefStr, DefId>>,
 }
 
 impl Repository {
@@ -34,9 +32,7 @@ impl Repository {
     Repository {
       def_cnt: 0,
       search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
-      current_scope: Vec::new(),
       ino_to_module: HashMap::new(),
-      parent_scope: HashMap::new(),
       parsed_defs: HashMap::new(),
       syms: HashMap::new(),
     }
@@ -55,8 +51,12 @@ impl Repository {
     scope.get(&name).cloned()
   }
 
-  pub fn parent(&self, def_id: DefId) -> DefId {
-    *self.parent_scope.get(&def_id).unwrap()
+  pub fn parsed_def(&self, def_id: DefId) -> &Def {
+    self.parsed_defs.get(&def_id).unwrap()
+  }
+
+  pub fn parsed_defs(&self) -> impl Iterator<Item=(&DefId, &Def)> {
+    self.parsed_defs.iter()
   }
 
   fn new_id(&mut self) -> DefId {
@@ -67,18 +67,17 @@ impl Repository {
 
   fn def(&mut self, def: Def) -> DefId {
     let id = self.new_id();
-    let parent = *self.current_scope.last().unwrap();
     self.parsed_defs.insert(id, def);
-    self.parent_scope.insert(id, parent);
     id
   }
 
-  fn sym(&mut self, location: SourceLocation, name: RefStr, def: DefId) -> Result<(), CompileError> {
-    let scope = self.syms
-      .entry(*self.current_scope.last().unwrap())
+  fn sym(&mut self, location: SourceLocation, scope_id: DefId, name: RefStr, def_id: DefId) -> Result<(), CompileError> {
+    // Find parent scope's symbol table
+    let parent_scope = self.syms
+      .entry(scope_id)
       .or_insert_with(|| HashMap::new());
 
-    match scope.insert(name, def) {
+    match parent_scope.insert(name, def_id) {
       None => Ok(()),         // No redefinition
       Some(..) => {           // Redefinition errors
         Err(CompileError::Redefinition(location, name))
@@ -111,7 +110,6 @@ impl Repository {
     let module_id = self.new_id();
     self.ino_to_module.insert(ino, module_id);
     self.search_dirs.push(path.parent().unwrap().to_path_buf());
-    self.current_scope.push(module_id);
 
     let file = std::sync::Arc::new(SourceFile {
       path: path.to_owned(),
@@ -119,13 +117,12 @@ impl Repository {
     });
 
     let lexer = Lexer::new(file);
-    let result = match parser::Parser::new(self, lexer).parse() {
+    let result = match parser::Parser::new(self, module_id, lexer).parse() {
       Ok(()) => Ok(module_id),
       Err(err) => Err(err)
     };
 
     // Exit module context
-    self.current_scope.pop();
     self.search_dirs.pop();
 
     result
@@ -138,8 +135,7 @@ impl Repository {
       match def {
         Def::Func(def) => {
           if let Some((_, _, ty)) = &def.receiver {
-            let scope_id = self.parent(*def_id);
-            let receiver_id = self.find_receiver_id(scope_id, ty)?;
+            let receiver_id = self.find_receiver_id(def.parent_id, ty)?;
             q.push((def.loc.clone(), receiver_id, def.name, *def_id));
           }
         }
@@ -148,10 +144,7 @@ impl Repository {
     }
 
     for (loc, receiver_id, name, method_id) in q.into_iter() {
-      self.current_scope.push(receiver_id);
-      let result = self.sym(loc, name, method_id);
-      self.current_scope.pop();
-      result?;
+      self.sym(loc, receiver_id, name, method_id)?;
     }
 
     Ok(())
