@@ -347,15 +347,23 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
         self.infer_index(loc.clone(), arg, idx)?
       }
       Ind(loc, arg) => {
+        let arg = self.infer_rvalue(arg)?;
         self.infer_ind(loc.clone(), arg)?
       }
       expr => Err(CompileError::InvalidLvalueExpression(expr.loc().clone()))?
     })
   }
 
-  pub fn infer_dot(&mut self, loc: SourceLocation, arg: LValue, name: RefStr) -> Result<LValue, CompileError> {
-    // Find parameter list
-    let ty = self.global.tctx.canonical_ty(arg.ty());
+  pub fn infer_dot(&mut self, loc: SourceLocation, mut arg: LValue, name: RefStr) -> Result<LValue, CompileError> {
+    let mut ty = self.global.tctx.canonical_ty(arg.ty());
+
+    match ty {
+      Ty::Ptr(..) => {
+        arg = self.infer_ind(loc.clone(), RValue::Load { ty, arg: Box::new(arg) })?;
+        ty = self.global.tctx.canonical_ty(arg.ty());
+      }
+      _ => ()
+    }
 
     let (is_struct, params) = match &ty {
       Ty::StructRef(_, id) => {
@@ -415,10 +423,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
     })
   }
 
-  pub fn infer_ind(&mut self, loc: SourceLocation, arg: &parse::Expr) -> Result<LValue, CompileError> {
-    // Infer pointer type
-    let arg = self.infer_rvalue(arg)?;
-
+  pub fn infer_ind(&mut self, loc: SourceLocation, arg: RValue) -> Result<LValue, CompileError> {
     // Find base type
     let ty = self.global.tctx.canonical_ty(arg.ty());
     let (is_mut, base_ty) = match &ty {

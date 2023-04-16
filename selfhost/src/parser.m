@@ -148,7 +148,7 @@ function new(input: slice::Slice<Uint8>) -> Parser {
 }
 
 function (p: *mut Parser) parse_ty() -> result::Result<Ty, mpc::CompileError> {
-  let tk = match (*p).lexer.next() {
+  let tk = match p.lexer.next() {
     Ok(tk) => tk,
     Err(err) => return result::err(err)
   };

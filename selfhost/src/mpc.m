@@ -27,7 +27,7 @@ function (e: *CompileError) fmt(f: *mut libc::FILE) {
     },
     UnexptedToken(tk) => {
       libc::fprintf(f, c"Unrecognized token ");
-      (&tk).fmt(f);
+      tk.fmt(f);
     }
   }
 }
@@ -62,7 +62,7 @@ function mpc_main(args: slice::Slice<*libc::Char>) -> libc::Int {
   // Create parser
   let mut parser = parser::new(input);
   // Parse file
-  (&parser).parse().unwrap_ok();
+  parser.parse().unwrap_ok();
 
   0
 }

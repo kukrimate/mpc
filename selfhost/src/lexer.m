@@ -204,9 +204,9 @@ function new(input: slice::Slice<Uint8>) -> Lexer {
 
 // Read the next input character
 function (lexer: *mut Lexer) get() -> opt::Option<Uint8> {
-  match (*lexer).input.at_or_none((*lexer).cur) {
+  match lexer.input.at_or_none(lexer.cur) {
     Some(val) => {
-      (*lexer).cur += 1;
+      lexer.cur += 1;
       opt::some(*val)
     },
     None => opt::none()
@@ -216,7 +216,7 @@ function (lexer: *mut Lexer) get() -> opt::Option<Uint8> {
 
 // Peek at the next input character
 function (lexer: *mut Lexer) peek() -> opt::Option<Uint8> {
-  match (*lexer).input.at_or_none((*lexer).cur) {
+  match lexer.input.at_or_none(lexer.cur) {
     Some(val) => opt::some(*val),
     None => opt::none()
   }
@@ -224,10 +224,10 @@ function (lexer: *mut Lexer) peek() -> opt::Option<Uint8> {
 
 // Consume the next input character if equal
 function (lexer: *mut Lexer) consume_eq(want: Uint8) -> Bool {
-  match (*lexer).input.at_or_none((*lexer).cur) {
+  match lexer.input.at_or_none(lexer.cur) {
     Some(val) => {
       if *val == want {
-        (*lexer).cur += 1;
+        lexer.cur += 1;
         true
       } else {
         false
@@ -244,7 +244,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Tk, mpc::CompileError> {
     let ch = lexer.get();
 
     // End of file
-    if (&ch).is_none() { return result::ok(Tk::EndOfFile) }
+    if ch.is_none() { return result::ok(Tk::EndOfFile) }
 
     // Now we know we can unwrap
     let ch = ch.unwrap();
@@ -257,7 +257,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Tk, mpc::CompileError> {
       if lexer.consume_eq('/') {
         while {
           let ch = lexer.get();
-          if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+          if ch.is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
           opt::unwrap(ch) != '\n'
         } {}
         continue
@@ -267,7 +267,7 @@ function (lexer: *mut Lexer) next() -> result::Result<Tk, mpc::CompileError> {
           // Read until *
           while {
             let ch = lexer.get();
-            if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+            if ch.is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
             opt::unwrap(ch) != '*'
           } {}
           // Exit if reached a  /
@@ -318,19 +318,19 @@ function (lexer: *mut Lexer) next() -> result::Result<Tk, mpc::CompileError> {
        ch >= 'A' && ch <= 'Z' {
 
       let mut s = vec::new();
-      (&s).push(ch);
+      s.push(ch);
 
       loop {
         let ch = lexer.peek();
 
-        if (&ch).is_none() { break }
+        if ch.is_none() { break }
         let ch = ch.unwrap();
 
         if ch == '_' ||
            ch >= 'a' && ch <= 'z' ||
            ch >= 'A' && ch <= 'Z' ||
            ch >= '0' && ch <= '9' {
-          (&s).push(ch);
+          s.push(ch);
           lexer.get();
         } else {
           return result::ok(check_kw(s))
@@ -431,7 +431,7 @@ function (lexer: *mut Lexer) read_chr() -> result::Result<Tk, mpc::CompileError>
     let ch = lexer.get();
 
     // Char literal must not contain EOF
-    if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+    if ch.is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
     // Otherwise we can unwrap
     let ch = ch.unwrap();
@@ -450,18 +450,18 @@ function (lexer: *mut Lexer) read_str(is_c: Bool) -> result::Result<Tk, mpc::Com
     let ch = lexer.get();
 
     // Stirng literal must not contain EOF
-    if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+    if ch.is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
     // Otherwise we can unwrap
     let ch = ch.unwrap();
     if ch == '"' { break }
     if ch == '\\' {
       match lexer.read_esc() {
-        Ok(v) => (&s).push(v as <Uint8>),
+        Ok(v) => s.push(v as <Uint8>),
         Err(v) => return result::err(v)
       }
     } else {
-      (&s).push(ch)
+      s.push(ch)
     }
   }
 
@@ -474,7 +474,7 @@ function (lexer: *mut Lexer) read_esc() -> result::Result<Uintn, mpc::CompileErr
   let ch = lexer.get();
 
   // EOF here is always unexpected
-  if (&ch).is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
+  if ch.is_none() { return result::err(mpc::CompileError::UnexpectedEndOfFile) }
 
   // Otherwise check the escape sequence
   let ch = ch.unwrap();
@@ -497,7 +497,7 @@ function (lexer: *mut Lexer) read_hex() -> result::Result<Uintn, mpc::CompileErr
   loop {
     let ch = lexer.peek();
 
-    if (&ch).is_none() { break }
+    if ch.is_none() { break }
     let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '9' {
@@ -522,7 +522,7 @@ function (lexer: *mut Lexer) read_oct() -> result::Result<Uintn, mpc::CompileErr
   loop {
     let ch = lexer.peek();
 
-    if (&ch).is_none() { break }
+    if ch.is_none() { break }
     let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '7' {
@@ -541,7 +541,7 @@ function (lexer: *mut Lexer) read_bin() -> result::Result<Uintn, mpc::CompileErr
   loop {
     let ch = lexer.peek();
 
-    if (&ch).is_none() { break }
+    if ch.is_none() { break }
     let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '1' {
@@ -559,7 +559,7 @@ function (lexer: *mut Lexer) read_dec(mut val: Uintn) -> result::Result<Uintn, m
   loop {
     let ch = lexer.peek();
 
-    if (&ch).is_none() { break }
+    if ch.is_none() { break }
     let ch = ch.unwrap();
 
     if ch >= '0' && ch <= '9' {
