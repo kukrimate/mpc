@@ -272,7 +272,7 @@ impl<'global, 'repo, 'tctx> DefCtx<'global, 'repo, 'tctx> {
               }
               parse::Def::Union(union_def) => {
                 if args.len() != 1 {
-                  Err(CompileError::InvalidUnionLiteral(loc.clone()))?
+                  Err(CompileError::UnionLiteralWithMoreThanOneArgument(loc.clone()))?
                 }
 
                 let (name, val) = (args[0].0, self.infer_rvalue(&args[0].1)?);

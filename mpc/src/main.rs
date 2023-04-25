@@ -44,7 +44,7 @@ fn main() {
                              compile_to, args.value_of("target")) {
     Ok(()) => 0,
     Err(error) => {
-      eprintln!("{} :(", error);
+      error.display();
       1
     }
   };

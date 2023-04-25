@@ -6,6 +6,7 @@ import result
 import slice
 import str
 import vec
+import prog
 
 enum Ty (
   _Bool,
@@ -147,6 +148,24 @@ function new(input: slice::Slice<Uint8>) -> Parser {
   Parser(lexer::new(input))
 }
 
+function (p: *mut Parser) parse_path() -> result::Result<Path, mpc::CompileError> {
+  prog::panic(c"todo")
+}
+
+function (p: *mut Parser) parse_params() -> result::Result<vec::Vec<Param>, mpc::CompileError> {
+  let tk = match p.lexer.next() {
+    Ok(tk) => tk,
+    Err(err) => return result::err(err)
+  };
+
+  match tk {
+    LParen => (),
+    * => return result::err(mpc::CompileError::UnexptedToken(tk))
+  }
+
+
+}
+
 function (p: *mut Parser) parse_ty() -> result::Result<Ty, mpc::CompileError> {
   let tk = match p.lexer.next() {
     Ok(tk) => tk,
@@ -167,6 +186,21 @@ function (p: *mut Parser) parse_ty() -> result::Result<Ty, mpc::CompileError> {
     TyIntn => result::ok(Ty::_Intn),
     TyFloat => result::ok(Ty::_Float),
     TyDouble => result::ok(Ty::_Double),
+    TyFunction => {
+      prog::panic(c"todo")
+    },
+    Star => {
+      prog::panic(c"todo")
+    },
+    LSquare => {
+      prog::panic(c"todo")
+    },
+    LParen => {
+      prog::panic(c"todo")
+    },
+    Ident(s) => {
+      prog::panic(c"todo")
+    },
     * => result::err(mpc::CompileError::UnexptedToken(tk))
   }
 }

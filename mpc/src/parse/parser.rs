@@ -9,14 +9,14 @@ use super::lexer::*;
 
 macro_rules! want {
   ($parser:path,$want:pat,$body:expr) => {
-    match &$parser.look(0).1 {
+    match &$parser.look(0)?.1 {
       $want => {
         let tmp = $body;
-        $parser.get();
+        $parser.get()?;
         Ok(tmp)
       }
       _ => {
-        let (loc, tok) = $parser.get();
+        let (loc, tok) = $parser.get()?;
         Err(CompileError::UnexpectedToken(loc, tok))
       }
     }
@@ -25,14 +25,14 @@ macro_rules! want {
 
 macro_rules! want_with_loc {
   ($parser:path,$want:pat,$body:expr) => {
-    match &$parser.look(0) {
+    match &$parser.look(0)? {
       $want => {
         let tmp = $body;
-        $parser.get();
+        $parser.get()?;
         Ok(tmp)
       }
       _ => {
-        let (loc, tok) = $parser.get();
+        let (loc, tok) = $parser.get()?;
         Err(CompileError::UnexpectedToken(loc, tok))
       }
     }
@@ -41,9 +41,9 @@ macro_rules! want_with_loc {
 
 macro_rules! maybe_want {
   ($parser:path,$want:pat) => {
-    match &$parser.look(0).1 {
+    match &$parser.look(0)?.1 {
       $want => {
-        $parser.get();
+        $parser.get()?;
         true
       }
       _ => false
@@ -67,27 +67,28 @@ impl<'repo> Parser<'repo> {
     Parser { repo, module_id, lexer, fifo: FIFO::new() }
   }
 
-  fn fill_nth(&mut self, i: usize) {
+  fn fill_nth(&mut self, i: usize) -> Result<(), CompileError> {
     while self.fifo.len() <= i {
-      let tmp = self.lexer.next().unwrap(); // FIXME: propagate error
+      let tmp = self.lexer.next()?;
       self.fifo.push(tmp);
     }
+    Ok(())
   }
 
-  fn look(&mut self, i: usize) -> &(SourceLocation, Token) {
-    self.fill_nth(i);
-    self.fifo.get(i).unwrap()
+  fn look(&mut self, i: usize) -> Result<&(SourceLocation, Token), CompileError> {
+    self.fill_nth(i)?;
+    Ok(self.fifo.get(i).unwrap())
   }
 
-  fn get(&mut self) -> (SourceLocation, Token) {
-    self.fill_nth(1);
-    self.fifo.pop().unwrap()
+  fn get(&mut self) -> Result<(SourceLocation, Token), CompileError> {
+    self.fill_nth(1)?;
+    Ok(self.fifo.pop().unwrap())
   }
 
   pub fn parse(&mut self) -> Result<(), CompileError> {
     // TODO: some sort of error recovery
     loop {
-      match self.get() {
+      match self.get()? {
         // Read items
         (location, Token::KwType) => self.parse_type(location)?,
         (location, Token::KwStruct) => self.parse_struct(location)?,
@@ -250,7 +251,7 @@ impl<'repo> Parser<'repo> {
 
   fn parse_data(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
     // Parse data definition
-    let is_mut = self.parse_is_mut();
+    let is_mut = self.parse_is_mut()?;
     let name = want!(self, Token::Ident(name), *name)?;
     want!(self, Token::Colon, ())?;
     let ty = self.parse_ty()?;
@@ -308,7 +309,7 @@ impl<'repo> Parser<'repo> {
     want!(self, Token::LCurly, ())?;
     while !maybe_want!(self, Token::RCurly) {
       // Read extern definition
-      match self.get() {
+      match self.get()? {
         (loc, Token::KwFunction) => {
           let name = want!(self, Token::Ident(name), *name)?;
           let (params, varargs) = self.parse_params_with_varargs()?;
@@ -325,7 +326,7 @@ impl<'repo> Parser<'repo> {
           self.repo.sym(loc, self.module_id, name, def_id)?;
         }
         (loc, Token::KwData) => {
-          let is_mut = self.parse_is_mut();
+          let is_mut = self.parse_is_mut()?;
           let name = want!(self, Token::Ident(name), *name)?;
           want!(self, Token::Colon, ())?;
           let ty = self.parse_ty()?;
@@ -348,7 +349,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_ty(&mut self) -> Result<Ty, CompileError> {
-    match self.get() {
+    match self.get()? {
       (loc, Token::TyBool) => Ok(Ty::Bool(loc)),
       (loc, Token::TyUint8) => Ok(Ty::Uint8(loc)),
       (loc, Token::TyInt8) => Ok(Ty::Int8(loc)),
@@ -369,7 +370,7 @@ impl<'repo> Parser<'repo> {
         Ok(Ty::Func(loc, params, Box::new(ret_ty)))
       }
       (loc, Token::Star) => {
-        let is_mut = self.parse_is_mut();
+        let is_mut = self.parse_is_mut()?;
         let base_ty = self.parse_ty()?;
         Ok(Ty::Ptr(loc, is_mut, Box::new(base_ty)))
       }
@@ -403,7 +404,7 @@ impl<'repo> Parser<'repo> {
 
   fn parse_receiver(&mut self) -> Result<Option<(RefStr, IsMut, Ty)>, CompileError> {
     Ok(if maybe_want!(self, Token::LParen) {
-      let is_mut = self.parse_is_mut();
+      let is_mut = self.parse_is_mut()?;
       let name = want!(self, Token::Ident(name), *name)?;
       want!(self, Token::Colon, ())?;
       let ty = self.parse_ty()?;
@@ -507,7 +508,7 @@ impl<'repo> Parser<'repo> {
     // Read list
     loop {
       // Read parameter definition
-      let is_mut = self.parse_is_mut();
+      let is_mut = self.parse_is_mut()?;
       let name = want!(self, Token::Ident(name), *name)?;
       want!(self, Token::Colon, ())?;
       let ty = self.parse_ty()?;
@@ -524,20 +525,20 @@ impl<'repo> Parser<'repo> {
       self.parse_ty()
     } else {
       // NOTE: any `loc` for this is questionable
-      Ok(Ty::Unit(self.look(0).0.clone()))
+      Ok(Ty::Unit(self.look(0)?.0.clone()))
     }
   }
 
-  fn parse_is_mut(&mut self) -> IsMut {
+  fn parse_is_mut(&mut self) -> Result<IsMut, CompileError> {
     if maybe_want!(self, Token::KwMut) {
-      IsMut::Yes
+      Ok(IsMut::Yes)
     } else {
-      IsMut::No
+      Ok(IsMut::No)
     }
   }
 
   fn parse_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let expr = self.parse_nonassign_expr()?;
     if maybe_want!(self, Token::Eq) {
       Ok(Expr::As(loc,
@@ -599,7 +600,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_nonassign_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     if maybe_want!(self, Token::LCurly) {
       self.parse_block_expr(loc)
     } else if maybe_want!(self, Token::KwIf) {
@@ -611,7 +612,7 @@ impl<'repo> Parser<'repo> {
     } else if maybe_want!(self, Token::KwMatch) {
       self.parse_match_expr(loc)
     } else if maybe_want!(self, Token::KwLet) {
-      let is_mut = self.parse_is_mut();
+      let is_mut = self.parse_is_mut()?;
       let name = want!(self, Token::Ident(name), *name)?;
       let ty = if maybe_want!(self, Token::Colon) {
         Some(self.parse_ty()?)
@@ -629,14 +630,14 @@ impl<'repo> Parser<'repo> {
       Ok(Expr::Continue(loc))
     } else if maybe_want!(self, Token::KwBreak) {
       // NOTE: actually verify that these are the only valid terminators
-      if let (_, Token::Comma | Token::Semi | Token::RAngle | Token::RSquare | Token::RCurly) = self.look(0) {
+      if let (_, Token::Comma | Token::Semi | Token::RAngle | Token::RSquare | Token::RCurly) = self.look(0)? {
         // NOTE: the Expr::Unit here has no actual location
         Ok(Expr::Break(loc.clone(), Box::new(Expr::Unit(loc))))
       } else {
         Ok(Expr::Break(loc, Box::new(self.parse_expr()?)))
       }
     } else if maybe_want!(self, Token::KwReturn) {
-      if let (_, Token::Comma | Token::Semi | Token::RAngle | Token::RSquare | Token::RCurly) = self.look(0) {
+      if let (_, Token::Comma | Token::Semi | Token::RAngle | Token::RSquare | Token::RCurly) = self.look(0)? {
         Ok(Expr::Return(loc.clone(), Box::new(Expr::Unit(loc))))
       } else {
         Ok(Expr::Return(loc, Box::new(self.parse_expr()?)))
@@ -654,7 +655,7 @@ impl<'repo> Parser<'repo> {
     loop {
       // FIXME: this is kind of hacky
       let mut had_semi = false;
-      let semi_loc = self.look(0).0.clone();
+      let semi_loc = self.look(0)?.0.clone();
       while maybe_want!(self, Token::Semi) {
         had_semi = true;
       }
@@ -671,13 +672,13 @@ impl<'repo> Parser<'repo> {
     let cond = self.parse_expr()?;
 
     // True body
-    let tbody_loc = self.look(0).0.clone();
+    let tbody_loc = self.look(0)?.0.clone();
     want!(self, Token::LCurly, ())?;
     let tbody = self.parse_block_expr(tbody_loc)?;
 
     // Else body
     let ebody = if maybe_want!(self, Token::KwElse) {
-      let ebody_loc = self.look(0).0.clone();
+      let ebody_loc = self.look(0)?.0.clone();
       if maybe_want!(self, Token::KwIf) {
         self.parse_if_expr(ebody_loc)?
       } else {
@@ -753,7 +754,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_lor_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_land_expr()?;
     while maybe_want!(self, Token::LogicOr) {
       expr = Expr::LOr(loc.clone(),
@@ -764,7 +765,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_land_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_cmp_expr()?;
     while maybe_want!(self, Token::LogicAnd) {
       expr = Expr::LAnd(loc.clone(),
@@ -775,7 +776,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_cmp_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let expr = self.parse_or_expr()?;
     if maybe_want!(self, Token::EqEq) {
       Ok(Expr::Bin(loc,
@@ -813,7 +814,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_or_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_xor_expr()?;
     while maybe_want!(self, Token::Pipe) {
       expr = Expr::Bin(loc.clone(),
@@ -825,7 +826,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_xor_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_and_expr()?;
     while maybe_want!(self, Token::Caret) {
       expr = Expr::Bin(loc.clone(),
@@ -837,7 +838,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_and_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_shift_expr()?;
     while maybe_want!(self, Token::Amp) {
       expr = Expr::Bin(loc.clone(),
@@ -849,7 +850,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_shift_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_add_expr()?;
     loop {
       if maybe_want!(self, Token::LShift) {
@@ -870,7 +871,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_add_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_mul_expr()?;
     loop {
       if maybe_want!(self, Token::Plus) {
@@ -891,7 +892,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_mul_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_cast_expr()?;
     loop {
       if maybe_want!(self, Token::Star) {
@@ -917,7 +918,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_cast_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_pre_expr()?;
     while maybe_want!(self, Token::KwAs) {
       want!(self, Token::LAngle, ())?;
@@ -928,7 +929,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_pre_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     if maybe_want!(self, Token::Amp) {
       Ok(Expr::Adr(loc, Box::new(self.parse_pre_expr()?)))
     } else if maybe_want!(self, Token::Star) {
@@ -947,7 +948,7 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_post_expr(&mut self) -> Result<Expr, CompileError> {
-    let loc = self.look(0).0.clone();
+    let loc = self.look(0)?.0.clone();
     let mut expr = self.parse_prim_expr()?;
     loop {
       if maybe_want!(self, Token::Dot) {
@@ -974,9 +975,9 @@ impl<'repo> Parser<'repo> {
 
     // Read elements
     loop {
-      if let ((_, Token::Ident(name)), (_, Token::Colon)) = (self.look(0).clone(), self.look(1)) {
-        self.get();
-        self.get();
+      if let ((_, Token::Ident(name)), (_, Token::Colon)) = (self.look(0)?.clone(), self.look(1)?) {
+        self.get()?;
+        self.get()?;
         arguments.push((name, self.parse_expr()?));
       } else {
         arguments.push((RefStr::new(""), self.parse_expr()?));
@@ -990,11 +991,11 @@ impl<'repo> Parser<'repo> {
   }
 
   fn parse_prim_expr(&mut self) -> Result<Expr, CompileError> {
-    match self.get() {
+    match self.get()? {
       (loc, Token::LParen) => {
         if maybe_want!(self, Token::RParen) { // Unit
           Ok(Expr::Unit(loc))
-        } else if let ((_, Token::Ident(..)), (_, Token::Colon)) = (self.look(0).clone(), self.look(1)) {
+        } else if let ((_, Token::Ident(..)), (_, Token::Colon)) = (self.look(0)?.clone(), self.look(1)?) {
           Ok(Expr::Tuple(loc, self.parse_tuple_field_list()?))
         } else {
           let expr = self.parse_expr()?;
@@ -1006,7 +1007,7 @@ impl<'repo> Parser<'repo> {
         let mut crumbs = vec![s];
         let mut type_args = Vec::new();
         while maybe_want!(self, Token::DColon) {
-          if let (_, Token::LAngle) = self.look(0) {
+          if let (_, Token::LAngle) = self.look(0)? {
             type_args = self.parse_type_args()?;
             break;
           }

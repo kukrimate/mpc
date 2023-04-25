@@ -12,9 +12,7 @@ pub struct Lexer {
   keywords: HashMap<&'static str, Token>,
   file: std::sync::Arc<SourceFile>,
   begin: usize,
-  end: usize,
-  line: usize,
-  column: usize
+  end: usize
 }
 
 #[derive(Clone, Debug)]
@@ -158,9 +156,7 @@ impl Lexer {
       keywords,
       file,
       begin: 0,
-      end: 0,
-      line: 1,
-      column: 1
+      end: 0
     }
   }
 
@@ -168,38 +164,36 @@ impl Lexer {
     loop {
       // Save beginning of token
       self.begin = self.end;
-      // Save starting location
-      let loc = SourceLocation { file: self.file.clone(), line: self.line, column: self.column };
 
       // Read character or bail on EOF
       let byte = if let Some(byte) = self.consume_byte() {
         byte
       } else {
-        return Ok((loc, Token::EndOfFile))
+        return Ok((self.location(), Token::EndOfFile))
       };
 
       // Decide next state after seeing initial char
       let token = match byte {
         // Whitespaces
-        b'\n' => {
-          self.handle_newline();
-          continue
-        }
-        b'\r' | b'\t' | b' ' => continue,
+        b'\n' | b'\r' | b'\t' | b' ' => continue,
         // C string literals
-        b'c' if self.consume(b'"') => loop {
-          match self.consume_byte() {
-            Some(b'\n') | None => {
-              return Err(CompileError::UnterminatedStr(loc))
-            }
-            Some(b'"') => {
-              let s = self.slice();
-              match unescape(loc.clone(), &s[2..s.len() - 1]) {
-                Ok(v) => break Token::CStrLit(v),
-                Err(err) => return Err(err),
+        b'c' if self.consume(b'"') => {
+          let mut buffer = Vec::new();
+          loop {
+            match self.consume_byte() {
+              Some(b'\n') | None => {
+                return Err(CompileError::UnterminatedStr(self.location()))
               }
-            },
-            Some(_) => (),
+              Some(b'"') => {
+                break Token::CStrLit(buffer)
+              },
+              Some(b'\\') => {
+                buffer.push(self.read_esc()?);
+              }
+              Some(byte) => {
+                buffer.push(byte);
+              },
+            }
           }
         }
         // Identifiers
@@ -216,54 +210,51 @@ impl Lexer {
           }
           Some(b'x' | b'X') => { // Hexadecimal
             self.consume_byte();
-            self.read_hex()
+            Token::IntLit(self.read_hex_digits())
           }
           _ => self.read_decimal()
         }
         b'1'..=b'9' => self.read_decimal(),
         // String literals
-        b'"' => loop {
-          match self.consume_byte() {
-            Some(b'\n') | None => {
-              return Err(CompileError::UnterminatedStr(loc))
-            }
-            Some(b'\\') => {
-              self.consume_byte();
-            }
-            Some(b'"') => {
-              let s = self.slice();
-              match unescape(loc.clone(), &s[1..s.len() - 1]) {
-                Ok(v) => break Token::StrLit(v),
-                Err(err) => return Err(err),
+        b'"' => {
+          let mut buffer = Vec::new();
+          loop {
+            match self.consume_byte() {
+              Some(b'\n') | None => {
+                return Err(CompileError::UnterminatedStr(self.location()))
               }
-            },
-            Some(_) => (),
+              Some(b'"') => {
+                break Token::StrLit(buffer)
+              }
+              Some(b'\\') => {
+                buffer.push(self.read_esc()?);
+              }
+              Some(byte) => {
+                buffer.push(byte);
+              }
+            }
           }
         }
         // Character literals
         b'\'' => loop {
+          let mut buffer = Vec::new();
           match self.consume_byte() {
             Some(b'\n') | None => {
-              return Err(CompileError::UnterminatedChar(loc))
-            }
-            Some(b'\\') => {
-              self.consume_byte();
+              return Err(CompileError::UnterminatedChar(self.location()))
             }
             Some(b'\'') => {
-              let s = self.slice();
-              match unescape(loc.clone(), &s[1..s.len() - 1]) {
-                Ok(v) if v.len() == 1 => {
-                  break Token::IntLit(v[0] as usize)
-                }
-                Ok(_) => {
-                  return Err(CompileError::InvalidChar(loc))
-                }
-                Err(err) => {
-                  return Err(err)
-                }
+              if buffer.len() == 1 {
+                break Token::IntLit(buffer[0] as usize)
+              } else {
+                return Err(CompileError::CharLiteralWithMoreThanOneCharacter(self.location()))
               }
-            },
-            Some(_) => (),
+            }
+            Some(b'\\') => {
+              buffer.push(self.read_esc()?);
+            }
+            Some(byte) => {
+              buffer.push(byte);
+            }
           }
         }
         b'(' => Token::LParen,
@@ -354,11 +345,8 @@ impl Lexer {
           Some(b'/') => {
             self.consume_byte();
             while match self.consume_byte() {
-              Some(b'\n') => {
-                self.handle_newline();
-                false
-              }
-              None => false,
+              None |
+              Some(b'\n') => false,
               Some(_) => true
             } {}
             continue
@@ -367,15 +355,11 @@ impl Lexer {
             self.consume_byte();
             while match self.consume_byte() {
               None => {
-                return Err(CompileError::UnterminatedComment(loc))
+                return Err(CompileError::UnterminatedBlockComment(self.location()))
               }
               Some(b'*') if matches!(self.peek_byte(), Some(b'/')) => {
                 self.consume_byte();
                 false
-              }
-              Some(b'\n') => {
-                self.handle_newline();
-                true
               }
               _ => true
             } {}
@@ -442,16 +426,11 @@ impl Lexer {
             Token::Colon
           }
         }
-        _ => return Err(CompileError::UnknownToken(loc))
+        _ => return Err(CompileError::UnknownToken(self.location()))
       };
 
-      return Ok((loc, token))
+      return Ok((self.location(), token))
     }
-  }
-
-  fn handle_newline(&mut self) {
-    self.line += 1;
-    self.column = 1;
   }
 
   fn read_ident(&mut self) -> Token {
@@ -468,6 +447,20 @@ impl Lexer {
       kw.clone()
     } else {
       Token::Ident(RefStr::new(self.slice()))
+    }
+  }
+
+  fn read_esc(&mut self) -> Result<u8, CompileError> {
+    match self.consume_byte() {
+      Some(b'0') => Ok(b'\0'),
+      Some(b'n') => Ok(b'\n'),
+      Some(b'r') => Ok(b'\r'),
+      Some(b't') => Ok(b'\t'),
+      Some(b'\\') => Ok(b'\\'),
+      Some(b'\'') => Ok(b'\''),
+      Some(b'"') => Ok(b'"'),
+      Some(b'x' | b'X') => Ok(self.read_hex_digits() as u8),
+      _ => Err(CompileError::InvalidEscape(self.location()))
     }
   }
 
@@ -495,7 +488,7 @@ impl Lexer {
     Token::IntLit(usize::from_str_radix(&self.slice()[2..], 8).unwrap())
   }
 
-  fn read_hex(&mut self) -> Token {
+  fn read_hex_digits(&mut self) -> usize {
     loop {
       match self.peek_byte() {
         Some(b'0'..=b'9') => {
@@ -510,7 +503,7 @@ impl Lexer {
         _ => break
       }
     }
-    Token::IntLit(usize::from_str_radix(&self.slice()[2..], 16).unwrap())
+    usize::from_str_radix(&self.slice()[2..], 16).unwrap()
   }
 
   fn read_decimal(&mut self) -> Token {
@@ -564,7 +557,6 @@ impl Lexer {
 
   #[inline(always)]
   fn consume_byte(&mut self) -> Option<u8> {
-    self.column += 1;
     let byte = self.peek_byte()?;
     self.end += 1;
     Some(byte)
@@ -582,56 +574,16 @@ impl Lexer {
   }
 
   #[inline(always)]
+  fn location(&self) -> SourceLocation {
+    SourceLocation {
+      file: self.file.clone(),
+      begin: self.begin,
+      end: self.end
+    }
+  }
+
+  #[inline(always)]
   fn slice(&self) -> &str {
     &self.file.data[self.begin..self.end]
-  }
-}
-
-fn unescape(loc: SourceLocation, s: &str) -> Result<Vec<u8>, CompileError> {
-  let mut iterator = s.bytes().peekable();
-  let mut buffer = Vec::new();
-
-  loop {
-    match iterator.next() {
-      Some(b'\\') => {
-        match iterator.next() {
-          Some(b'0') => { buffer.push(b'\0'); }
-          Some(b'n') => { buffer.push(b'\n'); }
-          Some(b'r') => { buffer.push(b'\r'); }
-          Some(b't') => { buffer.push(b'\t'); }
-          Some(b'\\') => { buffer.push(b'\\'); }
-          Some(b'\'') => { buffer.push(b'\''); }
-          Some(b'"') => { buffer.push(b'"'); }
-          Some(b'x') => {
-            let mut byte = 0u8;
-            loop {
-              match iterator.peek() {
-                Some(digit @ b'0'..=b'9') => {
-                  byte = byte * 16 + digit - b'0';
-                  iterator.next();
-                }
-                Some(digit @ b'a'..=b'f') => {
-                  byte = byte * 16 + digit - b'a' + 0xa;
-                  iterator.next();
-                }
-                Some(digit @ b'A'..=b'F') => {
-                  byte = byte * 16 + digit - b'A' + 0xa;
-                  iterator.next();
-                }
-                _ => break
-              }
-            }
-            buffer.push(byte);
-          }
-          _ => { return Err(CompileError::UnknownEscape(loc)) }
-        }
-      }
-      Some(byte) => {
-        buffer.push(byte);
-      }
-      None => {
-        return Ok(buffer)
-      }
-    }
   }
 }
