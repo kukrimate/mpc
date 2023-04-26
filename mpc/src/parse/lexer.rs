@@ -236,24 +236,26 @@ impl Lexer {
           }
         }
         // Character literals
-        b'\'' => loop {
+        b'\'' => {
           let mut buffer = Vec::new();
-          match self.consume_byte() {
-            Some(b'\n') | None => {
-              return Err(CompileError::UnterminatedChar(self.location()))
-            }
-            Some(b'\'') => {
-              if buffer.len() == 1 {
-                break Token::IntLit(buffer[0] as usize)
-              } else {
-                return Err(CompileError::CharLiteralWithMoreThanOneCharacter(self.location()))
+          loop {
+            match self.consume_byte() {
+              Some(b'\n') | None => {
+                return Err(CompileError::UnterminatedChar(self.location()))
               }
-            }
-            Some(b'\\') => {
-              buffer.push(self.read_esc()?);
-            }
-            Some(byte) => {
-              buffer.push(byte);
+              Some(b'\'') => {
+                if buffer.len() == 1 {
+                  break Token::IntLit(buffer[0] as usize)
+                } else {
+                  return Err(CompileError::CharLiteralWithMoreThanOneCharacter(self.location()))
+                }
+              }
+              Some(b'\\') => {
+                buffer.push(self.read_esc()?);
+              }
+              Some(byte) => {
+                buffer.push(byte);
+              }
             }
           }
         }

@@ -160,10 +160,10 @@ function (p: *mut Parser) parse_params() -> result::Result<vec::Vec<Param>, mpc:
 
   match tk {
     LParen => (),
-    * => return result::err(mpc::CompileError::UnexptedToken(tk))
+    * => return result::err(mpc::CompileError::UnexpectedToken(tk))
   }
 
-
+  result::ok(vec::new())
 }
 
 function (p: *mut Parser) parse_ty() -> result::Result<Ty, mpc::CompileError> {
@@ -201,7 +201,7 @@ function (p: *mut Parser) parse_ty() -> result::Result<Ty, mpc::CompileError> {
     Ident(s) => {
       prog::panic(c"todo")
     },
-    * => result::err(mpc::CompileError::UnexptedToken(tk))
+    * => result::err(mpc::CompileError::UnexpectedToken(tk))
   }
 }
 

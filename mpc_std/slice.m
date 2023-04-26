@@ -20,7 +20,7 @@ function from_array<ArrayType, ElementType>(array: *ArrayType) -> Slice<ElementT
 
 function (slice: Slice<ElementType>) at<ElementType>(index: Uintn) -> *mut ElementType {
   if index >= slice.length {
-    prog::panic(c"ElementTyperied to access slice out of bounds\n");
+    prog::panic(c"Tried to access slice out of bounds\n");
   }
   mem::ptr_off(slice.base, index)
 }
@@ -35,7 +35,7 @@ function (slice: Slice<ElementType>) at_or_none<ElementType>(index: Uintn) -> op
 
 function (slice: Slice<ElementType>) range<ElementType>(begin: Uintn, end: Uintn) -> Slice<ElementType> {
   if begin > end || end > slice.length {
-    prog::panic(c"ElementTyperied to access slice out of bounds\n");
+    prog::panic(c"Tried to access slice out of bounds\n");
   }
   Slice(mem::ptr_off(slice.base, begin), end - begin)
 }

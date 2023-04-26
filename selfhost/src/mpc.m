@@ -10,7 +10,7 @@ enum CompileError (
   UnexpectedEndOfFile,
   UnrecognizedCharacter(ch: Uint8),
   UnrecognizedEscapeSequence(ch: Uint8),
-  UnexptedToken(tk: lexer::Tk)
+  UnexpectedToken(tk: lexer::Tk)
 )
 
 // Print a compilation error
@@ -25,7 +25,7 @@ function (e: *CompileError) fmt(f: *mut libc::FILE) {
     UnrecognizedEscapeSequence(ch) => {
       libc::fprintf(f, c"Unrecognized escape sequence %c", ch);
     },
-    UnexptedToken(tk) => {
+    UnexpectedToken(tk) => {
       libc::fprintf(f, c"Unrecognized token ");
       tk.fmt(f);
     }
