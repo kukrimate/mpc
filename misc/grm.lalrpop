@@ -282,7 +282,7 @@ ParameterDefinitionList: () = {
 
 ParameterDefinition: () = "mut"? Identifier ":" TypeName;
 
-ImportDefinition: () = "import" Identifier;
+ImportDefinition: () = "import" Path;
 
 ExternBlock: () = "extern" "{" ExternDefinitionList? "}";
 

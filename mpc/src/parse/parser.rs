@@ -51,20 +51,22 @@ macro_rules! maybe_want {
   }
 }
 
-pub struct Parser<'repo> {
+pub struct Parser<'repo, 'path> {
   /// Compiler repository
   repo: &'repo mut Repository,
   /// Current module ID
   module_id: DefId,
+  /// Current module path
+  module_path: &'path std::path::Path,
   /// Lexical analyzer
   lexer: Lexer,
   /// Token buffer
   fifo: FIFO<(SourceLocation, Token), 2>
 }
 
-impl<'repo> Parser<'repo> {
-  pub fn new(repo: &'repo mut Repository, module_id: DefId, lexer: Lexer) -> Self {
-    Parser { repo, module_id, lexer, fifo: FIFO::new() }
+impl<'repo, 'path> Parser<'repo, 'path> {
+  pub fn new(repo: &'repo mut Repository, module_id: DefId, module_path: &'path std::path::Path, lexer: Lexer) -> Self {
+    Parser { repo, module_id, module_path, lexer, fifo: FIFO::new() }
   }
 
   fn fill_nth(&mut self, i: usize) -> Result<(), CompileError> {
@@ -297,12 +299,21 @@ impl<'repo> Parser<'repo> {
 
   fn parse_import(&mut self, loc: SourceLocation) -> Result<(), CompileError> {
     // Imported module name
-    let name = want!(self, Token::Ident(name), *name)?;
-
-    // Process import
-    self.repo.find_module(loc.clone(), name)
-      .and_then(|path| self.repo.parse_module(&path))
-      .and_then(|id| self.repo.sym(loc, self.module_id, name, id))
+    let module = want!(self, Token::Ident(name), *name)?;
+    // Imported path
+    let mut path = Vec::new();
+    while maybe_want!(self, Token::DColon) {
+      path.push(want!(self, Token::Ident(name), *name)?);
+    }
+    // Add import to queue
+    self.repo.queue.push(ImportTodo {
+      loc,
+      parent_id: self.module_id,
+      parent_path: self.module_path.to_owned(),
+      module,
+      path: Path(path)
+    });
+    Ok(())
   }
 
   fn parse_extern(&mut self, _: SourceLocation) -> Result<(), CompileError> {

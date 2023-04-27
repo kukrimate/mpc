@@ -17,13 +17,25 @@ mod tree;
 pub use lexer::*;
 pub use tree::*;
 
-#[derive(Debug)]
 pub struct Repository {
   def_cnt: usize,
-  search_dirs: Vec<PathBuf>,
   ino_to_module: HashMap<u64, DefId>,
   parsed_defs: HashMap<DefId, Def>,
   syms: HashMap<DefId, HashMap<RefStr, DefId>>,
+  queue: Vec<ImportTodo>
+}
+
+struct ImportTodo {
+  /// Import source location
+  loc: SourceLocation,
+  /// Parent module ID
+  parent_id: DefId,
+  /// Parent module path on disk
+  parent_path: PathBuf,
+  /// Imported module
+  module: RefStr,
+  /// Imported path
+  path: Path
 }
 
 impl Repository {
@@ -31,10 +43,10 @@ impl Repository {
     // Crate repository
     Repository {
       def_cnt: 0,
-      search_dirs: vec![ PathBuf::from(env!("MPC_STD_DIR")) ],
       ino_to_module: HashMap::new(),
       parsed_defs: HashMap::new(),
       syms: HashMap::new(),
+      queue: Vec::new()
     }
   }
 
@@ -85,47 +97,81 @@ impl Repository {
     }
   }
 
-  fn find_module(&mut self, location: SourceLocation, name: RefStr) -> Result<PathBuf, CompileError> {
-    for dir in self.search_dirs.iter().rev() {
-      let path = dir
-        .join(std::path::Path::new(name.borrow_rs()))
-        .with_extension("m");
-      if path.is_file() { return Ok(path) }
-    }
-    Err(CompileError::UnknownModule(location, name))
-  }
-
   fn parse_module(&mut self, path: &std::path::Path) -> Result<DefId, CompileError> {
-    // Return previous copy if we've parsed a module with the same inode number
-    // Otherwise we can go ahead and parse it
-
+    // Find inode
     let ino = std::fs::metadata(path)
       .map_err(|error| CompileError::IoError(path.to_path_buf(), error))?
       .ino();
+
+    // Return previous copy if we've already parsed it
     if let Some(def_id) = self.ino_to_module.get(&ino) {
       return Ok(*def_id)
     }
 
-    // Create module context
+    // Otherwise parse the module now
     let module_id = self.new_id();
     self.ino_to_module.insert(ino, module_id);
-    self.search_dirs.push(path.parent().unwrap().to_path_buf());
 
     let file = std::sync::Arc::new(SourceFile {
       path: path.to_owned(),
       data: std::fs::read_to_string(path).map_err(|error| CompileError::IoError(path.to_path_buf(), error))?
     });
 
-    let lexer = Lexer::new(file);
-    let result = match parser::Parser::new(self, module_id, lexer).parse() {
+    match parser::Parser::new(self, module_id, path, Lexer::new(file)).parse() {
       Ok(()) => Ok(module_id),
       Err(err) => Err(err)
-    };
+    }
+  }
 
-    // Exit module context
-    self.search_dirs.pop();
+  fn parse_modules(&mut self, root_path: &std::path::Path) -> Result<(), CompileError> {
+    // Parse root module
+    self.parse_module(root_path)?;
 
-    result
+    // Symbols to be added after all modules were imported
+    // (This is done is a separate paths, as imports cannot refer to other imports transitively)
+    let mut q = Vec::new();
+
+    // Parse queued dependencies
+    while let Some(todo) = self.queue.pop() {
+      // Search directories for this dependency
+      let search_dirs = [
+        todo.parent_path.parent().unwrap(),
+        std::path::Path::new(env!("MPC_STD_DIR"))
+      ];
+
+      let mut found = false;
+
+      for dir in search_dirs {
+        let path = dir
+          .join(todo.module.borrow_rs())
+          .with_extension("m");
+
+        if path.is_file() {
+          // Parse dependency if found
+          let module_id = self.parse_module(&path)?;
+          // Find imported item
+          let def_id = self.locate_path(module_id, &todo.path)
+            .ok_or_else(|| CompileError::UnresolvedPath(todo.loc.clone(),
+                                                        todo.path.clone()))?;
+          // Add to queue
+          if todo.path.crumbs().len() > 0 { q.push((todo.loc.clone(), todo.parent_id, *todo.path.crumbs().last().unwrap(), def_id)) }
+          else { q.push((todo.loc.clone(), todo.parent_id, todo.module, def_id)) }
+          // Set marker then exit
+          found = true;
+          break
+        }
+      }
+
+      if !found {
+        return Err(CompileError::UnknownModule(todo.loc, todo.module))
+      }
+    }
+
+    for (loc , parent_id, name, def_id) in q.into_iter() {
+      self.sym(loc, parent_id, name, def_id)?;
+    }
+
+    Ok(())
   }
 
   fn resolve_methods(&mut self) -> Result<(), CompileError> {
@@ -173,7 +219,7 @@ impl Repository {
 
 pub fn parse_bundle(path: &std::path::Path) -> Result<Repository, CompileError> {
   let mut repo = Repository::new();
-  repo.parse_module(path)?;
+  repo.parse_modules(path)?;
   repo.resolve_methods()?;
   Ok(repo)
 }
