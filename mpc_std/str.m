@@ -5,30 +5,39 @@
  * Description: String utilities
  */
 
-import slice
-import vec
+import slice::Slice
+import vec::Vec
 
-type Str = vec::Vec<Uint8>
-type StrView = slice::Slice<Uint8>
+struct Str(vec: Vec<Uint8>)
 
-function view_from_lit<ArrayType>(a: *ArrayType) -> StrView {
-  slice::from_array(a)
+function (!Str) new() -> Str {
+  Str(Vec::new())
 }
 
-function view_from_str<ArrayType>(s: *Str) -> StrView {
-  slice::from_vec(s)
+function (s: *mut Str) push(byte: Uint8) {
+  s.vec.push(byte)
 }
 
-function eq(a: StrView, b: StrView) -> Bool {
-  if a.length != b.length { return false }
+struct StrView(slice: Slice<Uint8>)
+
+function (!StrView) from_lit<ArrayType>(a: *ArrayType) -> StrView {
+  StrView(Slice::from_array(a))
+}
+
+function (!StrView) from_str<ArrayType>(s: *Str) -> StrView {
+  StrView(Slice::from_vec(&s.vec))
+}
+
+function (a: StrView) eq(b: StrView) -> Bool {
+  if a.slice.length != b.slice.length { return false }
   let mut i = 0;
-  while i < a.length {
-    if *slice::at(a, i) != *slice::at(b, i) { return false }
+  while i < a.slice.length {
+    if *a.slice.at(i) != *b.slice.at(i) { return false }
     i += 1;
   }
   true
 }
 
-function ne(a: StrView, b: StrView) -> Bool {
-  !eq(a, b)
+function (a: StrView) ne(b: StrView) -> Bool {
+  !a.eq(b)
 }

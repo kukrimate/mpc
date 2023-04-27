@@ -197,7 +197,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     let mut param_tys = Vec::new();
 
     // Method receiver
-    if let Some((name, _, ty)) = &def.receiver {
+    if let Some((Some((name, _)), ty)) = &def.receiver {
       let ty = def_ctx.infer_ty(ty)?;
       param_tys.push((*name, ty.clone()));
     }
@@ -248,7 +248,7 @@ impl<'repo, 'tctx> GlobalCtx<'repo, 'tctx> {
     let mut params = Vec::new();
 
     // Method receiver
-    if let Some((name, is_mut, ty)) = &def.receiver {
+    if let Some((Some((name, is_mut)), ty)) = &def.receiver {
       let ty = def_ctx.infer_ty(ty)?;
       let local_id = def_ctx.new_local_id();
       def_ctx.define(*name, Sym::Param(local_id));

@@ -180,7 +180,7 @@ impl Repository {
     for (def_id, def) in self.parsed_defs.iter() {
       match def {
         Def::Func(def) => {
-          if let Some((_, _, ty)) = &def.receiver {
+          if let Some((_, ty)) = &def.receiver {
             let receiver_id = self.find_receiver_id(def.parent_id, ty)?;
             q.push((def.loc.clone(), receiver_id, def.name, *def_id));
           }

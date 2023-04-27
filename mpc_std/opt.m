@@ -12,14 +12,6 @@ enum Option<T>(
   None
 )
 
-function some<T>(val: T) -> Option<T> {
-  Option::Some(val)
-}
-
-function none<T>() -> Option<T> {
-  Option::None
-}
-
 function (o: *Option<T>) is_some<T>() -> Bool {
   match *o {
     Some(val) => true,

@@ -12,14 +12,6 @@ enum Result<O, E> (
   Err(v: E)
 )
 
-function ok<O, E>(v: O) -> Result<O, E> {
-  Result::Ok(v)
-}
-
-function err<O, E>(v: E) -> Result<O, E> {
-  Result::Err(v)
-}
-
 function (result: *Result<O, E>) is_ok<O, E>() -> Bool {
   match *result {
     Ok(v) => true,

@@ -413,14 +413,20 @@ impl<'repo, 'path> Parser<'repo, 'path> {
     }
   }
 
-  fn parse_receiver(&mut self) -> Result<Option<(RefStr, IsMut, Ty)>, CompileError> {
+  fn parse_receiver(&mut self) -> Result<Option<(Option<(RefStr, IsMut)>, Ty)>, CompileError> {
     Ok(if maybe_want!(self, Token::LParen) {
-      let is_mut = self.parse_is_mut()?;
-      let name = want!(self, Token::Ident(name), *name)?;
-      want!(self, Token::Colon, ())?;
-      let ty = self.parse_ty()?;
-      want!(self, Token::RParen, ())?;
-      Some((name, is_mut, ty))
+      if maybe_want!(self, Token::Excl) {
+        let ty = self.parse_ty()?;
+        want!(self, Token::RParen, ())?;
+        Some((None, ty))
+      } else {
+        let is_mut = self.parse_is_mut()?;
+        let name = want!(self, Token::Ident(name), *name)?;
+        want!(self, Token::Colon, ())?;
+        let ty = self.parse_ty()?;
+        want!(self, Token::RParen, ())?;
+        Some((Some((name, is_mut)), ty))
+      }
     } else {
       None
     })

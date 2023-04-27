@@ -1,20 +1,20 @@
+import opt::Option
+import vec::Vec
 import arr
 import mem
-import opt
 import prog
-import vec
 
 struct Slice<ElementType>(base: *mut ElementType, length: Uintn)
 
-function from_ptr<ElementType>(base: *mut ElementType, length: Uintn) -> Slice<ElementType> {
+function (!Slice) from_ptr<ElementType>(base: *mut ElementType, length: Uintn) -> Slice<ElementType> {
   Slice(base, length)
 }
 
-function from_vec<ElementType>(vec: *vec::Vec<ElementType>) -> Slice<ElementType> {
+function (!Slice) from_vec<ElementType>(vec: *Vec<ElementType>) -> Slice<ElementType> {
   Slice((*vec).mem, (*vec).length)
 }
 
-function from_array<ArrayType, ElementType>(array: *ArrayType) -> Slice<ElementType> {
+function (!Slice) from_array<ArrayType, ElementType>(array: *ArrayType) -> Slice<ElementType> {
   Slice(&(*array)[0], arr::length(array))
 }
 
@@ -25,11 +25,11 @@ function (slice: Slice<ElementType>) at<ElementType>(index: Uintn) -> *mut Eleme
   mem::ptr_off(slice.base, index)
 }
 
-function (slice: Slice<ElementType>) at_or_none<ElementType>(index: Uintn) -> opt::Option<*mut ElementType> {
+function (slice: Slice<ElementType>) at_or_none<ElementType>(index: Uintn) -> Option<*mut ElementType> {
   if index < slice.length {
-    opt::some(mem::ptr_off(slice.base, index))
+    Option::Some(mem::ptr_off(slice.base, index))
   } else {
-    opt::none()
+    Option::None
   }
 }
 

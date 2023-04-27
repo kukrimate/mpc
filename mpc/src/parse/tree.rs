@@ -322,7 +322,7 @@ pub struct FuncDef {
   pub parent_id: DefId,
   pub name: RefStr,
   pub type_params: Vec<RefStr>,
-  pub receiver: Option<(RefStr, IsMut, Ty)>,
+  pub receiver: Option<(Option<(RefStr, IsMut)>, Ty)>,
   pub params: Vec<(RefStr, IsMut, Ty)>,
   pub ret_ty: Ty,
   pub body: Expr

@@ -273,7 +273,10 @@ FunctionDefinition: () = {
    "function" ReceiverDefinition? Identifier ("<" IdentifierList ">")? "(" ParameterDefinitionList? ")" ("->" TypeName)? BlockExpr,
 };
 
-ReceiverDefinition: () = "(" ParameterDefinition ")";
+ReceiverDefinition: () = {
+  "(" "!" Path ")",
+  "(" ParameterDefinition ")"
+};
 
 ParameterDefinitionList: () = {
   ParameterDefinition,
