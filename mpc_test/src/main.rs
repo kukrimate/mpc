@@ -32,7 +32,7 @@ fn main() {
       .and_then(|_| run_and_check(&src_path, &bin_path))
     {
       Ok(_) => println!("[OK] {}", file_name.to_str().unwrap()),
-      Err(err) => println!("[ERR] {} {}", file_name.to_str().unwrap(), err),
+      Err(err) => print!("[ERR] {}\n{}", file_name.to_str().unwrap(), err),
     }
   }
 }
@@ -57,9 +57,9 @@ impl std::fmt::Display for TestError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       TestError::CompileFailure(err) => write!(f, "{}", err),
-      TestError::LinkFailure => write!(f, "Failed to link"),
-      TestError::ExitFailure => write!(f, "Test exited with error"),
-      TestError::IncorrectOutput => write!(f, "Incorrect test output"),
+      TestError::LinkFailure => write!(f, "error: failed to link\n"),
+      TestError::ExitFailure => write!(f, "error: test exited with error\n"),
+      TestError::IncorrectOutput => write!(f, "error: incorrect test output\n"),
     }
   }
 }

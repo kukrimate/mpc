@@ -32,6 +32,7 @@ pub struct SourceLocation {
 
 /// Compiler errors
 
+#[derive(Debug)]
 pub enum CompileError {
   IoError(std::path::PathBuf, std::io::Error),
   UnknownToken(SourceLocation),
@@ -70,44 +71,44 @@ pub enum CompileError {
   InvalidConstantExpression(SourceLocation)
 }
 
-impl CompileError {
-  pub fn display(&self) {
+impl std::fmt::Display for CompileError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      CompileError::IoError(path, error) => println!("{}: {}", path.to_string_lossy(), error),
-      CompileError::UnknownToken(location) => display_err(location, || println!("error: unknown token")),
-      CompileError::InvalidEscape(location) => display_err(location, || println!("error: unknown escape sequence")),
-      CompileError::UnterminatedStr(location) => display_err(location, || println!("error: unterminated string literal")),
-      CompileError::UnterminatedChar(location) => display_err(location, || println!("error: unterminated character literal")),
-      CompileError::UnterminatedBlockComment(location) => display_err(location, || println!("error: unterminated block comment")),
-      CompileError::CharLiteralWithMoreThanOneCharacter(location) => display_err(location, || println!("error: character literal with more than one character")),
-      CompileError::UnexpectedToken(location, token) => display_err(location, || println!("error: unexpected token {:?}", token)),
-      CompileError::UnknownModule(location, name) => display_err(location, || println!("error: unknown module {}", name)),
-      CompileError::Redefinition(location, name) => display_err(location, || println!("error: re-definition of {}", name)),
-      CompileError::UnresolvedPath(location, path) => display_err(location, || println!("error: unresolved path {}", path)),
-      CompileError::InvalidTypeName(location, path) => display_err(location, || println!("error: invalid typename {}", path)),
-      CompileError::UnionLiteralWithMoreThanOneArgument(location) => display_err(location, || println!("error: union literal with more than one argument")),
-      CompileError::CannotUnifyBounds(location, b1, b2) => display_err(location, || println!("error: incompatible type bounds {:?} and {:?}", b1, b2)),
-      CompileError::CannotUnifyTypes(location, ty1, ty2) => display_err(location, || println!("error: cannot unify types {:?} and {:?}", ty1, ty2)),
-      CompileError::TypeDoesNotHaveBound(location, ty, bound) => display_err(location, || println!("error: cannot bound type {:?} by {:?}", ty, bound)),
-      CompileError::IncorrectNumberOfTypeArguments(location) => display_err(location, || println!("error: incorrect number of type arguments")),
-      CompileError::TypeHasNoField(location, ty, field)  => display_err(location, || println!("error: type {:?} has no field named {}", ty, field)),
-      CompileError::CannotIndexType(location, ty) => display_err(location, || println!("error: type {:?} cannot be indexed", ty)),
-      CompileError::CannotDereferenceType(location, ty) => display_err(location, || println!("error: type {:?} cannot be de-referenced", ty)),
-      CompileError::CannotCallType(location, ty)  => display_err(location, || println!("error: type {:?} cannot be called", ty)),
-      CompileError::IncorrectNumberOfArguments(location) => display_err(location, || println!("error: incorrect number of arguments")),
-      CompileError::CannotMatchType(location, ty) => display_err(location, || println!("error: cannot match on non-enum type {:?}", ty)),
-      CompileError::CannotAssignImmutable(location) => display_err(location, || println!("error: cannot assign to immutable location")),
-      CompileError::InvalidLvalueExpression(location) => display_err(location, || println!("error: invalid lvalue expression")),
-      CompileError::InvalidRValueExpression(location, path) => display_err(location, || println!("error: invalid rvalue {}", path)),
-      CompileError::ContinueOutsideLoop(location) => display_err(location, || println!("error: continue outside loop")),
-      CompileError::BreakOutsideLoop(location) => display_err(location, || println!("error: break outside loop")),
-      CompileError::ReturnOutsideFunction(location) => display_err(location, || println!("error: return outside function")),
-      CompileError::IncorrectArgumentLabel(location, label) => display_err(location, || println!("error: incorrect argument label {}", label)),
-      CompileError::MissingMatchCase(location) => display_err(location, || println!("error: missing match case")),
-      CompileError::IncorrectMatchCase(location) => display_err(location, || println!("error: incorrect match case")),
-      CompileError::InvalidMethodReceiver(location) => display_err(location, || println!("error: invalid method receiver")),
-      CompileError::MissingMethodReceiver(location) => display_err(location, || println!("error: missing method receiver")),
-      CompileError::InvalidConstantExpression(location) => display_err(location, || println!("error: invalid constant expression")),
+      CompileError::IoError(path, error) => write!(f, "{}: {}", path.to_string_lossy(), error),
+      CompileError::UnknownToken(location) => display_err(location, f, |f| write!(f, "error: unknown token")),
+      CompileError::InvalidEscape(location) => display_err(location, f, |f| write!(f, "error: unknown escape sequence")),
+      CompileError::UnterminatedStr(location) => display_err(location, f, |f| write!(f, "error: unterminated string literal")),
+      CompileError::UnterminatedChar(location) => display_err(location, f, |f| write!(f, "error: unterminated character literal")),
+      CompileError::UnterminatedBlockComment(location) => display_err(location, f, |f| write!(f, "error: unterminated block comment")),
+      CompileError::CharLiteralWithMoreThanOneCharacter(location) => display_err(location, f, |f| write!(f, "error: character literal with more than one character")),
+      CompileError::UnexpectedToken(location, token) => display_err(location, f, |f| write!(f, "error: unexpected token {:?}", token)),
+      CompileError::UnknownModule(location, name) => display_err(location, f, |f| write!(f, "error: unknown module {}", name)),
+      CompileError::Redefinition(location, name) => display_err(location, f, |f| write!(f, "error: re-definition of {}", name)),
+      CompileError::UnresolvedPath(location, path) => display_err(location, f, |f| write!(f, "error: unresolved path {}", path)),
+      CompileError::InvalidTypeName(location, path) => display_err(location, f, |f| write!(f, "error: invalid typename {}", path)),
+      CompileError::UnionLiteralWithMoreThanOneArgument(location) => display_err(location, f, |f| write!(f, "error: union literal with more than one argument")),
+      CompileError::CannotUnifyBounds(location, b1, b2) => display_err(location, f, |f| write!(f, "error: incompatible type bounds {:?} and {:?}", b1, b2)),
+      CompileError::CannotUnifyTypes(location, ty1, ty2) => display_err(location, f, |f| write!(f, "error: cannot unify types {:?} and {:?}", ty1, ty2)),
+      CompileError::TypeDoesNotHaveBound(location, ty, bound) => display_err(location, f, |f| write!(f, "error: cannot bound type {:?} by {:?}", ty, bound)),
+      CompileError::IncorrectNumberOfTypeArguments(location) => display_err(location, f, |f| write!(f, "error: incorrect number of type arguments")),
+      CompileError::TypeHasNoField(location, ty, field)  => display_err(location, f, |f| write!(f, "error: type {:?} has no field named {}", ty, field)),
+      CompileError::CannotIndexType(location, ty) => display_err(location, f, |f| write!(f, "error: type {:?} cannot be indexed", ty)),
+      CompileError::CannotDereferenceType(location, ty) => display_err(location, f, |f| write!(f, "error: type {:?} cannot be de-referenced", ty)),
+      CompileError::CannotCallType(location, ty)  => display_err(location, f, |f| write!(f, "error: type {:?} cannot be called", ty)),
+      CompileError::IncorrectNumberOfArguments(location) => display_err(location, f, |f| write!(f, "error: incorrect number of arguments")),
+      CompileError::CannotMatchType(location, ty) => display_err(location, f, |f| write!(f, "error: cannot match on non-enum type {:?}", ty)),
+      CompileError::CannotAssignImmutable(location) => display_err(location, f, |f| write!(f, "error: cannot assign to immutable location")),
+      CompileError::InvalidLvalueExpression(location) => display_err(location, f, |f| write!(f, "error: invalid lvalue expression")),
+      CompileError::InvalidRValueExpression(location, path) => display_err(location, f, |f| write!(f, "error: invalid rvalue {}", path)),
+      CompileError::ContinueOutsideLoop(location) => display_err(location, f, |f| write!(f, "error: continue outside loop")),
+      CompileError::BreakOutsideLoop(location) => display_err(location, f, |f| write!(f, "error: break outside loop")),
+      CompileError::ReturnOutsideFunction(location) => display_err(location, f, |f| write!(f, "error: return outside function")),
+      CompileError::IncorrectArgumentLabel(location, label) => display_err(location, f, |f| write!(f, "error: incorrect argument label {}", label)),
+      CompileError::MissingMatchCase(location) => display_err(location, f, |f| write!(f, "error: missing match case")),
+      CompileError::IncorrectMatchCase(location) => display_err(location, f, |f| write!(f, "error: incorrect match case")),
+      CompileError::InvalidMethodReceiver(location) => display_err(location, f, |f| write!(f, "error: invalid method receiver")),
+      CompileError::MissingMethodReceiver(location) => display_err(location, f, |f| write!(f, "error: missing method receiver")),
+      CompileError::InvalidConstantExpression(location) => display_err(location, f, |f| write!(f, "error: invalid constant expression")),
     }
   }
 }
@@ -128,8 +129,8 @@ fn position_to_line_column(input: &str, pos: usize) -> (usize, usize) {
 }
 
 /// Display an error condition
-fn display_err<F>(location: &SourceLocation, with: F)
-  where F: FnOnce()
+fn display_err<F>(location: &SourceLocation, f: &mut std::fmt::Formatter<'_>, with: F) -> std::fmt::Result
+  where F: FnOnce(&mut std::fmt::Formatter<'_>) -> std::fmt::Result
 {
   // Compute line and column numbers
   let (line, col) = position_to_line_column(&location.file.data, location.begin);
@@ -143,30 +144,32 @@ fn display_err<F>(location: &SourceLocation, with: F)
   let max_line_num_width = (line + lines.len() - 1).to_string().len();
 
   // Print error condition
-  with();
+  with(f)?;
 
   // Print location heading
-  println!("{}--> {}:{}:{}\n{} |",
+  write!(f, "\n{}--> {}:{}:{}\n{} |\n",
            " ".repeat(max_line_num_width),
            location.file.path.to_string_lossy(),
            line,
            col,
-           " ".repeat(max_line_num_width));
+           " ".repeat(max_line_num_width))?;
 
   // Print lines
   for (line_index, (line_start, line_text)) in lines.iter().enumerate() {
     // Print line number + line text
-    println!("{} | {}", line + line_index, line_text);
+    write!(f, "{} | {}\n", line + line_index, line_text)?;
     // Highlight offending text
     if *line_start < location.end {
       let pad = max(location.begin, *line_start) - *line_start;
       let cnt = min(location.end - *line_start, line_text.len()) - pad;
-      println!("{} | {}{}",
+      write!(f, "{} | {}{}\n",
                " ".repeat(max_line_num_width),
                " ".repeat(pad),
-               "^".repeat(cnt));
+               "^".repeat(cnt))?;
     }
   }
+
+  Ok(())
 }
 
 /// Scan backward for a newline
